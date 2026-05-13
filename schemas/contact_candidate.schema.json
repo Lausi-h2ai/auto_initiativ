@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-initiativ.local/schemas/contact_candidate.schema.json",
+  "title": "ContactCandidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contact_id", "company_id", "email", "email_source", "confidence", "source_refs", "review_flags"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "contact_id": { "type": "string", "minLength": 1 },
+    "company_id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "role_title": { "type": "string" },
+    "email": { "type": "string", "format": "email" },
+    "email_source": { "type": "string", "enum": ["company_site", "public_profile", "user_provided", "inferred_pattern", "other"] },
+    "profile_url": { "type": "string", "format": "uri" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "source_refs": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "review_flags": { "type": "array", "items": { "type": "string" } }
+  }
+}
+

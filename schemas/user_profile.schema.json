@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-initiativ.local/schemas/user_profile.schema.json",
+  "title": "UserProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile_id", "created_at", "identity", "preferences", "provenance_summary"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_name"],
+      "properties": {
+        "display_name": { "type": "string", "minLength": 1 },
+        "headline": { "type": "string" },
+        "location": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "links": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+    "work_authorization": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/provenanced_text" }
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["language", "level", "provenance"],
+        "properties": {
+          "language": { "type": "string", "minLength": 1 },
+          "level": { "type": "string" },
+          "provenance": { "$ref": "#/$defs/provenance" }
+        }
+      }
+    },
+    "preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_roles", "target_locations", "remote_preferences", "communication_tone"],
+      "properties": {
+        "target_roles": { "type": "array", "items": { "$ref": "#/$defs/provenanced_text" } },
+        "target_locations": { "type": "array", "items": { "$ref": "#/$defs/provenanced_text" } },
+        "remote_preferences": { "type": "array", "items": { "type": "string" } },
+        "relocation_preferences": { "type": "array", "items": { "$ref": "#/$defs/provenanced_text" } },
+        "communication_tone": { "$ref": "#/$defs/provenanced_text" },
+        "availability": { "$ref": "#/$defs/provenanced_text" }
+      }
+    },
+    "review_items": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/review_item" }
+    },
+    "provenance_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_documents", "interview_notes"],
+      "properties": {
+        "source_documents": { "type": "array", "items": { "type": "string" } },
+        "interview_notes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "provenanced_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "provenance"],
+      "properties": {
+        "value": { "type": "string", "minLength": 1 },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_type", "confidence", "needs_review", "source_refs"],
+      "properties": {
+        "source_type": { "type": "string", "enum": ["verified_document", "user_claim", "inferred", "needs_review"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "needs_review": { "type": "boolean" },
+        "source_refs": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "review_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "reason"],
+      "properties": {
+        "field": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}
+

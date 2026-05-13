@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-initiativ.local/schemas/fit_evaluation.schema.json",
+  "title": "FitEvaluation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evaluation_id", "company_id", "profile_id", "policy_id", "fit_score", "decision", "reasons", "risks", "source_refs", "confidence", "review_flags"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "evaluation_id": { "type": "string", "minLength": 1 },
+    "company_id": { "type": "string", "minLength": 1 },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "policy_id": { "type": "string", "minLength": 1 },
+    "fit_score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "decision": { "type": "string", "enum": ["promising", "weak_fit", "blocked_by_policy", "needs_review"] },
+    "reasons": { "type": "array", "items": { "$ref": "#/$defs/sourced_reason" } },
+    "risks": { "type": "array", "items": { "$ref": "#/$defs/sourced_reason" } },
+    "source_refs": { "type": "array", "items": { "type": "string" } },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "review_flags": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "sourced_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "source_refs"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "source_refs": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
+

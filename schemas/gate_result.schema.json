@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-initiativ.local/schemas/gate_result.schema.json",
+  "title": "GateResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "gate_result_id", "intent_id", "status", "checks", "reasons", "evaluated_at"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "gate_result_id": { "type": "string", "minLength": 1 },
+    "intent_id": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["passed_dry_run", "blocked", "needs_review", "reserved", "sent", "send_failed"]
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "reasons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reason" }
+    },
+    "reservation_id": { "type": "string" },
+    "evaluated_at": { "type": "string", "format": "date-time" },
+    "policy_snapshot_id": { "type": "string" }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "status"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["pass", "fail", "warning", "not_applicable"] },
+        "details": { "type": "string" }
+      }
+    },
+    "reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "field": { "type": "string" }
+      }
+    }
+  }
+}
+
