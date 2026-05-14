@@ -50,6 +50,8 @@ They must be learned during onboarding, stored in `policy.json`, and applied det
 
 Future CV tailoring may only use claims from `master_cv_profile.json`.
 
+The master CV profile is also the claim ledger for outreach. Every approved claim needs a stable claim ID. Every future CV bullet and every user-descriptive email claim must reference one or more approved claim IDs.
+
 The agent must not invent:
 
 - Employers
@@ -64,6 +66,8 @@ The agent must not invent:
 
 If a claim is useful but uncertain, it must be marked `needs_review` and excluded from automatic tailoring until approved.
 
+Approved claims should remain immutable within a snapshot. Corrections should create a new master CV profile snapshot instead of changing the historical meaning of old claim IDs.
+
 ## Review Output
 
 Onboarding output should make review easy by grouping:
@@ -74,4 +78,3 @@ Onboarding output should make review easy by grouping:
 - Contradictions
 - Missing required information
 - Policy decisions
-

@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "draft_id": "draft-1",
+  "company_id": "company-1",
+  "contact_id": "contact-1",
+  "subject": "Application for backend role",
+  "body_text": "Hello Alex, I am interested in backend engineering work at Example Robotics.",
+  "body_html": "<p>Hello Alex, I am interested in backend engineering work at Example Robotics.</p>",
+  "tone": "concise",
+  "claim_refs": ["claim-1"],
+  "source_refs": ["source-1", "source-2"],
+  "attachments": [
+    {
+      "attachment_id": "attachment-1",
+      "path": "attachments/cv.pdf",
+      "kind": "cv"
+    }
+  ],
+  "confidence": 0.88,
+  "review_flags": []
+}
+

@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "profile-1",
+  "created_at": "2026-05-13T12:00:00Z",
+  "updated_at": "2026-05-13T12:00:00Z",
+  "identity": {
+    "display_name": "Example Candidate",
+    "headline": "Backend engineer",
+    "location": "Berlin",
+    "email": "candidate@example.com",
+    "phone": "+49123456789",
+    "links": ["https://example.com/profile"]
+  },
+  "work_authorization": [
+    {
+      "value": "Authorized to work in Germany",
+      "provenance": {
+        "source_type": "user_claim",
+        "confidence": 0.9,
+        "needs_review": false,
+        "source_refs": ["interview-1"]
+      }
+    }
+  ],
+  "languages": [
+    {
+      "language": "English",
+      "level": "C1",
+      "provenance": {
+        "source_type": "user_claim",
+        "confidence": 0.9,
+        "needs_review": false,
+        "source_refs": ["interview-1"]
+      }
+    }
+  ],
+  "preferences": {
+    "target_roles": [
+      {
+        "value": "Backend Engineer",
+        "provenance": {
+          "source_type": "user_claim",
+          "confidence": 0.9,
+          "needs_review": false,
+          "source_refs": ["interview-1"]
+        }
+      }
+    ],
+    "target_locations": [
+      {
+        "value": "Berlin",
+        "provenance": {
+          "source_type": "user_claim",
+          "confidence": 0.9,
+          "needs_review": false,
+          "source_refs": ["interview-1"]
+        }
+      }
+    ],
+    "remote_preferences": ["hybrid", "remote"],
+    "relocation_preferences": [],
+    "communication_tone": {
+      "value": "Direct and concise",
+      "provenance": {
+        "source_type": "user_claim",
+        "confidence": 0.9,
+        "needs_review": false,
+        "source_refs": ["interview-1"]
+      }
+    },
+    "availability": {
+      "value": "Immediate",
+      "provenance": {
+        "source_type": "user_claim",
+        "confidence": 0.8,
+        "needs_review": false,
+        "source_refs": ["interview-1"]
+      }
+    }
+  },
+  "review_items": [],
+  "provenance_summary": {
+    "source_documents": ["cv.pdf"],
+    "interview_notes": ["interview-1"]
+  }
+}
+

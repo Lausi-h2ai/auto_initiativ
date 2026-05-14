@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "company_id": "company-1",
+  "name": "Example Robotics",
+  "website_url": "https://example.com",
+  "domain": "example.com",
+  "description": "Builds warehouse robotics software.",
+  "industry_tags": ["robotics", "logistics"],
+  "locations": ["Berlin"],
+  "remote_policy": "hybrid",
+  "potential_policy_conflicts": [
+    {
+      "policy_value": "none",
+      "reason": "No conflicts found in public sources.",
+      "confidence": 0.9
+    }
+  ],
+  "source_refs": ["source-1"],
+  "confidence": 0.9,
+  "review_flags": []
+}
+

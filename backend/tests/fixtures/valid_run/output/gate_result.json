@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "gate_result_id": "gate-1",
+  "intent_id": "intent-1",
+  "status": "passed_dry_run",
+  "checks": [
+    {
+      "code": "schema_valid",
+      "status": "pass",
+      "details": "Validated only as imported fixture."
+    }
+  ],
+  "reasons": [],
+  "evaluated_at": "2026-05-13T12:00:00Z",
+  "policy_snapshot_id": "policy-1"
+}

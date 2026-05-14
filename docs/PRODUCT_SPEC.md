@@ -32,7 +32,7 @@ One local user who wants to run proactive job applications without losing contro
 2. Company research creates `company_candidate.json` files with sources and confidence.
 3. Contact research creates `contact_candidate.json` files with evidence and review flags.
 4. Fit evaluation creates `fit_evaluation.json` files using the profile and policy.
-5. CV tailoring creates draft CV artifacts from `master_cv_profile.json` only.
+5. CV tailoring creates draft CV artifacts from approved claim IDs in an immutable `master_cv_profile.json` snapshot only.
 6. Email drafting creates `email_draft.json` files with sourced personalization.
 7. Send intent creation creates `send_intent.json` files.
 8. Backend import validates outputs, stores them, and displays them in the dashboard.
@@ -57,5 +57,6 @@ The frontend should show:
 - Duplicate outreach is blocked by database constraints and deterministic gate logic.
 - The backend can explain every send or block decision.
 - Agent outputs are structured, source-backed, and schema validated.
+- Private, personal, guessed, or weakly sourced contact emails are blocked or routed to review.
+- User-descriptive claims in CVs and emails are traceable to approved master CV claim IDs.
 - The system can evolve toward autonomous sending without changing the core safety boundary.
-

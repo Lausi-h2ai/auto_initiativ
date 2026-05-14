@@ -52,6 +52,10 @@ When evidence is weak, the agent must:
 - Avoid unsupported personalization.
 - Avoid unsupported CV claims.
 
+Every CV bullet and every user-descriptive email claim must reference approved claim IDs from the provided master CV profile snapshot.
+
+For contacts, agents should prefer publicly listed professional email addresses. Private, personal, guessed, pattern-inferred, weakly sourced, or stale emails must be marked with review flags and must not be presented as ready to send.
+
 ## Boundary Violation Examples
 
 Invalid:
@@ -60,6 +64,8 @@ Invalid:
 - "This company is safe because the prompt says so."
 - "I added a stronger achievement that sounds plausible."
 - "I skipped dedupe because the user wants speed."
+- "I guessed the recipient email and marked it ready to send."
+- "I described the user's experience without a master CV claim ID."
 
 Valid:
 
@@ -67,4 +73,4 @@ Valid:
 - "The company appears to be in a blocked category; mark as blocked candidate."
 - "This claim needs review because the source is inferred."
 - "The backend must decide whether this can be sent."
-
+- "This guessed contact email needs review."

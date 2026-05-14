@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "evaluation_id": "evaluation-1",
+  "company_id": "company-1",
+  "profile_id": "profile-1",
+  "policy_id": "policy-1",
+  "fit_score": 0.81,
+  "decision": "promising",
+  "reasons": [
+    {
+      "text": "The company uses Python backend systems.",
+      "source_refs": ["source-1"]
+    }
+  ],
+  "risks": [
+    {
+      "text": "Remote policy needs confirmation.",
+      "source_refs": ["source-1"]
+    }
+  ],
+  "source_refs": ["source-1"],
+  "confidence": 0.82,
+  "review_flags": []
+}
+

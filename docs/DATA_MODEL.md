@@ -6,15 +6,17 @@ This document describes the target persistent entities. Exact table names can ch
 
 ### UserProfileSnapshot
 
-Stores imported `user_profile.json` versions. Snapshots allow future sends to reference the profile version used at drafting time.
+Stores imported `user_profile.json` versions. Snapshots are immutable and allow future sends to reference the exact profile version used at drafting time.
 
 ### MasterCvProfileSnapshot
 
-Stores approved career claims and provenance. CV tailoring must only use claims from this entity.
+Stores approved career claims and provenance. Snapshots are immutable. CV tailoring must only use claims from this entity.
+
+Every CV bullet and user-descriptive email claim must reference approved claim IDs from the relevant immutable master CV snapshot.
 
 ### PolicySnapshot
 
-Stores user-specific outreach policy, exclusions, blocked domains, contact rules, review thresholds, and send limits.
+Stores user-specific outreach policy, exclusions, blocked domains, contact rules, review thresholds, and send limits. Snapshots are immutable so historical gate decisions can be reproduced.
 
 ### Run
 
@@ -36,6 +38,8 @@ Represents a researched company. Dedupe should include normalized domain and pol
 
 Represents a possible recipient. Dedupe must include normalized recipient email.
 
+Contacts should preserve email provenance. Publicly listed professional contact emails are preferred. Private, personal, guessed, pattern-inferred, weakly sourced, or stale emails must carry review or block metadata for the gate.
+
 ### FitEvaluation
 
 Stores agent fit analysis, score, reasons, risks, and policy flags.
@@ -52,13 +56,15 @@ Stores the exact structured request that an agent wants the backend to consider 
 
 Stores deterministic gate decision, performed checks, blocking reasons, and reservation references.
 
+Gate results describe `evaluate_only` or `reserve_for_send` decisions. They do not represent final email adapter outcomes such as `sent` or `send_failed`.
+
 ### SendReservation
 
 Prevents duplicate or racing sends. Must be created transactionally before any future adapter call.
 
 ### SentMessage
 
-Stores future send results from an email adapter. This does not exist in the foundation as executable sending code.
+Stores future send results from an email adapter, including statuses such as `sent` or `send_failed`. This does not exist in the foundation as executable sending code.
 
 ### AuditLog
 
@@ -71,6 +77,17 @@ Append-only log of imports, validations, gate decisions, reservations, and futur
 - Unique active send reservation per recipient email.
 - Unique active send reservation per company key when company-level dedupe applies.
 - Foreign keys from send intents to company, contact, draft, profile snapshot, policy snapshot, and attachments.
+
+## Phase 1 Persistence Scope
+
+Phase 1 should persist only minimal operational records:
+
+- Runs
+- Imported files
+- Validation results
+- Import audit events
+
+The full entities described above are the Phase 2 target. Phase 1 should not prematurely normalize all agent outputs into final domain tables.
 
 ## Normalization
 
@@ -91,4 +108,3 @@ Audit logs should include:
 - Result status.
 - Machine-readable reason codes.
 - Timestamp.
-

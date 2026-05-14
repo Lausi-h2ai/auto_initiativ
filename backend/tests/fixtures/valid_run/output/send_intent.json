@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "intent_id": "intent-1",
+  "run_id": "valid_run",
+  "company_id": "company-1",
+  "contact_id": "contact-1",
+  "email_draft_id": "draft-1",
+  "recipient_email": "alex.hiring@example.com",
+  "recipient_name": "Alex Hiring",
+  "company_domain": "example.com",
+  "subject": "Application for backend role",
+  "body_text": "Hello Alex, I am interested in backend engineering work at Example Robotics.",
+  "body_html": "<p>Hello Alex, I am interested in backend engineering work at Example Robotics.</p>",
+  "attachments": [
+    {
+      "attachment_id": "attachment-1",
+      "path": "attachments/cv.pdf",
+      "kind": "cv",
+      "exists_at_draft_time": true
+    }
+  ],
+  "source_refs": ["source-1", "source-2"],
+  "claim_refs": ["claim-1"],
+  "policy_id": "policy-1",
+  "profile_id": "profile-1",
+  "master_cv_profile_id": "master-cv-1",
+  "confidence": 0.86,
+  "review_flags": [],
+  "created_by": "codex_agent"
+}
+

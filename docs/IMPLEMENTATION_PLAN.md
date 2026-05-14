@@ -16,7 +16,17 @@ Status: complete in this repository foundation.
 
 ## Phase 1: Backend Skeleton
 
-Goal: create a dry-run backend that can validate and import files.
+Goal: create a dry-run backend that can validate and import files while persisting only minimal operational records.
+
+Phase 1 should not build full domain persistence for companies, contacts, evaluations, drafts, profiles, policies, or send intents. It should store only the records needed to observe and debug imports:
+
+- Runs
+- Imported files
+- Validation results
+- Import audit events
+- Basic file metadata and error details
+
+Full normalized domain persistence belongs to Phase 2.
 
 Tasks:
 
@@ -25,13 +35,14 @@ Tasks:
 - Add Pydantic models matching `schemas/`.
 - Add JSON schema validation tests.
 - Add an import service that reads a run `output/` folder.
-- Persist imported records to a local development database.
+- Persist minimal run, import, validation, and audit records to a local development database.
 - Add audit logging for imports and validation failures.
 
 Acceptance:
 
 - Invalid agent outputs are rejected with clear errors.
-- Imported outputs are visible through API endpoints.
+- Imported file status and validation errors are visible through API endpoints.
+- Domain records are not yet normalized into full application tables.
 - No email adapter exists yet.
 
 ## Phase 2: Database Model and Dedupe
@@ -129,6 +140,7 @@ Tasks:
 - Add a fake dry-run adapter.
 - Add integration tests proving the gate is required before adapter invocation.
 - Keep real Gmail sending unimplemented unless explicitly requested.
+- Keep `sent` and `send_failed` as future send result statuses, not safety gate statuses.
 
 Acceptance:
 
@@ -137,5 +149,4 @@ Acceptance:
 
 ## Next Recommended Codex Task
 
-Implement Phase 1: create a minimal FastAPI backend skeleton with Pydantic models generated from or aligned to the schemas, a dry-run configuration default, and an import service that validates JSON files from a run `output/` folder. Do not add Gmail sending.
-
+Implement Phase 1: create a minimal FastAPI backend skeleton with Pydantic models generated from or aligned to the schemas, a dry-run configuration default, and an import service that validates JSON files from a run `output/` folder. Persist only minimal run, import, validation, and audit records. Do not implement normalized domain persistence yet. Do not add Gmail sending.

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "contact_id": "contact-1",
+  "company_id": "company-1",
+  "name": "Alex Hiring",
+  "role_title": "Engineering Manager",
+  "email": "alex.hiring@example.com",
+  "email_source": "company_site",
+  "profile_url": "https://example.com/team/alex",
+  "confidence": 0.92,
+  "source_refs": ["source-2"],
+  "review_flags": []
+}
+

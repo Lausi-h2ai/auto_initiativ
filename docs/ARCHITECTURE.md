@@ -72,16 +72,22 @@ Postgres is the source of truth for:
 
 Dedupe must be enforced with database constraints, not only with prompts.
 
+Profile, policy, and master CV records used by send intents must be immutable snapshots. If a profile, policy, or claim ledger changes, future work should reference a new snapshot instead of mutating history.
+
+Every CV bullet and user-descriptive email claim must reference approved claim IDs from the relevant master CV snapshot.
+
+Phase 1 should persist only minimal run, import, validation, and audit records. Full normalized persistence for companies, contacts, evaluations, drafts, send intents, gate results, and reservations belongs to Phase 2 and later.
+
 ## Data Flow
 
 1. Backend creates a run folder with task instructions and input context.
 2. Codex agent writes structured JSON outputs into `output/`.
 3. Backend import job validates JSON schemas.
 4. Backend normalizes accepted records into Postgres.
-5. Backend computes gate results for any `send_intent`.
+5. Backend computes gate results for any `send_intent` in `evaluate_only` mode by default.
 6. Dashboard displays imported records, blocks, warnings, and audit history.
 7. In dry-run mode, no email adapter is called.
-8. In a future sending mode, only the backend gate can call an email adapter.
+8. In a future sending mode, the backend gate must first run `reserve_for_send` and create a transactional reservation before any email adapter is called.
 
 ## Trust Boundaries
 
@@ -103,4 +109,3 @@ Trusted only after deterministic validation:
 ## Failure Defaults
 
 The system defaults to blocking, review, or dry-run when information is missing, low-confidence, contradictory, unsupported, or policy-relevant.
-
