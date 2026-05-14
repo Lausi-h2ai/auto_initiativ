@@ -96,13 +96,14 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ### AM-003-001: Reconcile Gate Status Schema And Docs
 
-- Status: `open`
+- Status: `done`
 - Priority: `P1`
 - Goal: align `schemas/gate_result.schema.json`, Pydantic models, fixtures, and `docs/SAFETY_GATES.md`.
 - Acceptance:
   - `sent` and `send_failed` are not gate statuses.
   - Gate modes are `evaluate_only` and future `reserve_for_send`.
   - Tests cover allowed and rejected statuses.
+  - Completed by `archive/tick-003-001.md`.
 
 ### AM-003-002: Implement Evaluate-Only Gate
 

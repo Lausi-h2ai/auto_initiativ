@@ -58,7 +58,7 @@ Phase 1 acceptance evidence:
 
 ## Remaining Risks
 
-1. Gate result status naming remains inconsistent between `docs/SAFETY_GATES.md` and `schemas/gate_result.schema.json`. This is not a Phase 1 blocker because Phase 1 only validates imported files and does not produce or execute gate results. It must be reconciled before Phase 3.
+1. Gate result status naming remained inconsistent between `docs/SAFETY_GATES.md` and `schemas/gate_result.schema.json` at Phase 1 audit time. This was not a Phase 1 blocker because Phase 1 only validates imported files and does not produce or execute gate results. Resolved in `AM-003-001`; see `archive/tick-003-001.md`.
 
 2. The API exposes imported file metadata and validation details, not raw imported JSON payloads. The raw JSON is stored in `ImportedFile.raw_json`, so this is an API design choice rather than a data-loss issue. Phase 2 should decide whether raw payload inspection is needed in a dedicated endpoint or dashboard view.
 
@@ -98,4 +98,4 @@ Out of scope:
 - Sending, send handoff, or adapter invocation.
 - Frontend/dashboard work.
 
-Keep all irreversible actions impossible. Do not implement Phase 3 gate behavior yet. Before Phase 3 begins, explicitly reconcile the gate status mismatch between `docs/SAFETY_GATES.md` and `schemas/gate_result.schema.json`.
+Keep all irreversible actions impossible. Do not implement Phase 3 gate behavior yet. The gate status mismatch noted at Phase 1 audit time was reconciled in `AM-003-001`.

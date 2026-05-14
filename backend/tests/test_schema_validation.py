@@ -107,6 +107,34 @@ def test_valid_fixtures_match_pydantic_models(filename):
     model.model_validate(data)
 
 
+@pytest.mark.parametrize("status", ["passed_evaluate_only", "blocked", "needs_review", "reserved_for_send"])
+def test_gate_result_accepts_only_gate_statuses(schemas_root, tmp_path, status):
+    data = json.loads((FIXTURES_ROOT / "valid_run" / "output" / "gate_result.json").read_text(encoding="utf-8"))
+    data["status"] = status
+    fixture = tmp_path / "gate_result.json"
+    fixture.write_text(json.dumps(data), encoding="utf-8")
+
+    outcome = JsonValidationService(SchemaRegistry(schemas_root=schemas_root)).validate_file(fixture)
+
+    assert outcome.status == "schema_validation_passed"
+    AGENT_OUTPUT_MODELS["gate_result.schema.json"].model_validate(data)
+
+
+@pytest.mark.parametrize("status", ["passed_dry_run", "reserved", "sent", "send_failed"])
+def test_gate_result_rejects_legacy_and_send_result_statuses(schemas_root, tmp_path, status):
+    data = json.loads((FIXTURES_ROOT / "valid_run" / "output" / "gate_result.json").read_text(encoding="utf-8"))
+    data["status"] = status
+    fixture = tmp_path / "gate_result.json"
+    fixture.write_text(json.dumps(data), encoding="utf-8")
+
+    outcome = JsonValidationService(SchemaRegistry(schemas_root=schemas_root)).validate_file(fixture)
+
+    assert outcome.status == "schema_validation_failed"
+    assert "invalid_enum" in outcome.reason_codes
+    with pytest.raises(ValidationError):
+        AGENT_OUTPUT_MODELS["gate_result.schema.json"].model_validate(data)
+
+
 @pytest.mark.parametrize(
     ("filename", "field_name"),
     [

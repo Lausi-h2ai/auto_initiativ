@@ -121,7 +121,7 @@ class GateResult(StrictModel):
     schema_version: Literal["1.0"]
     gate_result_id: str = Field(min_length=1)
     intent_id: str = Field(min_length=1)
-    status: Literal["passed_dry_run", "blocked", "needs_review", "reserved", "sent", "send_failed"]
+    status: Literal["passed_evaluate_only", "blocked", "needs_review", "reserved_for_send"]
     checks: list[GateCheck]
     reasons: list[GateReason]
     reservation_id: str | None = None

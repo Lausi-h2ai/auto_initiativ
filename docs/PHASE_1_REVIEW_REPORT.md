@@ -140,9 +140,11 @@ Files:
 - `schemas/gate_result.schema.json`
 - `backend/app/schemas/agent_outputs.py`
 
-The safety docs say allowed gate statuses are `passed_evaluate_only`, `blocked`, `needs_review`, and `reserved_for_send`, and that `sent` / `send_failed` are not gate statuses. The current JSON Schema accepts `passed_dry_run`, `reserved`, `sent`, and `send_failed`; the Pydantic model mirrors the schema.
+The safety docs say allowed gate statuses are `passed_evaluate_only`, `blocked`, `needs_review`, and `reserved_for_send`, and that `sent` / `send_failed` are not gate statuses. At review time, the JSON Schema accepted `passed_dry_run`, `reserved`, `sent`, and `send_failed`; the Pydantic model mirrored the schema.
 
 This discrepancy was already called out as a Phase 1 risk in `docs/PHASE_1_TASK_BREAKDOWN.md`. The implementation correctly treats JSON Schema as the Phase 1 import authority and does not produce or execute gate results. This should be reconciled before implementing Phase 3.
+
+Resolution: reconciled in `AM-003-001`; see `archive/tick-003-001.md`.
 
 Suggested fix:
 

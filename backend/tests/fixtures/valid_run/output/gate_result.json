@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "gate_result_id": "gate-1",
   "intent_id": "intent-1",
-  "status": "passed_dry_run",
+  "status": "passed_evaluate_only",
   "checks": [
     {
       "code": "schema_valid",

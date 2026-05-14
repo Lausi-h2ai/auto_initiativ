@@ -11,7 +11,7 @@
     "intent_id": { "type": "string", "minLength": 1 },
     "status": {
       "type": "string",
-      "enum": ["passed_dry_run", "blocked", "needs_review", "reserved", "sent", "send_failed"]
+      "enum": ["passed_evaluate_only", "blocked", "needs_review", "reserved_for_send"]
     },
     "checks": {
       "type": "array",
@@ -48,4 +48,3 @@
     }
   }
 }
-

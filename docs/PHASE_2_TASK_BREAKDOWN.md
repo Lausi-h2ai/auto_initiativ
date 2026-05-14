@@ -145,7 +145,7 @@ Keep existing Phase 1 files intact unless a Phase 2 task explicitly changes them
 
 9. Add future-compatible gate result table as persisted records only.
    - This table may store imported `gate_result.json` for auditability, but Phase 2 must not compute gate results.
-   - Record the known schema/docs mismatch as a Phase 3 blocker before executable gate work.
+   - Record the known schema/docs mismatch as a Phase 3 blocker before executable gate work. Resolved in `AM-003-001`.
 
 10. Add send reservation table for constraints only.
    - Model reservation identity, send intent FK, normalized recipient email, company FK, company policy key, policy snapshot FK, status, created_at, and released/expired timestamps if needed.
@@ -323,9 +323,9 @@ Risk: Candidate dedupe could incorrectly block research of the same company befo
 
 Mitigation: Separate candidate uniqueness from contacted/reservation uniqueness. Enforce "previously contacted" on outreach state, not on every candidate row.
 
-Risk: Gate result status mismatch could leak into Phase 2 tables.
+Risk: Gate result status mismatch could leak into Phase 2 tables. Resolved in `AM-003-001`.
 
-Mitigation: Store imported gate results only as raw/future-compatible records. Do not build executable gate behavior until Phase 3 reconciles `docs/SAFETY_GATES.md` and `schemas/gate_result.schema.json`.
+Mitigation: Store imported gate results only as raw/future-compatible records. Do not build executable gate behavior until Phase 3 contracts are reconciled.
 
 Risk: Normalization choices could be too clever and merge unrelated companies.
 
