@@ -6,20 +6,20 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ## Next Recommended Tick
 
-### AM-002-007: Phase 2 Audit
+### AM-003-002: Implement Evaluate-Only Gate
 
 - Status: `open`
 - Priority: `P1`
-- Suggested roles: `AUDITOR`, `REVIEWER`
-- Goal: audit Phase 2 for readiness before Phase 3 deterministic gate work.
-- Inputs: `CHARTER.md`, `BACKLOG.md`, `BUGS.md`, `docs/PHASE_2_TASK_BREAKDOWN.md`, archive tick summaries, backend models, migrations, import normalization, tests.
-- Outputs: Phase 2 audit report in `docs/` or `reviews/`.
+- Suggested roles: `IMPLEMENTER`, `TESTER`, `REVIEWER`
+- Goal: implement deterministic `evaluate_only` gate checks without reservation or sending.
+- Inputs: `docs/PHASE_2_FINAL_AUDIT.md`, `docs/SAFETY_GATES.md`, `schemas/send_intent.schema.json`, `schemas/gate_result.schema.json`, Phase 2 domain tables, policy snapshots, send intents, audit logs.
+- Outputs: deterministic gate service, audit logs, and focused tests.
 - Acceptance:
-  - Confirms normalized persistence and dedupe constraints are complete.
-  - Confirms seed fixtures and import-to-domain normalization are complete.
-  - Confirms no gate execution, email adapter, Gmail sending, or OpenAI API usage.
-  - Existing tests still pass.
-  - Lists remaining risks before Phase 3.
+  - Checks schema validity, dedupe state, policy, blocked domains, sources, attachments, limits, forbidden claims, claim IDs, contact safety, confidence, and review flags.
+  - Writes pre/post audit logs.
+  - Blocks by default on missing or ambiguous data.
+  - No reservation creation.
+  - No email adapter.
 
 ## Phase 2: Database Model And Dedupe
 
@@ -96,7 +96,7 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ### AM-002-007: Phase 2 Audit
 
-- Status: `open`
+- Status: `done`
 - Priority: `P1`
 - Goal: audit Phase 2 for readiness before Phase 3 deterministic gate work.
 - Acceptance:
@@ -105,6 +105,7 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
   - Confirms no gate execution, email adapter, Gmail sending, or OpenAI API usage.
   - Existing tests still pass.
   - Lists remaining risks before Phase 3.
+  - Completed by `docs/PHASE_2_FINAL_AUDIT.md` and `archive/tick-002-007.md`.
 
 ## Phase 3: Deterministic Gate
 

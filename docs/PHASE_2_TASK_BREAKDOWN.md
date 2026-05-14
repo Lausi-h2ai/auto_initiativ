@@ -293,19 +293,19 @@ Boundaries:
 
 ## 11. Acceptance Checklist
 
-- [ ] Migration strategy is decided and documented.
-- [ ] Postgres-oriented migrations exist for Phase 2 tables.
-- [ ] Phase 1 operational tables remain intact.
-- [ ] Immutable profile, master CV, and policy snapshot tables exist.
-- [ ] Company and contact tables store raw and normalized dedupe fields.
-- [ ] Draft, fit evaluation, and send intent tables store source refs, confidence, review flags, raw JSON, and provenance links.
-- [ ] Future-compatible gate result records are persisted only as data; no gate is executed.
-- [ ] Send reservation table has database constraints for active recipient/company uniqueness.
-- [ ] Recipient email, company domain, and company policy key normalization are deterministic and tested.
-- [ ] Database constraints, not prompts, enforce dedupe.
+- [x] Migration strategy is decided and documented.
+- [x] Postgres-oriented migrations exist for Phase 2 tables.
+- [x] Phase 1 operational tables remain intact.
+- [x] Immutable profile, master CV, and policy snapshot tables exist.
+- [x] Company and contact tables store raw and normalized dedupe fields.
+- [x] Draft, fit evaluation, and send intent tables store source refs, confidence, review flags, raw JSON, and provenance links.
+- [x] Future-compatible gate result records are persisted only as data; no gate is executed.
+- [x] Send reservation table has database constraints for active recipient/company uniqueness.
+- [x] Recipient email, company domain, and company policy key normalization are deterministic and tested.
+- [x] Database constraints, not prompts, enforce dedupe.
 - [x] Seed fixtures are fake, safe, and deterministic.
 - [x] Import-to-domain normalization handles only schema-valid outputs.
-- [ ] Duplicate recipient and duplicate company tests fail at the database boundary.
+- [x] Duplicate recipient and duplicate company tests fail at the database boundary.
 - [x] Existing import tests still pass.
 - [x] Boundary tests still prove no Gmail, no OpenAI API dependency, no adapter, and no sending path.
 

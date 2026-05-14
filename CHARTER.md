@@ -8,11 +8,11 @@ The product helps one user research companies, evaluate fit, tailor CV material 
 
 ## 2. Current Phase
 
-Current phase: Phase 2 and forward.
+Current phase: Phase 3 and forward.
 
-Phase 1 is complete and audited. The backend currently provides a dry-run FastAPI skeleton, schema-backed run-output import, minimal operational persistence, API inspection endpoints, and tests.
+Phase 1 is complete and audited. Phase 2 is complete and audited in `docs/PHASE_2_FINAL_AUDIT.md`. The backend currently provides a dry-run FastAPI skeleton, schema-backed run-output import, operational persistence, normalized Phase 2 domain persistence, deterministic normalization, database-backed dedupe constraints, API inspection endpoints, and tests.
 
-The next work is Phase 2: normalized database model and dedupe constraints.
+The next work is Phase 3: deterministic `evaluate_only` safety gate behavior. Phase 3 must not add email sending, Gmail access, OpenAI API usage, or an email adapter.
 
 ## 3. Non-Negotiable Safety Rules
 
@@ -90,10 +90,16 @@ Implemented:
 - Tests covering valid imports, invalid JSON, schema failures, missing expected files, unsupported run types, audit logging, dry-run default, and no Gmail/OpenAI/email adapter boundary.
 - Final Phase 1 audit: ready for Phase 2.
 
+Implemented after Phase 2:
+
+- Normalized domain models.
+- Dedupe constraints.
+- Alembic migration workflow.
+- Fake deterministic Phase 2 seed fixtures.
+- Import-to-domain normalization for schema-valid outputs.
+
 Not implemented:
 
-- Phase 2 normalized domain models.
-- Dedupe constraints.
 - Deterministic safety gate.
 - Dashboard.
 - Onboarding flow.
@@ -188,4 +194,3 @@ The user:
 - Decides when locked future capabilities, such as real email sending, may be considered.
 
 Agents execute bounded roles inside the charter. They do not silently change project direction.
-
