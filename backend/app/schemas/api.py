@@ -90,3 +90,179 @@ class GateEvaluationResponse(BaseModel):
     reasons: list[dict[str, str]]
     evaluated_at: datetime
     policy_snapshot_id: str | None
+
+
+class DashboardSummaryResponse(BaseModel):
+    runs: int
+    companies: int
+    contacts: int
+    fit_evaluations: int
+    email_drafts: int
+    send_intents: int
+    gate_results: int
+    outreach_records: int
+    send_intents_by_status: dict[str, int]
+    gate_results_by_status: dict[str, int]
+    outreach_records_by_status: dict[str, int]
+
+
+class GateResultSummaryResponse(BaseModel):
+    gate_result_id: str
+    status: str
+    evaluated_at: datetime
+    reasons: list[Any]
+
+
+class CompanyResponse(BaseModel):
+    id: int
+    company_id: str
+    name: str
+    raw_domain: str | None
+    normalized_domain: str | None
+    normalized_name: str
+    company_policy_key: str
+    company_policy_key_kind: str
+    description: str | None
+    industry_tags: list[Any]
+    locations: list[Any]
+    remote_policy: str | None
+    source_refs: list[Any]
+    confidence: float
+    review_flags: list[Any]
+    policy_conflicts: list[Any]
+    raw: dict[str, Any]
+    imported_file_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ContactResponse(BaseModel):
+    id: int
+    contact_id: str
+    company_id: int | None
+    external_company_id: str
+    name: str | None
+    role_title: str | None
+    raw_email: str
+    normalized_recipient_email: str
+    email_source: str
+    profile_url: str | None
+    source_refs: list[Any]
+    confidence: float
+    review_flags: list[Any]
+    raw: dict[str, Any]
+    imported_file_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FitEvaluationResponse(BaseModel):
+    id: int
+    evaluation_id: str
+    company_id: int | None
+    external_company_id: str
+    user_profile_snapshot_id: int | None
+    policy_snapshot_id: int | None
+    fit_score: float
+    decision: str
+    reasons: list[Any]
+    risks: list[Any]
+    source_refs: list[Any]
+    confidence: float
+    review_flags: list[Any]
+    raw: dict[str, Any]
+    imported_file_id: int | None
+    created_at: datetime
+
+
+class EmailDraftResponse(BaseModel):
+    id: int
+    draft_id: str
+    company_id: int | None
+    external_company_id: str
+    contact_id: int | None
+    external_contact_id: str
+    subject: str
+    body_text: str
+    body_html: str | None
+    tone: str | None
+    claim_refs: list[Any]
+    source_refs: list[Any]
+    attachments: list[Any]
+    confidence: float
+    review_flags: list[Any]
+    raw: dict[str, Any]
+    imported_file_id: int | None
+    created_at: datetime
+
+
+class SendIntentResponse(BaseModel):
+    id: int
+    intent_id: str
+    run_id: str
+    company_id: int | None
+    external_company_id: str
+    contact_id: int | None
+    external_contact_id: str
+    email_draft_id: int | None
+    external_email_draft_id: str
+    raw_recipient_email: str
+    normalized_recipient_email: str
+    recipient_name: str | None
+    company_domain: str | None
+    subject: str
+    body_text: str
+    body_html: str | None
+    attachments: list[Any]
+    source_refs: list[Any]
+    claim_refs: list[Any]
+    policy_snapshot_id: int | None
+    external_policy_id: str
+    user_profile_snapshot_id: int | None
+    external_profile_id: str
+    master_cv_profile_snapshot_id: int | None
+    external_master_cv_profile_id: str
+    confidence: float
+    review_flags: list[Any]
+    created_by: str
+    status: str
+    raw: dict[str, Any]
+    imported_file_id: int | None
+    created_at: datetime
+    updated_at: datetime
+    latest_gate_result: GateResultSummaryResponse | None = None
+
+
+class GateResultResponse(BaseModel):
+    id: int
+    gate_result_id: str
+    send_intent_id: int | None
+    external_intent_id: str
+    status: str
+    checks: list[Any]
+    reasons: list[Any]
+    external_reservation_id: str | None
+    evaluated_at: datetime
+    policy_snapshot_id: int | None
+    external_policy_id: str | None
+    raw: dict[str, Any]
+    imported_file_id: int | None
+    imported_at: datetime
+
+
+class OutreachRecordResponse(BaseModel):
+    id: int
+    outreach_record_id: str
+    send_intent_id: int | None
+    company_id: int | None
+    contact_id: int | None
+    normalized_recipient_email: str
+    company_policy_key: str
+    policy_snapshot_id: int | None
+    channel: str
+    status: str
+    dedupe_recipient: bool
+    dedupe_company: bool
+    occurred_at: datetime
+    source: str
+    notes: dict[str, Any]

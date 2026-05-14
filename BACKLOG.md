@@ -6,19 +6,18 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ## Next Recommended Tick
 
-### AM-004-002A: Add Read-Only Dashboard APIs
+### AM-004-002B: Build Dashboard MVP
 
 - Status: `open`
 - Priority: `P2`
 - Suggested roles: `IMPLEMENTER`, `TESTER`, `REVIEWER`
-- Goal: add read-only API endpoints for the dashboard MVP.
-- Inputs: `docs/DASHBOARD_SCOPE_PLAN.md`, current domain models, current API routes and schemas.
-- Outputs: read-only dashboard API schemas, endpoints, and tests.
+- Goal: implement a local dashboard UI on top of the read-only dashboard APIs.
+- Inputs: `docs/DASHBOARD_SCOPE_PLAN.md`, current API routes and schemas.
+- Outputs: local dashboard UI and tests.
 - Acceptance:
-  - Exposes read-only list/detail endpoints for companies, contacts, fit evaluations, email drafts, send intents, gate results, outreach records, and dashboard summary counts.
-  - Supports basic filters for status, reason code, confidence, review flags, run, company, contact, and audit fields.
-  - Tests cover list/detail/filter behavior.
-  - No send endpoint, reservation creation, email adapter, Gmail integration, or OpenAI dependency.
+  - Shows backend state, not agent assumptions.
+  - Supports filtering by status, reason code, confidence, and review flags.
+  - Does not expose a send button, reservation action, Gmail integration, email adapter, or OpenAI dependency.
 
 ## Phase 2: Database Model And Dedupe
 
@@ -155,7 +154,7 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ### AM-004-002A: Add Read-Only Dashboard APIs
 
-- Status: `open`
+- Status: `done`
 - Priority: `P2`
 - Goal: add read-only API endpoints for the dashboard MVP.
 - Acceptance:
@@ -163,6 +162,7 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
   - Supports basic filters for status, reason code, confidence, review flags, run, company, contact, and audit fields.
   - Tests cover list/detail/filter behavior.
   - No send endpoint, reservation creation, email adapter, Gmail integration, or OpenAI dependency.
+  - Completed by `archive/tick-004-002A.md` and `reviews/tick-004-002A-dashboard-apis.md`.
 
 ### AM-004-002B: Build Dashboard MVP
 
