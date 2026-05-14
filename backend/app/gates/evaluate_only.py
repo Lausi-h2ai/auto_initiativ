@@ -320,7 +320,7 @@ class EvaluateOnlyGateService:
         if email_draft is not None:
             draft_source_refs = _json_list(email_draft.source_refs_json)
             if not set(source_refs).issubset(set(draft_source_refs)):
-                state.warn_check("source_refs_not_in_draft", "Some send intent source refs are not present on the email draft.", field="source_refs")
+                state.fail_check("source_refs_not_in_draft", "Some send intent source refs are not present on the email draft.", field="source_refs")
 
         attachments = _json_list(intent.attachments_json)
         missing = [

@@ -6,19 +6,18 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ## Next Recommended Tick
 
-### AM-003-003: Gate Test Matrix
+### AM-004-001: Dashboard Scope Plan
 
 - Status: `open`
-- Priority: `P1`
-- Suggested roles: `TESTER`, `REVIEWER`
-- Goal: add tests for every required blocking reason.
-- Inputs: `docs/SAFETY_GATES.md`, `backend/app/gates/evaluate_only.py`, Phase 2 fixtures and domain rows.
-- Outputs: focused gate test matrix and any small gate fixes exposed by the matrix.
+- Priority: `P2`
+- Suggested roles: `ORCHESTRATOR`, `RESEARCHER`, `REVIEWER`
+- Goal: plan the dashboard views and API needs.
+- Inputs: `docs/PRODUCT_SPEC.md`, `docs/ARCHITECTURE.md`, `docs/PHASE_2_FINAL_AUDIT.md`, `docs/SAFETY_GATES.md`, current API routes and domain models.
+- Outputs: dashboard scope plan and API gap list.
 - Acceptance:
-  - Each gate reason has a focused test.
-  - Gate is deterministic with the same DB snapshot.
-  - No reservation creation.
-  - No email adapter.
+  - Covers runs, companies, contacts, evaluations, drafts, send queue, blocked intents, and audit logs.
+  - Identifies backend/API gaps before implementation.
+  - No marketing landing page.
 
 ## Phase 2: Database Model And Dedupe
 
@@ -133,12 +132,13 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ### AM-003-003: Gate Test Matrix
 
-- Status: `open`
+- Status: `done`
 - Priority: `P1`
 - Goal: add tests for every required blocking reason.
 - Acceptance:
   - Each gate reason has a focused test.
   - Gate is deterministic with the same DB snapshot.
+  - Completed by `reviews/tick-003-003-gate-test-matrix.md` and `archive/tick-003-003.md`.
 
 ## Phase 4: Dashboard MVP
 
