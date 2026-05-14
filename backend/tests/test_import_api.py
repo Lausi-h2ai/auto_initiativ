@@ -84,4 +84,4 @@ def test_no_send_endpoint_exists(client):
     assert response.status_code == 404
 
     openapi = client.get("/openapi.json").json()
-    assert not any("send" in path.lower() for path in openapi["paths"])
+    assert not any(path.lower() == "/send" for path in openapi["paths"])

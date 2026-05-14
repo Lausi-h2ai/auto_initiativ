@@ -6,18 +6,17 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ## Next Recommended Tick
 
-### AM-003-002: Implement Evaluate-Only Gate
+### AM-003-003: Gate Test Matrix
 
 - Status: `open`
 - Priority: `P1`
-- Suggested roles: `IMPLEMENTER`, `TESTER`, `REVIEWER`
-- Goal: implement deterministic `evaluate_only` gate checks without reservation or sending.
-- Inputs: `docs/PHASE_2_FINAL_AUDIT.md`, `docs/SAFETY_GATES.md`, `schemas/send_intent.schema.json`, `schemas/gate_result.schema.json`, Phase 2 domain tables, policy snapshots, send intents, audit logs.
-- Outputs: deterministic gate service, audit logs, and focused tests.
+- Suggested roles: `TESTER`, `REVIEWER`
+- Goal: add tests for every required blocking reason.
+- Inputs: `docs/SAFETY_GATES.md`, `backend/app/gates/evaluate_only.py`, Phase 2 fixtures and domain rows.
+- Outputs: focused gate test matrix and any small gate fixes exposed by the matrix.
 - Acceptance:
-  - Checks schema validity, dedupe state, policy, blocked domains, sources, attachments, limits, forbidden claims, claim IDs, contact safety, confidence, and review flags.
-  - Writes pre/post audit logs.
-  - Blocks by default on missing or ambiguous data.
+  - Each gate reason has a focused test.
+  - Gate is deterministic with the same DB snapshot.
   - No reservation creation.
   - No email adapter.
 
@@ -122,7 +121,7 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ### AM-003-002: Implement Evaluate-Only Gate
 
-- Status: `open`
+- Status: `done`
 - Priority: `P1`
 - Goal: implement deterministic `evaluate_only` gate checks without reservation or sending.
 - Acceptance:
@@ -130,6 +129,7 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
   - Writes pre/post audit logs.
   - Blocks by default on missing or ambiguous data.
   - No email adapter.
+  - Completed by `archive/tick-003-002.md`.
 
 ### AM-003-003: Gate Test Matrix
 

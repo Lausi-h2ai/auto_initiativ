@@ -81,3 +81,12 @@ class AuditLogResponse(BaseModel):
     metadata: dict[str, Any]
     created_at: datetime
 
+
+class GateEvaluationResponse(BaseModel):
+    gate_result_id: str
+    intent_id: str
+    status: str
+    checks: list[dict[str, str]]
+    reasons: list[dict[str, str]]
+    evaluated_at: datetime
+    policy_snapshot_id: str | None

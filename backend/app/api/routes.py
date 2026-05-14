@@ -9,9 +9,11 @@ from sqlmodel import Session, select
 from backend.app.core.config import get_settings
 from backend.app.db.models import AuditLog, ImportedFile, Run, ValidationResult
 from backend.app.db.session import get_session
+from backend.app.gates.evaluate_only import EvaluateOnlyGateService
 from backend.app.imports.import_service import RunImportService
 from backend.app.schemas.api import (
     AuditLogResponse,
+    GateEvaluationResponse,
     HealthResponse,
     ImportedFileResponse,
     ImportResponse,
@@ -109,6 +111,24 @@ def list_run_files(run_id: str, session: Session = Depends(get_session)) -> list
 def list_validation_results(run_id: str, session: Session = Depends(get_session)) -> list[ValidationResultResponse]:
     results = session.exec(select(ValidationResult).where(ValidationResult.run_id == run_id).order_by(ValidationResult.filename)).all()
     return [_validation_response(result) for result in results]
+
+
+@router.post("/gate/evaluations/{intent_id}", response_model=GateEvaluationResponse)
+def evaluate_gate(intent_id: str, session: Session = Depends(get_session)) -> GateEvaluationResponse:
+    try:
+        result = EvaluateOnlyGateService(session=session).evaluate(intent_id)
+        session.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return GateEvaluationResponse(
+        gate_result_id=result.gate_result.gate_result_id,
+        intent_id=result.gate_result.external_intent_id,
+        status=result.gate_result.status,
+        checks=result.checks,
+        reasons=result.reasons,
+        evaluated_at=result.gate_result.evaluated_at,
+        policy_snapshot_id=result.gate_result.external_policy_id,
+    )
 
 
 @router.get("/audit-logs", response_model=list[AuditLogResponse])
