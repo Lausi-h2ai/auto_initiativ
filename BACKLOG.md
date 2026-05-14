@@ -6,18 +6,19 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ## Next Recommended Tick
 
-### AM-004-001: Dashboard Scope Plan
+### AM-004-002A: Add Read-Only Dashboard APIs
 
 - Status: `open`
 - Priority: `P2`
-- Suggested roles: `ORCHESTRATOR`, `RESEARCHER`, `REVIEWER`
-- Goal: plan the dashboard views and API needs.
-- Inputs: `docs/PRODUCT_SPEC.md`, `docs/ARCHITECTURE.md`, `docs/PHASE_2_FINAL_AUDIT.md`, `docs/SAFETY_GATES.md`, current API routes and domain models.
-- Outputs: dashboard scope plan and API gap list.
+- Suggested roles: `IMPLEMENTER`, `TESTER`, `REVIEWER`
+- Goal: add read-only API endpoints for the dashboard MVP.
+- Inputs: `docs/DASHBOARD_SCOPE_PLAN.md`, current domain models, current API routes and schemas.
+- Outputs: read-only dashboard API schemas, endpoints, and tests.
 - Acceptance:
-  - Covers runs, companies, contacts, evaluations, drafts, send queue, blocked intents, and audit logs.
-  - Identifies backend/API gaps before implementation.
-  - No marketing landing page.
+  - Exposes read-only list/detail endpoints for companies, contacts, fit evaluations, email drafts, send intents, gate results, outreach records, and dashboard summary counts.
+  - Supports basic filters for status, reason code, confidence, review flags, run, company, contact, and audit fields.
+  - Tests cover list/detail/filter behavior.
+  - No send endpoint, reservation creation, email adapter, Gmail integration, or OpenAI dependency.
 
 ## Phase 2: Database Model And Dedupe
 
@@ -144,14 +145,26 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ### AM-004-001: Dashboard Scope Plan
 
-- Status: `open`
+- Status: `done`
 - Priority: `P2`
 - Goal: plan the dashboard views and API needs.
 - Acceptance:
   - Covers runs, companies, contacts, evaluations, drafts, send queue, blocked intents, and audit logs.
   - No marketing landing page.
+  - Completed by `docs/DASHBOARD_SCOPE_PLAN.md` and `archive/tick-004-001.md`.
 
-### AM-004-002: Build Dashboard MVP
+### AM-004-002A: Add Read-Only Dashboard APIs
+
+- Status: `open`
+- Priority: `P2`
+- Goal: add read-only API endpoints for the dashboard MVP.
+- Acceptance:
+  - Exposes read-only list/detail endpoints for companies, contacts, fit evaluations, email drafts, send intents, gate results, outreach records, and dashboard summary counts.
+  - Supports basic filters for status, reason code, confidence, review flags, run, company, contact, and audit fields.
+  - Tests cover list/detail/filter behavior.
+  - No send endpoint, reservation creation, email adapter, Gmail integration, or OpenAI dependency.
+
+### AM-004-002B: Build Dashboard MVP
 
 - Status: `open`
 - Priority: `P2`

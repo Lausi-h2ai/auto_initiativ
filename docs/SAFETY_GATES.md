@@ -136,4 +136,6 @@ Gate logic must be pure with respect to the same database snapshot and input fil
 
 `AM-003-002` implemented the first deterministic `evaluate_only` gate service. It can return `passed_evaluate_only`, `blocked`, or `needs_review`, persists a gate-result record, and writes pre/post audit events.
 
-This implementation does not create send reservations, call an email adapter, call Gmail, send email, or use OpenAI. The next tick, `AM-003-003`, should expand the test matrix so each required blocking reason has focused coverage.
+`AM-003-003` expanded the deterministic gate test matrix across allow, block, needs-review, and warning outcomes.
+
+This implementation does not create send reservations, call an email adapter, call Gmail, send email, or use OpenAI. Future `reserve_for_send` behavior remains locked for a later phase.

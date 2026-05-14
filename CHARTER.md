@@ -8,11 +8,11 @@ The product helps one user research companies, evaluate fit, tailor CV material 
 
 ## 2. Current Phase
 
-Current phase: Phase 3 and forward.
+Current phase: Phase 4 and forward.
 
-Phase 1 is complete and audited. Phase 2 is complete and audited in `docs/PHASE_2_FINAL_AUDIT.md`. The backend currently provides a dry-run FastAPI skeleton, schema-backed run-output import, operational persistence, normalized Phase 2 domain persistence, deterministic normalization, database-backed dedupe constraints, API inspection endpoints, and tests.
+Phase 1 is complete and audited. Phase 2 is complete and audited in `docs/PHASE_2_FINAL_AUDIT.md`. Phase 3 has implemented and tested deterministic `evaluate_only` gate behavior. The backend currently provides a dry-run FastAPI skeleton, schema-backed run-output import, operational persistence, normalized Phase 2 domain persistence, deterministic normalization, database-backed dedupe constraints, API inspection endpoints, deterministic evaluate-only gate checks, and tests.
 
-The next work is Phase 3: deterministic `evaluate_only` safety gate behavior. Phase 3 must not add email sending, Gmail access, OpenAI API usage, or an email adapter.
+The next work is Phase 4: dashboard MVP. Phase 4 starts with read-only dashboard APIs and must not add email sending, Gmail access, OpenAI API usage, or an email adapter.
 
 ## 3. Non-Negotiable Safety Rules
 
@@ -97,13 +97,15 @@ Implemented after Phase 2:
 - Alembic migration workflow.
 - Fake deterministic Phase 2 seed fixtures.
 - Import-to-domain normalization for schema-valid outputs.
+- Deterministic evaluate-only safety gate.
+- Gate test matrix covering allow, block, needs-review, and warning outcomes.
 
 Not implemented:
 
-- Deterministic safety gate.
 - Dashboard.
 - Onboarding flow.
 - Codex run orchestration.
+- Send reservation gate mode.
 - Email adapter interface.
 - Gmail sending.
 
