@@ -303,7 +303,7 @@ Boundaries:
 - [ ] Send reservation table has database constraints for active recipient/company uniqueness.
 - [ ] Recipient email, company domain, and company policy key normalization are deterministic and tested.
 - [ ] Database constraints, not prompts, enforce dedupe.
-- [ ] Seed fixtures are fake, safe, and deterministic.
+- [x] Seed fixtures are fake, safe, and deterministic.
 - [ ] Import-to-domain normalization handles only schema-valid outputs.
 - [ ] Duplicate recipient and duplicate company tests fail at the database boundary.
 - [ ] Existing import tests still pass.

@@ -6,18 +6,18 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ## Next Recommended Tick
 
-### AM-002-005: Add Phase 2 Seed Fixtures
+### AM-002-006: Import Valid Outputs Into Domain Tables
 
 - Status: `open`
 - Priority: `P2`
-- Suggested roles: `IMPLEMENTER`, `TESTER`
-- Goal: create local development fixtures for profiles, policies, companies, contacts, and send intents.
-- Inputs: `CHARTER.md`, `docs/PHASE_2_TASK_BREAKDOWN.md`, current Phase 2 models, normalization helpers, dedupe constraints, schemas, tests.
-- Outputs: fake local seed fixtures and deterministic fixture tests.
+- Suggested roles: `IMPLEMENTER`, `TESTER`, `REVIEWER`
+- Goal: extend import processing so schema-valid outputs can be normalized into Phase 2 tables.
+- Inputs: `CHARTER.md`, `docs/PHASE_2_TASK_BREAKDOWN.md`, current Phase 2 models, normalization helpers, seed fixtures, schemas, tests.
+- Outputs: domain normalization service and tests linking valid imported outputs to normalized domain rows.
 - Acceptance:
-  - Fixtures are fake and safe.
-  - No real personal or email credentials.
-  - Tests can use fixtures deterministically.
+  - Invalid outputs remain rejected.
+  - Raw import records remain auditable.
+  - Domain normalization has tests.
   - Existing tests still pass.
   - No gate execution, email adapter, Gmail sending, or OpenAI API usage.
 
@@ -74,13 +74,14 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ### AM-002-005: Add Phase 2 Seed Fixtures
 
-- Status: `open`
+- Status: `done`
 - Priority: `P2`
 - Goal: create local development fixtures for profiles, policies, companies, contacts, and send intents.
 - Acceptance:
   - Fixtures are fake and safe.
   - No real personal or email credentials.
   - Tests can use fixtures deterministically.
+  - Completed by `archive/tick-002-005.md`.
 
 ### AM-002-006: Import Valid Outputs Into Domain Tables
 
