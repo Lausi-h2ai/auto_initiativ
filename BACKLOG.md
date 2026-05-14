@@ -6,20 +6,20 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ## Next Recommended Tick
 
-### AM-002-006: Import Valid Outputs Into Domain Tables
+### AM-002-007: Phase 2 Audit
 
 - Status: `open`
-- Priority: `P2`
-- Suggested roles: `IMPLEMENTER`, `TESTER`, `REVIEWER`
-- Goal: extend import processing so schema-valid outputs can be normalized into Phase 2 tables.
-- Inputs: `CHARTER.md`, `docs/PHASE_2_TASK_BREAKDOWN.md`, current Phase 2 models, normalization helpers, seed fixtures, schemas, tests.
-- Outputs: domain normalization service and tests linking valid imported outputs to normalized domain rows.
+- Priority: `P1`
+- Suggested roles: `AUDITOR`, `REVIEWER`
+- Goal: audit Phase 2 for readiness before Phase 3 deterministic gate work.
+- Inputs: `CHARTER.md`, `BACKLOG.md`, `BUGS.md`, `docs/PHASE_2_TASK_BREAKDOWN.md`, archive tick summaries, backend models, migrations, import normalization, tests.
+- Outputs: Phase 2 audit report in `docs/` or `reviews/`.
 - Acceptance:
-  - Invalid outputs remain rejected.
-  - Raw import records remain auditable.
-  - Domain normalization has tests.
+  - Confirms normalized persistence and dedupe constraints are complete.
+  - Confirms seed fixtures and import-to-domain normalization are complete.
+  - Confirms no gate execution, email adapter, Gmail sending, or OpenAI API usage.
   - Existing tests still pass.
-  - No gate execution, email adapter, Gmail sending, or OpenAI API usage.
+  - Lists remaining risks before Phase 3.
 
 ## Phase 2: Database Model And Dedupe
 
@@ -85,13 +85,26 @@ Priority values: `P0` critical, `P1` next, `P2` soon, `P3` later.
 
 ### AM-002-006: Import Valid Outputs Into Domain Tables
 
-- Status: `open`
+- Status: `done`
 - Priority: `P2`
 - Goal: extend import processing so schema-valid outputs can be normalized into Phase 2 tables.
 - Acceptance:
   - Invalid outputs remain rejected.
   - Raw import records remain auditable.
   - Domain normalization has tests.
+  - Completed by `archive/tick-002-006.md`.
+
+### AM-002-007: Phase 2 Audit
+
+- Status: `open`
+- Priority: `P1`
+- Goal: audit Phase 2 for readiness before Phase 3 deterministic gate work.
+- Acceptance:
+  - Confirms normalized persistence and dedupe constraints are complete.
+  - Confirms seed fixtures and import-to-domain normalization are complete.
+  - Confirms no gate execution, email adapter, Gmail sending, or OpenAI API usage.
+  - Existing tests still pass.
+  - Lists remaining risks before Phase 3.
 
 ## Phase 3: Deterministic Gate
 

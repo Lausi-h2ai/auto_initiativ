@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.models import AuditLog, ImportedFile, Run, ValidationResult, utc_now
+from backend.app.imports.domain_normalizer import DomainNormalizationService
 from backend.app.imports.file_classifier import EXPECTED_FILENAMES, classify_filename
 from backend.app.imports.validation import JsonValidationService, ValidationOutcome
 
@@ -126,6 +127,17 @@ class RunImportService:
                 results.append(self._record_file_result(run_id, path, outcome))
 
             run.status = "imported" if all(result.status == "schema_validation_passed" for result in results) else "imported_with_errors"
+            normalization_result = None
+            normalization_metadata: dict[str, Any] | None = None
+            if run.status == "imported":
+                normalization_result = DomainNormalizationService(self.session).normalize_run(run_id)
+                normalization_metadata = {
+                    "status": normalization_result.status,
+                    "counts": normalization_result.counts,
+                    "unresolved_references": normalization_result.unresolved_references,
+                }
+                if normalization_result.reason_codes:
+                    run.status = "imported_with_errors"
             run.completed_at = utc_now()
             run.updated_at = utc_now()
             self.session.add(run)
@@ -135,8 +147,14 @@ class RunImportService:
                 entity_type="run",
                 entity_id=run_id,
                 result_status=run.status,
-                reason_codes=[] if run.status == "imported" else ["validation_errors_present"],
-                metadata={"file_count": len(results)},
+                reason_codes=(
+                    []
+                    if run.status == "imported"
+                    else normalization_result.reason_codes
+                    if normalization_metadata is not None
+                    else ["validation_errors_present"]
+                ),
+                metadata={"file_count": len(results), "domain_normalization": normalization_metadata},
             )
             self.session.commit()
             self.session.refresh(run)
@@ -174,6 +192,7 @@ class RunImportService:
         return run
 
     def _clear_previous_import_rows(self, run_id: str) -> None:
+        DomainNormalizationService(self.session).clear_run_domain_rows(run_id)
         for validation_result in self.session.exec(select(ValidationResult).where(ValidationResult.run_id == run_id)).all():
             self.session.delete(validation_result)
         for imported_file in self.session.exec(select(ImportedFile).where(ImportedFile.run_id == run_id)).all():

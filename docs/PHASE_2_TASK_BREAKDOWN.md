@@ -304,10 +304,10 @@ Boundaries:
 - [ ] Recipient email, company domain, and company policy key normalization are deterministic and tested.
 - [ ] Database constraints, not prompts, enforce dedupe.
 - [x] Seed fixtures are fake, safe, and deterministic.
-- [ ] Import-to-domain normalization handles only schema-valid outputs.
+- [x] Import-to-domain normalization handles only schema-valid outputs.
 - [ ] Duplicate recipient and duplicate company tests fail at the database boundary.
-- [ ] Existing import tests still pass.
-- [ ] Boundary tests still prove no Gmail, no OpenAI API dependency, no adapter, and no sending path.
+- [x] Existing import tests still pass.
+- [x] Boundary tests still prove no Gmail, no OpenAI API dependency, no adapter, and no sending path.
 
 ## 12. Risks And Mitigations
 
