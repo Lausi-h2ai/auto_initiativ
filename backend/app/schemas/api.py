@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
@@ -67,6 +67,151 @@ class ImportSummaryItem(BaseModel):
 class ImportResponse(BaseModel):
     run: RunResponse
     results: list[ImportSummaryItem]
+
+
+class OnboardingChatMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=12000)
+
+
+class OnboardingChatEntryResponse(BaseModel):
+    run_id: str
+    role: str
+    content: str
+    created_at: str
+    raw_capture: str | None = None
+    event: str | None = None
+
+
+class OnboardingSessionStateResponse(BaseModel):
+    run_id: str
+    status: str
+    updated_at: str
+    tmux: dict[str, Any] | None = None
+    last_error: str | None = None
+    entries: list[OnboardingChatEntryResponse] = Field(default_factory=list)
+
+
+class OnboardingChatStartResponse(BaseModel):
+    run_id: str
+    status: str
+    trust_prompt_accepted: bool
+    session_state: OnboardingSessionStateResponse | None = None
+    entries: list[OnboardingChatEntryResponse]
+
+
+class OnboardingChatMessageResponse(BaseModel):
+    run_id: str
+    reply: str
+    transcript_path: str
+    session_state: OnboardingSessionStateResponse | None = None
+    entries: list[OnboardingChatEntryResponse]
+
+
+class OnboardingArtifactResponse(BaseModel):
+    filename: str
+    schema_name: str | None = None
+    exists: bool
+    status: str
+    review_state: str
+    path: str
+    error_count: int = 0
+    reason_codes: list[str] = Field(default_factory=list)
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+    snapshot_type: str | None = None
+    snapshot_id: int | None = None
+    snapshot_external_id: str | None = None
+    snapshot_status: str | None = None
+
+
+class OnboardingArtifactsResponse(BaseModel):
+    run_id: str
+    output_path: str
+    artifacts: list[OnboardingArtifactResponse]
+
+
+class OnboardingInputFileResponse(BaseModel):
+    filename: str
+    path: str
+    size_bytes: int
+
+
+class OnboardingInputFilesResponse(BaseModel):
+    run_id: str
+    input_path: str
+    files: list[OnboardingInputFileResponse]
+
+
+class OnboardingArtifactImportResponse(BaseModel):
+    run_id: str
+    import_result: ImportResponse
+    artifacts: list[OnboardingArtifactResponse]
+
+
+class OnboardingChatFinishResponse(BaseModel):
+    run_id: str
+    reply: str
+    transcript_path: str
+    import_result: ImportResponse
+    artifacts: list[OnboardingArtifactResponse] = Field(default_factory=list)
+    entries: list[OnboardingChatEntryResponse]
+
+
+class OnboardingChatActionResponse(BaseModel):
+    run_id: str
+    status: str
+    session_state: OnboardingSessionStateResponse
+    entries: list[OnboardingChatEntryResponse]
+
+
+class OnboardingTerminalLaunchResponse(BaseModel):
+    run_id: str
+    status: str
+    command: str
+    session_state: OnboardingSessionStateResponse
+
+
+class OnboardingPromotionRequest(BaseModel):
+    reviewer_id: str
+    confirm_user_profile: bool
+    confirm_master_cv_profile: bool
+    confirm_policy: bool
+
+
+class OnboardingPromotionIssueResponse(BaseModel):
+    code: str
+    message: str
+    snapshot_type: str | None = None
+    field: str | None = None
+
+
+class OnboardingSnapshotResponse(BaseModel):
+    snapshot_type: str
+    id: int
+    external_id: str
+    status: str
+
+
+class ProfileSnapshotSummaryResponse(BaseModel):
+    snapshot_type: str
+    id: int
+    external_id: str
+    status: str
+    created_at: datetime
+
+
+class ProfileSummaryResponse(BaseModel):
+    has_approved_profile: bool
+    approved_user_profile: ProfileSnapshotSummaryResponse | None = None
+    candidate_user_profiles: list[ProfileSnapshotSummaryResponse] = Field(default_factory=list)
+    approved_master_cv_profile: ProfileSnapshotSummaryResponse | None = None
+    approved_policy: ProfileSnapshotSummaryResponse | None = None
+
+
+class OnboardingPromotionResponse(BaseModel):
+    run_id: str
+    status: str
+    promoted: list[OnboardingSnapshotResponse]
+    issues: list[OnboardingPromotionIssueResponse]
 
 
 class AuditLogResponse(BaseModel):

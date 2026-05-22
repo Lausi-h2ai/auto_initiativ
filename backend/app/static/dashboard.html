@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Auto Initiativ</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/dashboard.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Dashboard sections">
+        <div class="brand">
+          <span class="brand-mark">AI</span>
+          <div>
+            <h1>Auto Initiativ</h1>
+            <p>Personal recruiter</p>
+          </div>
+        </div>
+        <nav class="nav" id="sectionNav"></nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Local personal recruiter</p>
+            <h2 id="viewTitle">Profile Setup</h2>
+          </div>
+          <div class="topbar-actions">
+            <span class="state-pill" id="apiState">Loading API state</span>
+            <button class="action-button compact" id="refreshButton" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="summary-grid" id="summaryGrid" aria-label="Summary counts"></section>
+
+        <section class="filters" id="filtersPanel" aria-label="Filters"></section>
+
+        <section class="content-grid">
+          <div class="table-panel">
+            <div class="panel-header">
+              <div>
+                <h3 id="tableTitle">Records</h3>
+                <p id="tableSubtitle">Backend source-of-truth records</p>
+              </div>
+              <span class="count-pill" id="recordCount">0 records</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead id="tableHead"></thead>
+                <tbody id="tableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside class="detail-panel" aria-label="Selected record detail">
+            <div class="panel-header">
+              <div>
+                <h3>Detail</h3>
+                <p id="detailSubtitle">Select a row to inspect raw fields</p>
+              </div>
+            </div>
+            <pre id="detailJson" class="detail-json">No record selected.</pre>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+  </body>
+</html>

@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
+from backend.app.agents.codex_tmux import TmuxCodexBridge, TmuxCodexError, TmuxTarget
+from backend.app.agents.onboarding_chat import OnboardingCodexChatAdapter
+from backend.app.agents.onboarding_recruiter_prompt import (
+    ONBOARDING_ARTIFACT_FILENAMES,
+    build_onboarding_agent_instructions,
+    build_onboarding_start_message,
+)
+from backend.app.agents.pi_rpc import PiRpcError, PiRpcOnboardingChatAdapter
+from backend.app.core.config import Settings
 from backend.app.core.config import get_settings
 from backend.app.db.models import (
     AuditLog,
@@ -16,14 +26,19 @@ from backend.app.db.models import (
     FitEvaluation,
     ImportedFile,
     ImportedGateResult,
+    MasterCvProfileSnapshot,
     OutreachRecord,
+    PolicySnapshot,
     Run,
     SendIntent,
+    UserProfileSnapshot,
     ValidationResult,
 )
 from backend.app.db.session import get_session
 from backend.app.gates.evaluate_only import EvaluateOnlyGateService
-from backend.app.imports.import_service import RunImportService
+from backend.app.imports.file_classifier import classify_filename
+from backend.app.imports.import_service import ONBOARDING_CHAT_FILENAMES, RunImportService
+from backend.app.onboarding.promotion import OnboardingPromotionService, SnapshotPromotionRequest
 from backend.app.schemas.api import (
     AuditLogResponse,
     CompanyResponse,
@@ -38,6 +53,24 @@ from backend.app.schemas.api import (
     ImportedFileResponse,
     ImportResponse,
     ImportSummaryItem,
+    OnboardingArtifactImportResponse,
+    OnboardingArtifactResponse,
+    OnboardingArtifactsResponse,
+    OnboardingChatEntryResponse,
+    OnboardingChatActionResponse,
+    OnboardingChatFinishResponse,
+    OnboardingChatMessageRequest,
+    OnboardingChatMessageResponse,
+    OnboardingInputFileResponse,
+    OnboardingInputFilesResponse,
+    OnboardingSessionStateResponse,
+    OnboardingChatStartResponse,
+    OnboardingTerminalLaunchResponse,
+    OnboardingPromotionRequest,
+    OnboardingPromotionResponse,
+    OnboardingSnapshotResponse,
+    ProfileSnapshotSummaryResponse,
+    ProfileSummaryResponse,
     OutreachRecordResponse,
     RunDetailResponse,
     RunResponse,
@@ -46,6 +79,7 @@ from backend.app.schemas.api import (
 )
 
 router = APIRouter()
+ONBOARDING_RUNTIME_ERRORS = (TmuxCodexError, PiRpcError)
 
 
 def _json_loads(value: str, fallback: Any) -> Any:
@@ -95,6 +129,16 @@ def _not_found(entity_name: str) -> HTTPException:
     return HTTPException(status_code=404, detail=f"{entity_name} not found")
 
 
+def _safe_input_filename(filename: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_. -]+", "-", filename).strip(" .-")
+    if not cleaned or cleaned in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid input filename")
+    allowed_suffixes = {".pdf", ".doc", ".docx", ".txt", ".md", ".json"}
+    if not any(cleaned.lower().endswith(suffix) for suffix in allowed_suffixes):
+        raise HTTPException(status_code=400, detail="Unsupported input file type")
+    return cleaned[:160]
+
+
 def _validation_response(result: ValidationResult) -> ValidationResultResponse:
     return ValidationResultResponse(
         id=result.id or 0,
@@ -107,6 +151,142 @@ def _validation_response(result: ValidationResult) -> ValidationResultResponse:
         errors=_json_loads(result.errors_json, []),
         reason_codes=_json_loads(result.reason_codes_json, []),
         validated_at=result.validated_at,
+    )
+
+
+def _import_response(result: Any) -> ImportResponse:
+    return ImportResponse(
+        run=RunResponse.model_validate(result.run),
+        results=[
+            ImportSummaryItem(
+                filename=validation_result.filename,
+                status=validation_result.status,
+                schema_name=validation_result.schema_name,
+                error_count=validation_result.error_count,
+                reason_codes=_json_loads(validation_result.reason_codes_json, []),
+            )
+            for validation_result in result.validation_results
+        ],
+    )
+
+
+def _chat_entry_response(entry: dict[str, object]) -> OnboardingChatEntryResponse:
+    return OnboardingChatEntryResponse(
+        run_id=str(entry.get("run_id") or ""),
+        role=str(entry.get("role") or ""),
+        content=str(entry.get("content") or ""),
+        created_at=str(entry.get("created_at") or ""),
+        raw_capture=entry.get("raw_capture") if isinstance(entry.get("raw_capture"), str) else None,
+        event=entry.get("event") if isinstance(entry.get("event"), str) else None,
+    )
+
+
+def _chat_entries_response(entries: list[dict[str, object]]) -> list[OnboardingChatEntryResponse]:
+    return [_chat_entry_response(entry) for entry in entries]
+
+
+def _session_state_response(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter,
+    entries: list[dict[str, object]] | None = None,
+) -> OnboardingSessionStateResponse:
+    raw_entries = adapter.transcript_entries(run_id) if entries is None else entries
+    if hasattr(adapter, "session_state"):
+        state = adapter.session_state(run_id)
+        return OnboardingSessionStateResponse(
+            run_id=state.run_id,
+            status=state.status,
+            updated_at=state.updated_at,
+            tmux=state.tmux,
+            last_error=state.last_error,
+            entries=_chat_entries_response(raw_entries),
+        )
+    return OnboardingSessionStateResponse(
+        run_id=run_id,
+        status="not_started" if not raw_entries else "running",
+        updated_at="",
+        entries=_chat_entries_response(raw_entries),
+    )
+
+
+def get_onboarding_chat_adapter(settings: Settings = Depends(get_settings)) -> OnboardingCodexChatAdapter:
+    if settings.onboarding_chat_runtime == "pi_rpc":
+        return PiRpcOnboardingChatAdapter(settings=settings)
+    if settings.onboarding_chat_runtime != "tmux":
+        raise HTTPException(status_code=500, detail=f"Unsupported onboarding chat runtime: {settings.onboarding_chat_runtime}")
+    target = TmuxTarget(
+        distro=settings.codex_wsl_distro,
+        session=settings.codex_tmux_session,
+        window=settings.codex_tmux_window,
+        pane=settings.codex_tmux_pane,
+    )
+    return OnboardingCodexChatAdapter(
+        TmuxCodexBridge(target),
+        workdir=settings.codex_workdir,
+        runs_root=settings.runs_root,
+        reply_wait_seconds=settings.codex_chat_reply_wait_seconds,
+    )
+
+
+def _onboarding_finalization_prompt(run_id: str) -> str:
+    artifact_list = ", ".join(f"`../output/{filename}`" for filename in ONBOARDING_ARTIFACT_FILENAMES)
+    schema_bundle = _onboarding_schema_bundle()
+    return (
+        "Finalize this onboarding interview. Create the directory "
+        f"`../output` if needed and write candidate artifacts for onboarding run `{run_id}`: {artifact_list}. "
+        "Each JSON file must conform exactly to its matching JSON Schema. The complete schemas are included below; "
+        "do not guess alternate field names. "
+        "Use only facts stated by the user in this chat or backed by local input files; clearly mark "
+        "uncertain, inferred, or incomplete fields with needs_review provenance and/or "
+        "`onboarding_review.json` items. Keep all artifacts candidate/unapproved. "
+        "Do not create outreach, gate, reservation, or sending state. After writing the files, "
+        "reply briefly with the paths written and any review caveats.\n\n"
+        "JSON Schemas:\n"
+        f"{schema_bundle}"
+    )
+
+
+def _onboarding_schema_bundle() -> str:
+    bundled: dict[str, Any] = {}
+    for filename in ONBOARDING_ARTIFACT_FILENAMES:
+        schema_name = filename.replace(".json", ".schema.json")
+        schema_path = get_settings().schemas_root / schema_name
+        bundled[schema_name] = json.loads(schema_path.read_text(encoding="utf-8"))
+    return json.dumps(bundled, ensure_ascii=False, indent=2)
+
+
+def _onboarding_validation_failures(import_result: Any) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    for result in import_result.validation_results:
+        if result.status == "schema_validation_passed":
+            continue
+        failures.append(
+            {
+                "filename": result.filename,
+                "status": result.status,
+                "schema_name": result.schema_name,
+                "error_count": result.error_count,
+                "reason_codes": _json_loads(result.reason_codes_json, []),
+                "errors": _json_loads(result.errors_json, []),
+            }
+        )
+    return failures
+
+
+def _onboarding_artifact_repair_prompt(run_id: str, failures: list[dict[str, Any]], attempt: int, max_attempts: int) -> str:
+    schema_bundle = _onboarding_schema_bundle()
+    return (
+        f"Attempt {attempt}/{max_attempts}: backend schema validation failed for onboarding run `{run_id}`.\n\n"
+        "Repair the candidate artifact files using only the allowed onboarding artifact write tool. "
+        "Rewrite complete JSON documents, not patches. Do not create any files except "
+        "`user_profile.json`, `master_cv_profile.json`, `policy.json`, and `onboarding_review.json` under `../output`. "
+        "The complete JSON Schemas are included below; conform to them exactly and do not guess alternate field names. "
+        "Do not invent facts to satisfy required fields; use `needs_review` provenance or review items where evidence is missing. "
+        "After rewriting, reply briefly with what you changed.\n\n"
+        "JSON Schemas:\n"
+        f"{schema_bundle}\n\n"
+        "Validation failures JSON:\n"
+        f"{json.dumps(failures, ensure_ascii=False, indent=2)}"
     )
 
 
@@ -314,6 +494,142 @@ def _outreach_record_response(record: OutreachRecord) -> OutreachRecordResponse:
     )
 
 
+def _onboarding_snapshot_responses(session: Session, run_id: str) -> list[OnboardingSnapshotResponse]:
+    imported_file_ids = _imported_file_ids_for_run(session, run_id)
+    if not imported_file_ids:
+        return []
+    snapshots: list[OnboardingSnapshotResponse] = []
+    for snapshot_type, model, external_attr in (
+        ("user_profile", UserProfileSnapshot, "profile_id"),
+        ("master_cv_profile", MasterCvProfileSnapshot, "profile_id"),
+        ("policy", PolicySnapshot, "policy_id"),
+    ):
+        for snapshot in session.exec(select(model).where(col(model.imported_file_id).in_(imported_file_ids))).all():
+            snapshots.append(
+                OnboardingSnapshotResponse(
+                    snapshot_type=snapshot_type,
+                    id=snapshot.id or 0,
+                    external_id=getattr(snapshot, external_attr),
+                    status=snapshot.status,
+                )
+            )
+    return snapshots
+
+
+def _snapshot_for_imported_file(session: Session, imported_file: ImportedFile | None) -> tuple[str | None, Any | None]:
+    if imported_file is None or imported_file.id is None:
+        return None, None
+    for snapshot_type, model in (
+        ("user_profile", UserProfileSnapshot),
+        ("master_cv_profile", MasterCvProfileSnapshot),
+        ("policy", PolicySnapshot),
+    ):
+        snapshot = session.exec(select(model).where(model.imported_file_id == imported_file.id)).first()
+        if snapshot is not None:
+            return snapshot_type, snapshot
+    return None, None
+
+
+def _artifact_status_from_validation(
+    *,
+    exists: bool,
+    validation_result: ValidationResult | None,
+    snapshot: Any | None,
+    filename: str,
+) -> tuple[str, str]:
+    if not exists:
+        return "missing", "missing"
+    if validation_result is None:
+        return "candidate", "needs_validation"
+    if validation_result.status != "schema_validation_passed":
+        return "invalid", "validation_errors"
+    if snapshot is not None:
+        return "ready_for_review" if snapshot.status == "candidate" else snapshot.status, snapshot.status
+    if filename == "onboarding_review.json":
+        return "ready_for_review", "review_items_available"
+    return "schema_validation_passed", "validated"
+
+
+def _onboarding_artifact_responses(
+    session: Session,
+    run_id: str,
+    settings: Settings,
+) -> list[OnboardingArtifactResponse]:
+    output_path = settings.runs_root / run_id / "output"
+    validation_results = session.exec(
+        select(ValidationResult).where(ValidationResult.run_id == run_id).order_by(ValidationResult.filename, ValidationResult.id.desc())
+    ).all()
+    latest_validation: dict[str, ValidationResult] = {}
+    for result in validation_results:
+        latest_validation.setdefault(result.filename, result)
+
+    imported_files = {
+        imported_file.filename: imported_file
+        for imported_file in session.exec(select(ImportedFile).where(ImportedFile.run_id == run_id)).all()
+    }
+
+    artifacts: list[OnboardingArtifactResponse] = []
+    for filename in ONBOARDING_CHAT_FILENAMES:
+        artifact_path = output_path / filename
+        validation_result = latest_validation.get(filename)
+        imported_file = imported_files.get(filename)
+        snapshot_type, snapshot = _snapshot_for_imported_file(session, imported_file)
+        status, review_state = _artifact_status_from_validation(
+            exists=artifact_path.exists(),
+            validation_result=validation_result,
+            snapshot=snapshot,
+            filename=filename,
+        )
+        snapshot_external_id = None
+        if isinstance(snapshot, PolicySnapshot):
+            snapshot_external_id = snapshot.policy_id
+        elif snapshot is not None:
+            snapshot_external_id = snapshot.profile_id
+        artifacts.append(
+            OnboardingArtifactResponse(
+                filename=filename,
+                schema_name=validation_result.schema_name if validation_result is not None else classify_filename(filename),
+                exists=artifact_path.exists(),
+                status=status,
+                review_state=review_state,
+                path=str(artifact_path),
+                error_count=validation_result.error_count if validation_result is not None else 0,
+                reason_codes=(_json_loads(validation_result.reason_codes_json, []) if validation_result is not None else []),
+                errors=(_json_loads(validation_result.errors_json, []) if validation_result is not None else []),
+                snapshot_type=snapshot_type,
+                snapshot_id=snapshot.id if snapshot is not None else None,
+                snapshot_external_id=snapshot_external_id,
+                snapshot_status=snapshot.status if snapshot is not None else None,
+            )
+        )
+    return artifacts
+
+
+def _onboarding_input_file_responses(run_id: str, settings: Settings) -> list[OnboardingInputFileResponse]:
+    input_path = settings.runs_root / run_id / "input"
+    if not input_path.exists():
+        return []
+    files: list[OnboardingInputFileResponse] = []
+    for path in sorted(file_path for file_path in input_path.iterdir() if file_path.is_file()):
+        files.append(OnboardingInputFileResponse(filename=path.name, path=str(path), size_bytes=path.stat().st_size))
+    return files
+
+
+def _profile_snapshot_summary(snapshot_type: str, snapshot: Any) -> ProfileSnapshotSummaryResponse:
+    external_id = snapshot.policy_id if isinstance(snapshot, PolicySnapshot) else snapshot.profile_id
+    return ProfileSnapshotSummaryResponse(
+        snapshot_type=snapshot_type,
+        id=snapshot.id or 0,
+        external_id=external_id,
+        status=snapshot.status,
+        created_at=snapshot.imported_at,
+    )
+
+
+def _latest_snapshot(session: Session, model: type[Any], status: str) -> Any | None:
+    return session.exec(select(model).where(model.status == status).order_by(model.imported_at.desc())).first()
+
+
 def _count_by_status(session: Session, model: type[Any], status_column: Any) -> dict[str, int]:
     rows = session.exec(select(status_column, func.count(model.id)).group_by(status_column)).all()
     return {status: count for status, count in rows}
@@ -328,22 +644,31 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok", dry_run=get_settings().dry_run)
 
 
+@router.get("/profile/summary", response_model=ProfileSummaryResponse)
+def profile_summary(session: Session = Depends(get_session)) -> ProfileSummaryResponse:
+    approved_user_profile = _latest_snapshot(session, UserProfileSnapshot, "approved")
+    approved_master_cv = _latest_snapshot(session, MasterCvProfileSnapshot, "approved")
+    approved_policy = _latest_snapshot(session, PolicySnapshot, "approved")
+    candidate_user_profiles = session.exec(
+        select(UserProfileSnapshot).where(UserProfileSnapshot.status == "candidate").order_by(UserProfileSnapshot.imported_at.desc())
+    ).all()
+    return ProfileSummaryResponse(
+        has_approved_profile=approved_user_profile is not None,
+        approved_user_profile=(
+            _profile_snapshot_summary("user_profile", approved_user_profile) if approved_user_profile is not None else None
+        ),
+        candidate_user_profiles=[_profile_snapshot_summary("user_profile", snapshot) for snapshot in candidate_user_profiles],
+        approved_master_cv_profile=(
+            _profile_snapshot_summary("master_cv_profile", approved_master_cv) if approved_master_cv is not None else None
+        ),
+        approved_policy=_profile_snapshot_summary("policy", approved_policy) if approved_policy is not None else None,
+    )
+
+
 @router.post("/runs/{run_id}/import", response_model=ImportResponse)
 def import_run(run_id: str, run_type: str | None = None, session: Session = Depends(get_session)) -> ImportResponse:
     result = RunImportService(session=session).import_run(run_id, run_type=run_type)
-    return ImportResponse(
-        run=RunResponse.model_validate(result.run),
-        results=[
-            ImportSummaryItem(
-                filename=validation_result.filename,
-                status=validation_result.status,
-                schema_name=validation_result.schema_name,
-                error_count=validation_result.error_count,
-                reason_codes=_json_loads(validation_result.reason_codes_json, []),
-            )
-            for validation_result in result.validation_results
-        ],
-    )
+    return _import_response(result)
 
 
 @router.get("/runs", response_model=list[RunResponse])
@@ -371,6 +696,316 @@ def list_run_files(run_id: str, session: Session = Depends(get_session)) -> list
 def list_validation_results(run_id: str, session: Session = Depends(get_session)) -> list[ValidationResultResponse]:
     results = session.exec(select(ValidationResult).where(ValidationResult.run_id == run_id).order_by(ValidationResult.filename)).all()
     return [_validation_response(result) for result in results]
+
+
+@router.get("/onboarding/chat/{run_id}/transcript", response_model=list[OnboardingChatEntryResponse])
+def get_onboarding_chat_transcript(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+) -> list[OnboardingChatEntryResponse]:
+    return _chat_entries_response(adapter.transcript_entries(run_id))
+
+
+@router.get("/onboarding/chat/{run_id}/status", response_model=OnboardingSessionStateResponse)
+def get_onboarding_chat_status(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+) -> OnboardingSessionStateResponse:
+    return _session_state_response(run_id, adapter)
+
+
+@router.post("/onboarding/chat/{run_id}/start", response_model=OnboardingChatStartResponse)
+def start_onboarding_chat(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+    settings: Settings = Depends(get_settings),
+) -> OnboardingChatStartResponse:
+    try:
+        if hasattr(adapter, "prepare_agent_workspace"):
+            adapter.prepare_agent_workspace(
+                run_id,
+                build_onboarding_agent_instructions(
+                    run_id=run_id,
+                    workdir=settings.codex_workdir,
+                    runs_root=settings.runs_root,
+                    schemas_root=settings.schemas_root,
+                ),
+            )
+        attachment = None
+        if hasattr(adapter, "attach_session"):
+            existing_state = adapter.session_state(run_id) if hasattr(adapter, "session_state") else None
+            should_start_fresh = not bool(existing_state and existing_state.tmux)
+            attachment = adapter.attach_session(run_id, fresh=should_start_fresh)
+        status = adapter.start_or_attach(run_id)
+        accepted = adapter.accept_trust_prompt_if_present()
+        if hasattr(adapter, "ensure_recruiter_prompt"):
+            adapter.ensure_recruiter_prompt(
+                run_id,
+                build_onboarding_start_message(run_id),
+                force=bool(attachment and attachment.get("status") == "started"),
+            )
+    except ONBOARDING_RUNTIME_ERRORS as exc:
+        if hasattr(adapter, "record_failure"):
+            adapter.record_failure(run_id, str(exc))
+        raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
+    entries = adapter.transcript_entries(run_id)
+    return OnboardingChatStartResponse(
+        run_id=run_id,
+        status=status,
+        trust_prompt_accepted=accepted,
+        session_state=_session_state_response(run_id, adapter, entries),
+        entries=_chat_entries_response(entries),
+    )
+
+
+@router.post("/onboarding/chat/{run_id}/messages", response_model=OnboardingChatMessageResponse)
+def send_onboarding_chat_message(
+    run_id: str,
+    request: OnboardingChatMessageRequest,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+) -> OnboardingChatMessageResponse:
+    try:
+        adapter.start_or_attach(run_id)
+        adapter.accept_trust_prompt_if_present()
+        reply = adapter.send_message(run_id, request.message)
+    except ONBOARDING_RUNTIME_ERRORS as exc:
+        if hasattr(adapter, "record_failure"):
+            adapter.record_failure(run_id, str(exc))
+        raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
+    entries = adapter.transcript_entries(run_id)
+    return OnboardingChatMessageResponse(
+        run_id=run_id,
+        reply=reply.message,
+        transcript_path=str(reply.transcript_path),
+        session_state=_session_state_response(run_id, adapter, entries),
+        entries=_chat_entries_response(entries),
+    )
+
+
+@router.post("/onboarding/chat/{run_id}/refresh", response_model=OnboardingChatMessageResponse)
+def refresh_onboarding_chat_output(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+) -> OnboardingChatMessageResponse:
+    try:
+        reply = adapter.refresh_output(run_id)
+    except ONBOARDING_RUNTIME_ERRORS as exc:
+        if hasattr(adapter, "record_failure"):
+            adapter.record_failure(run_id, str(exc))
+        raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
+    entries = adapter.transcript_entries(run_id)
+    return OnboardingChatMessageResponse(
+        run_id=run_id,
+        reply=reply.message,
+        transcript_path=str(reply.transcript_path),
+        session_state=_session_state_response(run_id, adapter, entries),
+        entries=_chat_entries_response(entries),
+    )
+
+
+@router.post("/onboarding/chat/{run_id}/close", response_model=OnboardingChatActionResponse)
+def close_onboarding_chat(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+) -> OnboardingChatActionResponse:
+    try:
+        adapter.close_session(run_id)
+    except ONBOARDING_RUNTIME_ERRORS as exc:
+        if hasattr(adapter, "record_failure"):
+            adapter.record_failure(run_id, str(exc))
+        raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
+    entries = adapter.transcript_entries(run_id)
+    return OnboardingChatActionResponse(
+        run_id=run_id,
+        status="closed",
+        session_state=_session_state_response(run_id, adapter, entries),
+        entries=_chat_entries_response(entries),
+    )
+
+
+@router.post("/onboarding/chat/{run_id}/reset", response_model=OnboardingChatActionResponse)
+def reset_onboarding_chat(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+) -> OnboardingChatActionResponse:
+    try:
+        adapter.reset_session(run_id)
+    except ONBOARDING_RUNTIME_ERRORS as exc:
+        if hasattr(adapter, "record_failure"):
+            adapter.record_failure(run_id, str(exc))
+        raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
+    entries = adapter.transcript_entries(run_id)
+    return OnboardingChatActionResponse(
+        run_id=run_id,
+        status="not_started",
+        session_state=_session_state_response(run_id, adapter, entries),
+        entries=_chat_entries_response(entries),
+    )
+
+
+@router.post("/onboarding/chat/{run_id}/open-terminal", response_model=OnboardingTerminalLaunchResponse)
+def open_onboarding_tmux_terminal(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+) -> OnboardingTerminalLaunchResponse:
+    try:
+        command = adapter.open_terminal(run_id)
+    except ONBOARDING_RUNTIME_ERRORS as exc:
+        if hasattr(adapter, "record_failure"):
+            adapter.record_failure(run_id, str(exc))
+        raise HTTPException(status_code=502, detail=f"Onboarding agent terminal unavailable: {exc}") from exc
+    return OnboardingTerminalLaunchResponse(
+        run_id=run_id,
+        status="opened",
+        command=command,
+        session_state=_session_state_response(run_id, adapter),
+    )
+
+
+@router.post("/onboarding/chat/{run_id}/finish", response_model=OnboardingChatFinishResponse)
+def finish_onboarding_chat(
+    run_id: str,
+    adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> OnboardingChatFinishResponse:
+    (settings.runs_root / run_id / "output").mkdir(parents=True, exist_ok=True)
+    try:
+        adapter.start_or_attach(run_id)
+        adapter.accept_trust_prompt_if_present()
+        reply = adapter.send_message(run_id, _onboarding_finalization_prompt(run_id))
+    except ONBOARDING_RUNTIME_ERRORS as exc:
+        raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
+
+    import_service = RunImportService(session=session)
+    import_result = import_service.import_run(run_id, run_type="onboarding_chat")
+    repair_replies: list[str] = []
+    max_repair_attempts = max(settings.onboarding_artifact_repair_attempts, 0)
+    for attempt in range(1, max_repair_attempts + 1):
+        failures = _onboarding_validation_failures(import_result)
+        if not failures:
+            break
+        try:
+            repair_reply = adapter.send_message(
+                run_id,
+                _onboarding_artifact_repair_prompt(run_id, failures, attempt, max_repair_attempts),
+            )
+        except ONBOARDING_RUNTIME_ERRORS as exc:
+            raise HTTPException(status_code=502, detail=f"Onboarding agent artifact repair unavailable: {exc}") from exc
+        repair_replies.append(repair_reply.message)
+        import_result = import_service.import_run(run_id, run_type="onboarding_chat")
+
+    if import_result.run.status == "imported":
+        try:
+            adapter.close_session(run_id)
+        except ONBOARDING_RUNTIME_ERRORS:
+            pass
+    final_reply = reply.message
+    if repair_replies:
+        final_reply = "\n\n".join([reply.message, *repair_replies])
+    return OnboardingChatFinishResponse(
+        run_id=run_id,
+        reply=final_reply,
+        transcript_path=str(reply.transcript_path),
+        import_result=_import_response(import_result),
+        artifacts=_onboarding_artifact_responses(session, run_id, settings),
+        entries=_chat_entries_response(adapter.transcript_entries(run_id)),
+    )
+
+
+@router.get("/onboarding/chat/{run_id}/artifacts", response_model=OnboardingArtifactsResponse)
+def get_onboarding_artifacts(
+    run_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> OnboardingArtifactsResponse:
+    output_path = settings.runs_root / run_id / "output"
+    return OnboardingArtifactsResponse(
+        run_id=run_id,
+        output_path=str(output_path),
+        artifacts=_onboarding_artifact_responses(session, run_id, settings),
+    )
+
+
+@router.get("/onboarding/chat/{run_id}/input-files", response_model=OnboardingInputFilesResponse)
+def list_onboarding_input_files(
+    run_id: str,
+    settings: Settings = Depends(get_settings),
+) -> OnboardingInputFilesResponse:
+    input_path = settings.runs_root / run_id / "input"
+    return OnboardingInputFilesResponse(
+        run_id=run_id,
+        input_path=str(input_path),
+        files=_onboarding_input_file_responses(run_id, settings),
+    )
+
+
+@router.put("/onboarding/chat/{run_id}/input-files/{filename}", response_model=OnboardingInputFileResponse)
+async def upload_onboarding_input_file(
+    run_id: str,
+    filename: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> OnboardingInputFileResponse:
+    safe_filename = _safe_input_filename(filename)
+    content = await request.body()
+    max_bytes = 20 * 1024 * 1024
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail="Uploaded file exceeds 20 MB")
+    input_path = settings.runs_root / run_id / "input"
+    input_path.mkdir(parents=True, exist_ok=True)
+    destination = input_path / safe_filename
+    destination.write_bytes(content)
+    return OnboardingInputFileResponse(
+        filename=destination.name,
+        path=str(destination),
+        size_bytes=destination.stat().st_size,
+    )
+
+
+@router.post("/onboarding/chat/{run_id}/import-artifacts", response_model=OnboardingArtifactImportResponse)
+def import_onboarding_artifacts(
+    run_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> OnboardingArtifactImportResponse:
+    result = RunImportService(session=session, settings=settings).import_run(run_id, run_type="onboarding_chat")
+    return OnboardingArtifactImportResponse(
+        run_id=run_id,
+        import_result=_import_response(result),
+        artifacts=_onboarding_artifact_responses(session, run_id, settings),
+    )
+
+
+@router.get("/onboarding/runs/{run_id}/snapshots", response_model=list[OnboardingSnapshotResponse])
+def list_onboarding_snapshots(run_id: str, session: Session = Depends(get_session)) -> list[OnboardingSnapshotResponse]:
+    return _onboarding_snapshot_responses(session, run_id)
+
+
+@router.post("/onboarding/runs/{run_id}/promote", response_model=OnboardingPromotionResponse)
+def promote_onboarding_snapshots(
+    run_id: str,
+    request: OnboardingPromotionRequest,
+    session: Session = Depends(get_session),
+) -> OnboardingPromotionResponse:
+    result = OnboardingPromotionService(session).promote_run_snapshots(
+        run_id,
+        SnapshotPromotionRequest(
+            reviewer_id=request.reviewer_id,
+            confirm_user_profile=request.confirm_user_profile,
+            confirm_master_cv_profile=request.confirm_master_cv_profile,
+            confirm_policy=request.confirm_policy,
+        ),
+    )
+    session.commit()
+    return OnboardingPromotionResponse(
+        run_id=result.run_id,
+        status=result.status,
+        promoted=[OnboardingSnapshotResponse(**snapshot.as_dict()) for snapshot in result.promoted],
+        issues=[issue.as_dict() for issue in result.issues],
+    )
 
 
 @router.get("/dashboard/summary", response_model=DashboardSummaryResponse)

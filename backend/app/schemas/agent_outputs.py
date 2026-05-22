@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AnyUrl, BaseModel, ConfigDict, EmailStr, Field, model_validator
 
@@ -286,6 +286,43 @@ class UserProfile(StrictModel):
     provenance_summary: ProvenanceSummary
 
 
+class OnboardingReviewerMetadata(StrictModel):
+    reviewer_id: str | None = Field(default=None, min_length=1)
+    reviewed_at: datetime | None = None
+
+
+class OnboardingReviewItem(StrictModel):
+    review_item_id: str = Field(min_length=1)
+    item_type: Literal[
+        "missing_required_information",
+        "contradiction",
+        "low_confidence",
+        "inferred_claim",
+        "policy_decision",
+        "user_confirmation_required",
+        "correction",
+        "other",
+    ]
+    target_file: Literal["user_profile.json", "master_cv_profile.json", "policy.json"]
+    target_json_pointer: str = Field(pattern=r"^(/([^/~]|~0|~1)*)*$")
+    related_json_pointers: list[str] | None = None
+    summary: str = Field(min_length=1)
+    proposed_value: str | int | float | bool | list[Any] | dict[str, Any]
+    provenance: Provenance
+    confidence: float = Field(ge=0, le=1)
+    state: Literal["open", "accepted", "rejected", "resolved", "superseded"]
+    reviewer_metadata: OnboardingReviewerMetadata
+    resolution_notes: list[str]
+
+
+class OnboardingReview(StrictModel):
+    schema_version: Literal["1.0"]
+    review_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    created_at: datetime
+    items: list[OnboardingReviewItem]
+
+
 AGENT_OUTPUT_MODELS = {
     "company_candidate.schema.json": CompanyCandidate,
     "contact_candidate.schema.json": ContactCandidate,
@@ -293,6 +330,7 @@ AGENT_OUTPUT_MODELS = {
     "fit_evaluation.schema.json": FitEvaluation,
     "gate_result.schema.json": GateResult,
     "master_cv_profile.schema.json": MasterCvProfile,
+    "onboarding_review.schema.json": OnboardingReview,
     "policy.schema.json": Policy,
     "send_intent.schema.json": SendIntent,
     "user_profile.schema.json": UserProfile,
