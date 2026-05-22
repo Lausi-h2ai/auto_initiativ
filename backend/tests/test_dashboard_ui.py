@@ -97,6 +97,8 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "Profile Setup",
         "Start profile interview",
         "Waiting for profile agent reply",
+        "Finish artifacts",
+        "Finalizing candidate profile artifacts",
         "Upload resume",
         "Validate artifacts",
         "Candidate artifacts",

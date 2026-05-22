@@ -916,6 +916,26 @@ async function onboardingClose() {
 
 async function onboardingFinish() {
   syncOnboardingRunId();
+  const optimisticEntries = [
+    ...(state.onboarding.entries || []),
+    {
+      run_id: state.onboarding.runId,
+      role: "user",
+      content: "Finish artifacts",
+      created_at: new Date().toISOString(),
+      event: "local_pending",
+    },
+    {
+      run_id: state.onboarding.runId,
+      role: "assistant",
+      content: "Finalizing candidate profile artifacts...",
+      created_at: new Date().toISOString(),
+      event: "pending_reply",
+    },
+  ];
+  state.onboarding.entries = optimisticEntries;
+  state.onboarding.sessionState = { ...(state.onboarding.sessionState || {}), status: "waiting", entries: optimisticEntries };
+  rerenderActiveOnboarding("Finalizing candidate profile artifacts...");
   setOnboardingStatus("Finalizing candidate profile artifacts...");
   try {
     const result = await fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/finish`, { method: "POST" });

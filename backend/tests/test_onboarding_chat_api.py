@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 
 from backend.app.agents.onboarding_chat import ChatReply, ChatTranscriptEntry, JsonlTranscriptStore, OnboardingSessionState
-from backend.app.api.routes import _onboarding_artifact_repair_prompt, _onboarding_finalization_prompt, get_onboarding_chat_adapter
+from backend.app.api.routes import (
+    _chat_entry_response,
+    _onboarding_artifact_repair_prompt,
+    _onboarding_finalization_prompt,
+    get_onboarding_chat_adapter,
+)
 
 
 def _valid_user_profile() -> dict[str, object]:
@@ -126,6 +131,30 @@ def test_onboarding_repair_prompt_includes_validation_failures_and_schema_defini
     assert "JSON Schemas:" in prompt
     assert "user_profile.schema.json" in prompt
     assert '"profile_id"' in prompt
+
+
+def test_internal_onboarding_prompts_are_redacted_in_chat_responses():
+    finish_entry = _chat_entry_response(
+        {
+            "run_id": "run-1",
+            "role": "user",
+            "content": _onboarding_finalization_prompt("run-1"),
+            "created_at": "2026-05-15T00:00:00+00:00",
+        }
+    )
+    repair_entry = _chat_entry_response(
+        {
+            "run_id": "run-1",
+            "role": "user",
+            "content": _onboarding_artifact_repair_prompt("run-1", [], 1, 2),
+            "created_at": "2026-05-15T00:00:00+00:00",
+        }
+    )
+
+    assert finish_entry.content == "Finish artifacts"
+    assert repair_entry.content == "Repair artifacts"
+    assert "JSON Schemas" not in finish_entry.content
+    assert "Validation failures JSON" not in repair_entry.content
 
 
 class FakeOnboardingAdapter:

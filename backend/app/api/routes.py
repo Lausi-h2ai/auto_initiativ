@@ -171,18 +171,35 @@ def _import_response(result: Any) -> ImportResponse:
 
 
 def _chat_entry_response(entry: dict[str, object]) -> OnboardingChatEntryResponse:
+    content = str(entry.get("content") or "")
+    event = entry.get("event") if isinstance(entry.get("event"), str) else None
+    if _is_internal_onboarding_prompt(content):
+        content = _internal_onboarding_prompt_label(content)
+        event = event or "internal_prompt_redacted"
     return OnboardingChatEntryResponse(
         run_id=str(entry.get("run_id") or ""),
         role=str(entry.get("role") or ""),
-        content=str(entry.get("content") or ""),
+        content=content,
         created_at=str(entry.get("created_at") or ""),
         raw_capture=entry.get("raw_capture") if isinstance(entry.get("raw_capture"), str) else None,
-        event=entry.get("event") if isinstance(entry.get("event"), str) else None,
+        event=event,
     )
 
 
 def _chat_entries_response(entries: list[dict[str, object]]) -> list[OnboardingChatEntryResponse]:
     return [_chat_entry_response(entry) for entry in entries]
+
+
+def _is_internal_onboarding_prompt(content: str) -> bool:
+    return content.startswith("Finalize this onboarding interview.") or "Validation failures JSON:" in content
+
+
+def _internal_onboarding_prompt_label(content: str) -> str:
+    if content.startswith("Finalize this onboarding interview."):
+        return "Finish artifacts"
+    if "Validation failures JSON:" in content:
+        return "Repair artifacts"
+    return "Internal onboarding action"
 
 
 def _session_state_response(
