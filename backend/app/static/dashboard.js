@@ -699,12 +699,38 @@ function renderReviewPanel() {
     `;
   }).join("");
   const selected = state.onboarding.selectedArtifact;
+  const selectedBlockers = collectReviewBlockers(selected?.json_content);
+  const selectedBlockerMarkup = selectedBlockers.length
+    ? `
+      <div class="review-issues">
+        <strong>Needs confirmation before approval</strong>
+        <ul>
+          ${selectedBlockers.map((issue) => `<li><span>${escapeHtml(issue.path)}</span>${escapeHtml(issue.reason)}</li>`).join("")}
+        </ul>
+      </div>
+    `
+    : "";
   const selectedMarkup = selected
-    ? `<pre class="artifact-preview">${escapeHtml(JSON.stringify(selected.json_content ?? selected.raw_text ?? "", null, 2))}</pre>`
+    ? `${selectedBlockerMarkup}<pre class="artifact-preview">${escapeHtml(JSON.stringify(selected.json_content ?? selected.raw_text ?? "", null, 2))}</pre>`
     : `<p class="muted">Review each JSON artifact, then approve the three candidate snapshots when they match your profile.</p>`;
   const promotion = state.onboarding.promotionResult;
+  const promotionIssues = promotion?.issues || [];
   const promotionMarkup = promotion
-    ? `<div class="promotion-result ${promotion.status === "approved" ? "ready" : "blocked"}">${escapeHtml(promotion.status)}${promotion.issues?.length ? `: ${escapeHtml(promotion.issues.map((issue) => issue.message).join(" "))}` : ""}</div>`
+    ? `
+      <div class="promotion-result ${promotion.status === "approved" ? "ready" : "blocked"}">
+        <strong>${escapeHtml(promotion.status)}</strong>
+        ${promotionIssues.length ? `
+          <ul>
+            ${promotionIssues.map((issue) => `
+              <li>
+                <span>${escapeHtml([issue.snapshot_type, issue.field].filter(Boolean).join(" "))}</span>
+                ${escapeHtml(issue.message)}
+              </li>
+            `).join("")}
+          </ul>
+        ` : ""}
+      </div>
+    `
     : "";
   return `
     <section class="artifact-panel review-panel">
@@ -730,6 +756,31 @@ function renderReviewPanel() {
       </div>
     </section>
   `;
+}
+
+function collectReviewBlockers(value, path = "$") {
+  const blockers = [];
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      blockers.push(...collectReviewBlockers(item, `${path}[${index}]`));
+    });
+    return blockers;
+  }
+  if (!value || typeof value !== "object") return blockers;
+
+  const provenance = value.provenance;
+  if (provenance && typeof provenance === "object") {
+    if (provenance.needs_review === true || !["verified_document", "user_claim"].includes(provenance.source_type)) {
+      blockers.push({
+        path: `${path}.provenance`,
+        reason: `source_type=${provenance.source_type || "missing"}, needs_review=${String(provenance.needs_review)}`,
+      });
+    }
+  }
+  Object.entries(value).forEach(([key, child]) => {
+    blockers.push(...collectReviewBlockers(child, `${path}.${key}`));
+  });
+  return blockers;
 }
 
 function renderOnboardingChatMarkup(entries, statusText = "") {

@@ -616,7 +616,7 @@ tbody tr.selected {
 
 .review-layout {
   display: grid;
-  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   padding: 14px;
 }
@@ -634,7 +634,7 @@ tbody tr.selected {
 }
 
 .artifact-preview {
-  max-height: 420px;
+  max-height: 300px;
   overflow: auto;
   margin: 0;
   border: 1px solid #1e293b;
@@ -654,6 +654,33 @@ tbody tr.selected {
   padding: 10px 12px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.promotion-result ul,
+.review-issues ul {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-weight: 500;
+}
+
+.promotion-result span,
+.review-issues span {
+  display: block;
+  margin-bottom: 2px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.review-issues {
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: var(--warn);
+  padding: 10px 12px;
+  font-size: 13px;
 }
 
 .promotion-result.ready {
