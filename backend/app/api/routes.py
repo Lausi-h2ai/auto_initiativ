@@ -54,6 +54,7 @@ from backend.app.schemas.api import (
     ImportResponse,
     ImportSummaryItem,
     OnboardingArtifactImportResponse,
+    OnboardingArtifactContentResponse,
     OnboardingArtifactResponse,
     OnboardingArtifactsResponse,
     OnboardingChatEntryResponse,
@@ -941,6 +942,43 @@ def get_onboarding_artifacts(
         run_id=run_id,
         output_path=str(output_path),
         artifacts=_onboarding_artifact_responses(session, run_id, settings),
+    )
+
+
+@router.get("/onboarding/chat/{run_id}/artifacts/{filename}", response_model=OnboardingArtifactContentResponse)
+def get_onboarding_artifact_content(
+    run_id: str,
+    filename: str,
+    settings: Settings = Depends(get_settings),
+) -> OnboardingArtifactContentResponse:
+    if filename not in ONBOARDING_CHAT_FILENAMES:
+        raise HTTPException(status_code=404, detail="Unknown onboarding artifact")
+    output_path = (settings.runs_root / run_id / "output").resolve()
+    artifact_path = (output_path / filename).resolve()
+    if output_path not in artifact_path.parents:
+        raise HTTPException(status_code=400, detail="Invalid artifact path")
+    if not artifact_path.exists():
+        return OnboardingArtifactContentResponse(
+            run_id=run_id,
+            filename=filename,
+            path=str(artifact_path),
+            exists=False,
+        )
+    raw_text = artifact_path.read_text(encoding="utf-8")
+    parsed: dict[str, Any] | list[Any] | None = None
+    try:
+        loaded = json.loads(raw_text)
+        if isinstance(loaded, (dict, list)):
+            parsed = loaded
+    except json.JSONDecodeError:
+        parsed = None
+    return OnboardingArtifactContentResponse(
+        run_id=run_id,
+        filename=filename,
+        path=str(artifact_path),
+        exists=True,
+        raw_text=raw_text,
+        json_content=parsed,
     )
 
 

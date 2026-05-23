@@ -233,6 +233,9 @@ const state = {
     profile: null,
     artifacts: null,
     inputFiles: [],
+    snapshots: [],
+    selectedArtifact: null,
+    promotionResult: null,
     lastResult: null,
   },
 };
@@ -449,12 +452,13 @@ async function renderProfileShell() {
   bindOnboardingControls();
 
   try {
-    const [summary, profile, sessionState, artifacts, inputFiles] = await Promise.all([
+    const [summary, profile, sessionState, artifacts, inputFiles, snapshots] = await Promise.all([
       fetchJson("/dashboard/summary"),
       fetchJson("/profile/summary"),
       fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/status`),
       fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/artifacts`),
       fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/input-files`),
+      fetchJson(`/onboarding/runs/${encodeURIComponent(state.onboarding.runId)}/snapshots`),
     ]);
     renderSummary(summary);
     state.onboarding.profile = profile;
@@ -462,9 +466,10 @@ async function renderProfileShell() {
     state.onboarding.entries = sessionState.entries || [];
     state.onboarding.artifacts = artifacts.artifacts || [];
     state.onboarding.inputFiles = inputFiles.files || [];
+    state.onboarding.snapshots = snapshots || [];
     renderProfileAndChat();
     bindOnboardingControls();
-    elements.detailJson.textContent = JSON.stringify({ profile, session_state: sessionState, artifacts, input_files: inputFiles }, null, 2);
+    elements.detailJson.textContent = JSON.stringify({ profile, session_state: sessionState, artifacts, input_files: inputFiles, snapshots }, null, 2);
     elements.apiState.textContent = "Profile state loaded";
     elements.apiState.className = "state-pill ok";
   } catch (error) {
@@ -513,6 +518,7 @@ function renderProfileAndChat(options = {}) {
           ${renderInputFilesPanel()}
           ${renderProfileToolbar()}
           ${renderArtifactPanel()}
+          ${renderReviewPanel()}
           ${renderOnboardingChatMarkup(sessionState.entries || state.onboarding.entries || [], `Session: ${status}`)}
         </div>
       </td>
@@ -648,6 +654,7 @@ function renderArtifactPanel() {
             <td>${escapeHtml(artifact.filename)}</td>
             <td>${statusTag(artifact.status)}</td>
             <td>${escapeHtml(reasonText)}</td>
+            <td><button class="action-button compact" data-artifact-view="${escapeHtml(artifact.filename)}" type="button">Review</button></td>
           </tr>
         `;
       }).join("")
@@ -656,6 +663,7 @@ function renderArtifactPanel() {
           <td>${escapeHtml(filename)}</td>
           <td>${statusTag("missing")}</td>
           <td>Artifact state has not loaded yet.</td>
+          <td><button class="action-button compact" data-artifact-view="${escapeHtml(filename)}" type="button">Review</button></td>
         </tr>
       `).join("");
   return `
@@ -669,10 +677,57 @@ function renderArtifactPanel() {
       </div>
       <table class="artifact-table">
         <thead>
-          <tr><th>File</th><th>Status</th><th>Review</th></tr>
+          <tr><th>File</th><th>Status</th><th>Review</th><th>Inspect</th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
+    </section>
+  `;
+}
+
+function renderReviewPanel() {
+  const snapshots = state.onboarding.snapshots || [];
+  const requiredTypes = ["user_profile", "master_cv_profile", "policy"];
+  const snapshotRows = requiredTypes.map((type) => {
+    const snapshot = snapshots.find((item) => item.snapshot_type === type);
+    return `
+      <tr>
+        <td>${escapeHtml(type)}</td>
+        <td>${snapshot ? statusTag(snapshot.status) : statusTag("missing")}</td>
+        <td>${escapeHtml(snapshot?.external_id || "No candidate imported yet")}</td>
+      </tr>
+    `;
+  }).join("");
+  const selected = state.onboarding.selectedArtifact;
+  const selectedMarkup = selected
+    ? `<pre class="artifact-preview">${escapeHtml(JSON.stringify(selected.json_content ?? selected.raw_text ?? "", null, 2))}</pre>`
+    : `<p class="muted">Review each JSON artifact, then approve the three candidate snapshots when they match your profile.</p>`;
+  const promotion = state.onboarding.promotionResult;
+  const promotionMarkup = promotion
+    ? `<div class="promotion-result ${promotion.status === "approved" ? "ready" : "blocked"}">${escapeHtml(promotion.status)}${promotion.issues?.length ? `: ${escapeHtml(promotion.issues.map((issue) => issue.message).join(" "))}` : ""}</div>`
+    : "";
+  return `
+    <section class="artifact-panel review-panel">
+      <div class="artifact-panel-header">
+        <div>
+          <span class="profile-kicker">Review</span>
+          <h3>Approve Profile Snapshots</h3>
+        </div>
+        <button class="action-button primary" id="onboardingApproveSnapshots" type="button">Approve reviewed profile</button>
+      </div>
+      <div class="review-layout">
+        <div>
+          <table class="artifact-table">
+            <thead><tr><th>Snapshot</th><th>Status</th><th>ID</th></tr></thead>
+            <tbody>${snapshotRows}</tbody>
+          </table>
+        </div>
+        <div class="review-preview">
+          ${selected ? `<h4>${escapeHtml(selected.filename)}</h4>` : ""}
+          ${selectedMarkup}
+          ${promotionMarkup}
+        </div>
+      </div>
     </section>
   `;
 }
@@ -716,6 +771,9 @@ function bindOnboardingControls() {
       state.onboarding.entries = [];
       state.onboarding.artifacts = null;
       state.onboarding.inputFiles = [];
+      state.onboarding.snapshots = [];
+      state.onboarding.selectedArtifact = null;
+      state.onboarding.promotionResult = null;
       state.onboarding.lastResult = null;
       refresh();
     });
@@ -730,6 +788,10 @@ function bindOnboardingControls() {
   document.querySelector("#onboardingFinish")?.addEventListener("click", () => onboardingFinish());
   document.querySelector("#onboardingValidateArtifacts")?.addEventListener("click", () => onboardingValidateArtifacts());
   document.querySelector("#onboardingValidateArtifactsInline")?.addEventListener("click", () => onboardingValidateArtifacts());
+  document.querySelector("#onboardingApproveSnapshots")?.addEventListener("click", () => onboardingApproveSnapshots());
+  document.querySelectorAll("[data-artifact-view]").forEach((button) => {
+    button.addEventListener("click", () => onboardingViewArtifact(button.dataset.artifactView));
+  });
   document.querySelector("#onboardingResumeUpload")?.addEventListener("change", (event) => onboardingUploadInputFile(event));
   document.querySelector("#onboardingComposer")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -941,6 +1003,7 @@ async function onboardingFinish() {
     const result = await fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/finish`, { method: "POST" });
     state.onboarding.entries = result.entries || [];
     state.onboarding.artifacts = result.artifacts || state.onboarding.artifacts;
+    state.onboarding.snapshots = await fetchJson(`/onboarding/runs/${encodeURIComponent(state.onboarding.runId)}/snapshots`);
     state.onboarding.lastResult = result;
     rerenderActiveOnboarding(result.import_result?.run?.status || "Finalization attempted");
     elements.detailJson.textContent = JSON.stringify(result, null, 2);
@@ -955,8 +1018,53 @@ async function onboardingValidateArtifacts() {
   try {
     const result = await fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/import-artifacts`, { method: "POST" });
     state.onboarding.artifacts = result.artifacts || [];
+    state.onboarding.snapshots = await fetchJson(`/onboarding/runs/${encodeURIComponent(state.onboarding.runId)}/snapshots`);
     state.onboarding.lastResult = result;
     rerenderActiveOnboarding(result.import_result?.run?.status || "Validation attempted");
+    elements.detailJson.textContent = JSON.stringify(result, null, 2);
+  } catch (error) {
+    showOnboardingError(error);
+  }
+}
+
+async function onboardingViewArtifact(filename) {
+  syncOnboardingRunId();
+  if (!filename) return;
+  setOnboardingStatus(`Loading ${filename}...`);
+  try {
+    const result = await fetchJson(
+      `/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/artifacts/${encodeURIComponent(filename)}`,
+    );
+    state.onboarding.selectedArtifact = result;
+    state.onboarding.lastResult = result;
+    rerenderActiveOnboarding(result.exists ? `Reviewing ${filename}` : `${filename} is missing`);
+    elements.detailJson.textContent = JSON.stringify(result, null, 2);
+  } catch (error) {
+    showOnboardingError(error);
+  }
+}
+
+async function onboardingApproveSnapshots() {
+  syncOnboardingRunId();
+  const reviewerId = localStorage.getItem("onboardingReviewerId") || "local-user";
+  localStorage.setItem("onboardingReviewerId", reviewerId);
+  setOnboardingStatus("Approving reviewed candidate snapshots...");
+  try {
+    const result = await fetchJson(`/onboarding/runs/${encodeURIComponent(state.onboarding.runId)}/promote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reviewer_id: reviewerId,
+        confirm_user_profile: true,
+        confirm_master_cv_profile: true,
+        confirm_policy: true,
+      }),
+    });
+    state.onboarding.promotionResult = result;
+    state.onboarding.snapshots = await fetchJson(`/onboarding/runs/${encodeURIComponent(state.onboarding.runId)}/snapshots`);
+    state.onboarding.profile = await fetchJson("/profile/summary");
+    state.onboarding.lastResult = result;
+    rerenderActiveOnboarding(result.status === "approved" ? "Profile snapshots approved." : "Profile approval blocked.");
     elements.detailJson.textContent = JSON.stringify(result, null, 2);
   } catch (error) {
     showOnboardingError(error);

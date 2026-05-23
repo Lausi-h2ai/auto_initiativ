@@ -406,6 +406,17 @@ def test_onboarding_chat_api_persists_transcript_state_and_imports_candidate_pro
             "onboarding_review.json": "ready_for_review",
         }
 
+        artifact_content = client.get("/onboarding/chat/onboarding-api/artifacts/user_profile.json")
+        assert artifact_content.status_code == 200
+        artifact_payload = artifact_content.json()
+        assert artifact_payload["exists"] is True
+        assert artifact_payload["filename"] == "user_profile.json"
+        assert artifact_payload["json_content"]["profile_id"] == "profile-onboarding-api"
+        assert "profile-onboarding-api" in artifact_payload["raw_text"]
+
+        unknown_artifact = client.get("/onboarding/chat/onboarding-api/artifacts/not_allowed.json")
+        assert unknown_artifact.status_code == 404
+
         snapshots = client.get("/onboarding/runs/onboarding-api/snapshots")
         assert snapshots.status_code == 200
         assert {(snapshot["snapshot_type"], snapshot["external_id"], snapshot["status"]) for snapshot in snapshots.json()} == {

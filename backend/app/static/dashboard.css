@@ -198,6 +198,9 @@ select {
 
 .action-button.compact {
   min-width: 76px;
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 12px;
 }
 
 .summary-grid {
@@ -611,6 +614,60 @@ tbody tr.selected {
   text-transform: uppercase;
 }
 
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+}
+
+.review-preview {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.review-preview h4 {
+  margin: 0;
+  color: var(--strong);
+  font-size: 14px;
+}
+
+.artifact-preview {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.promotion-result {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.promotion-result.ready {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: var(--ok);
+}
+
+.promotion-result.blocked {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: var(--warn);
+}
+
 .onboarding-chat {
   display: grid;
   grid-template-rows: minmax(420px, calc(100vh - 330px)) auto auto;
@@ -769,6 +826,10 @@ tbody tr.selected {
   .profile-actions {
     justify-items: stretch;
     width: 100%;
+  }
+
+  .review-layout {
+    grid-template-columns: 1fr;
   }
 
   .onboarding-composer {

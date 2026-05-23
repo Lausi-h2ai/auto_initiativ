@@ -129,6 +129,15 @@ class OnboardingArtifactsResponse(BaseModel):
     artifacts: list[OnboardingArtifactResponse]
 
 
+class OnboardingArtifactContentResponse(BaseModel):
+    run_id: str
+    filename: str
+    path: str
+    exists: bool
+    raw_text: str | None = None
+    json_content: dict[str, Any] | list[Any] | None = None
+
+
 class OnboardingInputFileResponse(BaseModel):
     filename: str
     path: str
