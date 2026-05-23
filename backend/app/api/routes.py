@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -9,6 +10,12 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from backend.app.agents.codex_tmux import TmuxCodexBridge, TmuxCodexError, TmuxTarget
+from backend.app.agents.company_research import (
+    COMPANY_RESEARCH_INSTRUCTIONS,
+    CompanyResearchCampaign,
+    build_company_research_inputs,
+    build_company_research_task,
+)
 from backend.app.agents.onboarding_chat import OnboardingCodexChatAdapter
 from backend.app.agents.onboarding_recruiter_prompt import (
     ONBOARDING_ARTIFACT_FILENAMES,
@@ -16,6 +23,7 @@ from backend.app.agents.onboarding_recruiter_prompt import (
     build_onboarding_start_message,
 )
 from backend.app.agents.pi_rpc import PiRpcError, PiRpcOnboardingChatAdapter
+from backend.app.agents.run_folder import RunFolderGenerator, RunFolderSpec, RunInputFile
 from backend.app.core.config import Settings
 from backend.app.core.config import get_settings
 from backend.app.db.models import (
@@ -37,10 +45,12 @@ from backend.app.db.models import (
 from backend.app.db.session import get_session
 from backend.app.gates.evaluate_only import EvaluateOnlyGateService
 from backend.app.imports.file_classifier import classify_filename
-from backend.app.imports.import_service import ONBOARDING_CHAT_FILENAMES, RunImportService
+from backend.app.imports.import_service import COMPANY_RESEARCH_FILENAMES, ONBOARDING_CHAT_FILENAMES, RunImportService
 from backend.app.onboarding.promotion import OnboardingPromotionService, SnapshotPromotionRequest
 from backend.app.schemas.api import (
     AuditLogResponse,
+    CompanyResearchCampaignRequest,
+    CompanyResearchCampaignResponse,
     CompanyResponse,
     ContactResponse,
     DashboardSummaryResponse,
@@ -648,6 +658,32 @@ def _latest_snapshot(session: Session, model: type[Any], status: str) -> Any | N
     return session.exec(select(model).where(model.status == status).order_by(model.imported_at.desc())).first()
 
 
+def _approved_profile_bundle(session: Session) -> tuple[UserProfileSnapshot, MasterCvProfileSnapshot, PolicySnapshot]:
+    user_profile = _latest_snapshot(session, UserProfileSnapshot, "approved")
+    master_cv = _latest_snapshot(session, MasterCvProfileSnapshot, "approved")
+    policy = _latest_snapshot(session, PolicySnapshot, "approved")
+    if user_profile is None or master_cv is None or policy is None:
+        raise HTTPException(status_code=409, detail="Company research requires approved user profile, master CV profile, and policy snapshots.")
+    return user_profile, master_cv, policy
+
+
+def _raw_json_object(snapshot: Any) -> dict[str, Any]:
+    data = json.loads(snapshot.raw_json)
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=500, detail="Approved snapshot payload is not a JSON object.")
+    return data
+
+
+def _safe_campaign_run_id(value: str | None) -> str:
+    if value is None or not value.strip():
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return f"company-research-{stamp}"
+    run_id = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}", run_id):
+        raise HTTPException(status_code=400, detail="run_id must use only letters, numbers, dots, dashes, or underscores.")
+    return run_id
+
+
 def _count_by_status(session: Session, model: type[Any], status_column: Any) -> dict[str, int]:
     rows = session.exec(select(status_column, func.count(model.id)).group_by(status_column)).all()
     return {status: count for status, count in rows}
@@ -680,6 +716,62 @@ def profile_summary(session: Session = Depends(get_session)) -> ProfileSummaryRe
             _profile_snapshot_summary("master_cv_profile", approved_master_cv) if approved_master_cv is not None else None
         ),
         approved_policy=_profile_snapshot_summary("policy", approved_policy) if approved_policy is not None else None,
+    )
+
+
+@router.post("/campaigns/company-research", response_model=CompanyResearchCampaignResponse)
+def prepare_company_research_campaign(
+    request: CompanyResearchCampaignRequest,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CompanyResearchCampaignResponse:
+    user_profile, master_cv, policy = _approved_profile_bundle(session)
+    run_id = _safe_campaign_run_id(request.run_id)
+    campaign = CompanyResearchCampaign(
+        run_id=run_id,
+        role_focus=request.role_focus,
+        locations=request.locations,
+        max_companies=request.max_companies,
+        notes=request.notes,
+    )
+    input_payloads = build_company_research_inputs(
+        user_profile=_raw_json_object(user_profile),
+        master_cv_profile=_raw_json_object(master_cv),
+        policy=_raw_json_object(policy),
+        company_schema=(settings.schemas_root / "company_candidate.schema.json").read_text(encoding="utf-8"),
+        fit_schema=(settings.schemas_root / "fit_evaluation.schema.json").read_text(encoding="utf-8"),
+        campaign=campaign,
+    )
+    folder = RunFolderGenerator(settings=settings, session=session).prepare(
+        RunFolderSpec(
+            run_id=run_id,
+            task=build_company_research_task(campaign),
+            instructions=COMPANY_RESEARCH_INSTRUCTIONS,
+            inputs=tuple(RunInputFile(path, content) for path, content in sorted(input_payloads.items())),
+            expected_output_files=COMPANY_RESEARCH_FILENAMES,
+            metadata={
+                "task_type": "company_research",
+                "profile_snapshot_id": user_profile.id,
+                "master_cv_snapshot_id": master_cv.id,
+                "policy_snapshot_id": policy.id,
+            },
+        )
+    )
+    run = session.exec(select(Run).where(Run.run_id == run_id)).first()
+    if run is not None:
+        run.agent_type = "company_research"
+        session.add(run)
+        session.commit()
+    return CompanyResearchCampaignResponse(
+        run_id=run_id,
+        status="prepared",
+        run_path=str(folder.path),
+        input_path=str(folder.input_dir),
+        output_path=str(folder.output_dir),
+        prompt_path=str(folder.prompt_path),
+        import_endpoint=f"/runs/{run_id}/import?run_type=company_research",
+        expected_output_files=list(COMPANY_RESEARCH_FILENAMES),
+        next_action="Run the company research agent in the prepared folder, then import the generated company_candidate.json and fit_evaluation.json.",
     )
 
 

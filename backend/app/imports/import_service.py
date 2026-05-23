@@ -17,15 +17,21 @@ from backend.app.imports.validation import JsonValidationService, ValidationOutc
 
 DEFAULT_RUN_TYPE = "phase_1_full"
 ONBOARDING_CHAT_RUN_TYPE = "onboarding_chat"
+COMPANY_RESEARCH_RUN_TYPE = "company_research"
 ONBOARDING_CHAT_FILENAMES = (
     "user_profile.json",
     "master_cv_profile.json",
     "policy.json",
     "onboarding_review.json",
 )
+COMPANY_RESEARCH_FILENAMES = (
+    "company_candidate.json",
+    "fit_evaluation.json",
+)
 SUPPORTED_RUN_TYPES = {
     DEFAULT_RUN_TYPE: EXPECTED_FILENAMES,
     ONBOARDING_CHAT_RUN_TYPE: ONBOARDING_CHAT_FILENAMES,
+    COMPANY_RESEARCH_RUN_TYPE: COMPANY_RESEARCH_FILENAMES,
 }
 
 

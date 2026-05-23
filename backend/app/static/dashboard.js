@@ -238,6 +238,9 @@ const state = {
     promotionResult: null,
     lastResult: null,
   },
+  campaign: {
+    lastResult: null,
+  },
 };
 
 const elements = {
@@ -496,7 +499,6 @@ function renderProfileAndChat(options = {}) {
     <tr>
       <td class="onboarding-cell">
         <div class="profile-shell">
-          ${renderAccountPanel()}
           <section class="profile-status-panel ${hasApprovedProfile ? "ready" : "setup"}">
             <div>
               <span class="profile-kicker">Profile</span>
@@ -515,17 +517,156 @@ function renderProfileAndChat(options = {}) {
             </div>
           </section>
           ${lastError ? `<div class="onboarding-failure">${escapeHtml(lastError)}</div>` : ""}
-          ${renderInputFilesPanel()}
-          ${renderProfileToolbar()}
-          ${renderArtifactPanel()}
-          ${renderReviewPanel()}
-          ${renderOnboardingChatMarkup(sessionState.entries || state.onboarding.entries || [], `Session: ${status}`)}
+          ${renderProfileStepper(hasApprovedProfile, status)}
+          ${renderCurrentProfileStep(hasApprovedProfile, status, sessionState)}
+          ${renderTechnicalProfileDetails(hasApprovedProfile, sessionState, status)}
         </div>
       </td>
     </tr>
   `;
   const messageList = document.querySelector("#onboardingMessages");
   if (messageList) messageList.scrollTop = messageList.scrollHeight;
+}
+
+function renderProfileStepper(hasApprovedProfile, status) {
+  const hasArtifacts = Array.isArray(state.onboarding.artifacts) && state.onboarding.artifacts.some((artifact) => artifact.exists);
+  const hasCandidates = (state.onboarding.snapshots || []).some((snapshot) => snapshot.status === "candidate");
+  const steps = [
+    { key: "interview", label: "Interview", done: status !== "not_started" || hasArtifacts || hasApprovedProfile },
+    { key: "validate", label: "Validate", done: hasArtifacts || hasCandidates || hasApprovedProfile },
+    { key: "approve", label: "Approve", done: hasApprovedProfile },
+    { key: "research", label: "Research", done: false },
+  ];
+  const activeKey = hasApprovedProfile ? "research" : hasCandidates || hasArtifacts ? "approve" : status === "running" || status === "waiting" ? "interview" : "interview";
+  return `
+    <nav class="workflow-stepper" aria-label="Profile workflow">
+      ${steps.map((step, index) => `
+        <div class="workflow-step ${step.done ? "done" : ""} ${step.key === activeKey ? "active" : ""}">
+          <span>${step.done ? "✓" : index + 1}</span>
+          <strong>${escapeHtml(step.label)}</strong>
+        </div>
+      `).join("")}
+    </nav>
+  `;
+}
+
+function renderCurrentProfileStep(hasApprovedProfile, status, sessionState) {
+  if (hasApprovedProfile) {
+    return `
+      ${renderApprovedProfilePanel()}
+      ${renderCompanyResearchPanel()}
+    `;
+  }
+  const hasCandidateSnapshots = (state.onboarding.snapshots || []).some((snapshot) => snapshot.status === "candidate");
+  const hasArtifacts = Array.isArray(state.onboarding.artifacts) && state.onboarding.artifacts.some((artifact) => artifact.exists);
+  if (hasCandidateSnapshots || hasArtifacts) {
+    return `
+      <section class="workflow-panel">
+        <div class="workflow-panel-header">
+          <div>
+            <span class="profile-kicker">Current step</span>
+            <h3>Review and approve profile</h3>
+          </div>
+          <button class="action-button" id="onboardingValidateArtifacts" type="button">Validate artifacts</button>
+        </div>
+        ${renderReviewPanel()}
+      </section>
+    `;
+  }
+  return `
+    <section class="workflow-panel">
+      <div class="workflow-panel-header">
+        <div>
+          <span class="profile-kicker">Current step</span>
+          <h3>Profile interview</h3>
+        </div>
+        ${renderProfileToolbar()}
+      </div>
+      ${renderInputFilesPanel()}
+      ${renderOnboardingChatMarkup(sessionState.entries || state.onboarding.entries || [], `Session: ${status}`)}
+    </section>
+  `;
+}
+
+function renderApprovedProfilePanel() {
+  const profile = state.onboarding.profile || {};
+  const approved = [
+    profile.approved_user_profile,
+    profile.approved_master_cv_profile,
+    profile.approved_policy,
+  ].filter(Boolean);
+  return `
+    <section class="workflow-panel approved-profile-panel">
+      <div class="workflow-panel-header">
+        <div>
+          <span class="profile-kicker">Approved context</span>
+          <h3>Profile source of truth is ready</h3>
+        </div>
+      </div>
+      <div class="approved-snapshot-grid">
+        ${approved.map((snapshot) => `
+          <div class="approved-snapshot">
+            <span>${escapeHtml(snapshot.snapshot_type)}</span>
+            <strong>${escapeHtml(snapshot.external_id)}</strong>
+            ${statusTag(snapshot.status)}
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderCompanyResearchPanel() {
+  const result = state.campaign.lastResult;
+  return `
+    <section class="workflow-panel company-research-panel">
+      <div class="workflow-panel-header">
+        <div>
+          <span class="profile-kicker">Next step</span>
+          <h3>Prepare company research</h3>
+        </div>
+        <button class="action-button primary" id="companyResearchPrepare" type="button">Prepare company research run</button>
+      </div>
+      <div class="campaign-form">
+        <label class="filter-field">
+          <span>Run ID</span>
+          <input id="companyResearchRunId" type="text" placeholder="company-research-local">
+        </label>
+        <label class="filter-field">
+          <span>Role focus</span>
+          <input id="companyResearchRoleFocus" type="text" value="Profile-aligned roles">
+        </label>
+        <label class="filter-field">
+          <span>Locations</span>
+          <input id="companyResearchLocations" type="text" placeholder="Berlin, Zurich, remote Europe">
+        </label>
+        <label class="filter-field">
+          <span>Max companies</span>
+          <input id="companyResearchMaxCompanies" type="number" min="1" max="50" step="1" value="10">
+        </label>
+        <label class="filter-field campaign-notes">
+          <span>Notes</span>
+          <input id="companyResearchNotes" type="text" placeholder="Optional constraints or preferences">
+        </label>
+      </div>
+      ${result ? `
+        <div class="campaign-result">
+          <strong>${escapeHtml(result.run_id)}</strong>
+          <p>${escapeHtml(result.next_action)}</p>
+          <code>${escapeHtml(result.output_path)}</code>
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function renderTechnicalProfileDetails(hasApprovedProfile, sessionState, status) {
+  return `
+    <details class="technical-details">
+      <summary>Generated files and transcript</summary>
+      ${renderArtifactPanel()}
+    </details>
+  `;
 }
 
 function renderAccountPanel() {
@@ -843,11 +984,43 @@ function bindOnboardingControls() {
   document.querySelectorAll("[data-artifact-view]").forEach((button) => {
     button.addEventListener("click", () => onboardingViewArtifact(button.dataset.artifactView));
   });
+  document.querySelector("#companyResearchPrepare")?.addEventListener("click", () => companyResearchPrepare());
   document.querySelector("#onboardingResumeUpload")?.addEventListener("change", (event) => onboardingUploadInputFile(event));
   document.querySelector("#onboardingComposer")?.addEventListener("submit", (event) => {
     event.preventDefault();
     onboardingPostMessage();
   });
+}
+
+async function companyResearchPrepare() {
+  const runId = document.querySelector("#companyResearchRunId")?.value?.trim() || null;
+  const roleFocus = document.querySelector("#companyResearchRoleFocus")?.value?.trim() || "Profile-aligned roles";
+  const locations = (document.querySelector("#companyResearchLocations")?.value || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const maxCompanies = Number.parseInt(document.querySelector("#companyResearchMaxCompanies")?.value || "10", 10);
+  const notes = document.querySelector("#companyResearchNotes")?.value?.trim() || null;
+  setOnboardingStatus("Preparing company research run...");
+  try {
+    const result = await fetchJson("/campaigns/company-research", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        run_id: runId,
+        role_focus: roleFocus,
+        locations,
+        max_companies: Number.isFinite(maxCompanies) ? maxCompanies : 10,
+        notes,
+      }),
+    });
+    state.campaign.lastResult = result;
+    state.onboarding.lastResult = result;
+    rerenderActiveOnboarding("Company research run prepared.");
+    elements.detailJson.textContent = JSON.stringify(result, null, 2);
+  } catch (error) {
+    showOnboardingError(error);
+  }
 }
 
 function setOnboardingStatus(message, tone = "") {
@@ -1114,6 +1287,7 @@ async function onboardingApproveSnapshots() {
     state.onboarding.promotionResult = result;
     state.onboarding.snapshots = await fetchJson(`/onboarding/runs/${encodeURIComponent(state.onboarding.runId)}/snapshots`);
     state.onboarding.profile = await fetchJson("/profile/summary");
+    state.onboarding.selectedArtifact = null;
     state.onboarding.lastResult = result;
     rerenderActiveOnboarding(result.status === "approved" ? "Profile snapshots approved." : "Profile approval blocked.");
     elements.detailJson.textContent = JSON.stringify(result, null, 2);

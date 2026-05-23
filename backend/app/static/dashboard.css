@@ -541,6 +541,147 @@ tbody tr.selected {
   background: var(--surface);
 }
 
+.workflow-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workflow-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+.workflow-step span {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workflow-step.active {
+  border-color: #0f766e;
+  color: var(--strong);
+}
+
+.workflow-step.active span,
+.workflow-step.done span {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.workflow-step strong {
+  font-size: 13px;
+}
+
+.workflow-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.workflow-panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workflow-panel-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.approved-snapshot-grid,
+.campaign-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.approved-snapshot {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfe;
+}
+
+.approved-snapshot span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.approved-snapshot strong {
+  word-break: break-word;
+}
+
+.campaign-notes {
+  grid-column: span 3;
+}
+
+.campaign-form span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.campaign-result {
+  display: grid;
+  gap: 6px;
+  margin: 0 14px 14px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: var(--ok);
+  padding: 10px 12px;
+}
+
+.campaign-result p {
+  margin: 0;
+  color: var(--text);
+}
+
+.campaign-result code {
+  color: var(--strong);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.technical-details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.technical-details summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .file-upload-button {
   display: inline-flex;
   align-items: center;
@@ -853,6 +994,21 @@ tbody tr.selected {
   .profile-actions {
     justify-items: stretch;
     width: 100%;
+  }
+
+  .workflow-stepper,
+  .approved-snapshot-grid,
+  .campaign-form {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .campaign-notes {
+    grid-column: span 1;
   }
 
   .review-layout {

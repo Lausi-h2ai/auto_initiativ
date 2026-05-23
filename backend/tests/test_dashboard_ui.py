@@ -75,6 +75,7 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
     required_endpoints = {
         "/dashboard/summary",
         "/profile/summary",
+        "/campaigns/company-research",
         "/runs",
         "/onboarding/chat/",
         "/onboarding/runs/",
@@ -106,6 +107,8 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "Candidate artifacts",
         "Approve reviewed profile",
         "Review each JSON artifact",
+        "Prepare company research run",
+        "Generated files and transcript",
         "user_profile.json",
         "master_cv_profile.json",
         "policy.json",

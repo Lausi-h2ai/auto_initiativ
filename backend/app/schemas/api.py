@@ -223,6 +223,26 @@ class OnboardingPromotionResponse(BaseModel):
     issues: list[OnboardingPromotionIssueResponse]
 
 
+class CompanyResearchCampaignRequest(BaseModel):
+    run_id: str | None = Field(default=None, min_length=1, max_length=120)
+    role_focus: str = Field(default="Profile-aligned roles", min_length=1, max_length=240)
+    locations: list[str] = Field(default_factory=list)
+    max_companies: int = Field(default=10, ge=1, le=50)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class CompanyResearchCampaignResponse(BaseModel):
+    run_id: str
+    status: str
+    run_path: str
+    input_path: str
+    output_path: str
+    prompt_path: str
+    import_endpoint: str
+    expected_output_files: list[str]
+    next_action: str
+
+
 class AuditLogResponse(BaseModel):
     id: int
     run_id: str | None

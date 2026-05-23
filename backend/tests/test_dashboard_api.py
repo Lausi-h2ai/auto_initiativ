@@ -5,8 +5,10 @@ import json
 from sqlmodel import Session, select
 
 from backend.app.db import session as db_session_module
-from backend.app.db.models import Company, Contact, OutreachRecord, PolicySnapshot, SendIntent
-from backend.tests.conftest import copy_valid_run
+from backend.app.db.models import Company, Contact, FitEvaluation, OutreachRecord, PolicySnapshot, SendIntent
+from backend.app.imports.import_service import RunImportService
+from backend.app.onboarding.promotion import OnboardingPromotionService, SnapshotPromotionRequest
+from backend.tests.conftest import FIXTURES_ROOT, copy_valid_run
 
 
 def _import_valid_run(client, runs_root, run_id: str = "dashboard-valid") -> None:
@@ -55,6 +57,27 @@ def _items(response):
     body = response.json()
     assert isinstance(body, list)
     return body
+
+
+def _approve_profile_snapshots(db_session, runs_root, run_id: str = "campaign-approved") -> None:
+    output_path = runs_root / run_id / "output"
+    output_path.mkdir(parents=True, exist_ok=True)
+    fixture_output = FIXTURES_ROOT / "valid_run" / "output"
+    for filename in ("user_profile.json", "master_cv_profile.json", "policy.json", "onboarding_review.json"):
+        (output_path / filename).write_text((fixture_output / filename).read_text(encoding="utf-8"), encoding="utf-8")
+    result = RunImportService(db_session).import_run(run_id, run_type="onboarding_chat")
+    assert result.run.status == "imported"
+    promoted = OnboardingPromotionService(db_session).promote_run_snapshots(
+        run_id,
+        SnapshotPromotionRequest(
+            reviewer_id="test-reviewer",
+            confirm_user_profile=True,
+            confirm_master_cv_profile=True,
+            confirm_policy=True,
+        ),
+    )
+    db_session.commit()
+    assert promoted.status == "approved"
 
 
 def _assert_single_match(client, path: str, params: dict[str, object], key: str, value: object) -> None:
@@ -109,6 +132,53 @@ def test_dashboard_summary_counts_after_valid_import(client, runs_root):
     assert summary["send_intents_by_status"] == {"imported": 1}
     assert summary["gate_results_by_status"] == {"passed_evaluate_only": 1}
     assert summary["outreach_records_by_status"] == {}
+
+
+def test_company_research_campaign_prepare_requires_approved_profile(client):
+    response = client.post("/campaigns/company-research", json={"run_id": "campaign-no-profile"})
+
+    assert response.status_code == 409
+    assert "approved user profile" in response.json()["detail"]
+
+
+def test_company_research_campaign_prepare_and_imports_company_fit(client, db_session, runs_root):
+    _approve_profile_snapshots(db_session, runs_root)
+
+    prepared = client.post(
+        "/campaigns/company-research",
+        json={
+            "run_id": "campaign-one",
+            "role_focus": "Backend platform roles",
+            "locations": ["Berlin", "Remote Europe"],
+            "max_companies": 5,
+        },
+    )
+
+    assert prepared.status_code == 200
+    payload = prepared.json()
+    assert payload["status"] == "prepared"
+    assert payload["expected_output_files"] == ["company_candidate.json", "fit_evaluation.json"]
+    assert (runs_root / "campaign-one" / "input" / "user_profile.json").exists()
+    assert "company_research" in (runs_root / "campaign-one" / "manifest.json").read_text(encoding="utf-8")
+
+    fixture_output = FIXTURES_ROOT / "valid_run" / "output"
+    output_path = runs_root / "campaign-one" / "output"
+    company = json.loads((fixture_output / "company_candidate.json").read_text(encoding="utf-8"))
+    company.update({"company_id": "company-campaign-1", "name": "Campaign Robotics", "domain": "campaign.example"})
+    fit = json.loads((fixture_output / "fit_evaluation.json").read_text(encoding="utf-8"))
+    fit.update({"evaluation_id": "evaluation-campaign-1", "company_id": "company-campaign-1"})
+    (output_path / "company_candidate.json").write_text(json.dumps(company), encoding="utf-8")
+    (output_path / "fit_evaluation.json").write_text(json.dumps(fit), encoding="utf-8")
+
+    imported = client.post("/runs/campaign-one/import", params={"run_type": "company_research"})
+
+    assert imported.status_code == 200
+    assert imported.json()["run"]["status"] == "imported"
+    campaign_company = db_session.exec(select(Company).where(Company.company_id == "company-campaign-1")).one()
+    campaign_fit = db_session.exec(select(FitEvaluation).where(FitEvaluation.evaluation_id == "evaluation-campaign-1")).one()
+    assert campaign_fit.company_id == campaign_company.id
+    assert campaign_fit.user_profile_snapshot_id is not None
+    assert campaign_fit.policy_snapshot_id is not None
 
 
 def test_companies_list_detail_and_filters(client, runs_root):
@@ -317,7 +387,7 @@ def test_dashboard_does_not_expose_send_or_send_reservation_endpoints(client):
 def test_audit_logs_support_dashboard_filters(client, runs_root):
     _import_valid_run(client, runs_root)
     copy_valid_run(runs_root, "dashboard-unsupported")
-    unsupported_response = client.post("/runs/dashboard-unsupported/import", params={"run_type": "company_research"})
+    unsupported_response = client.post("/runs/dashboard-unsupported/import", params={"run_type": "unsupported_research"})
     assert unsupported_response.status_code == 200
 
     _assert_single_match(

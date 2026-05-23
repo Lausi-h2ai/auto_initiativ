@@ -27,6 +27,7 @@ from backend.app.db.normalization import (
     normalize_company_name,
     normalize_recipient_email,
 )
+from backend.app.onboarding.promotion import SNAPSHOT_STATUS_CANDIDATE
 
 
 def _json_dumps(value: Any) -> str:
@@ -73,6 +74,11 @@ class DomainNormalizationService:
         if not imported_file_ids:
             return
 
+        generated_gate_intent_ids = [
+            intent_id
+            for intent_id in self.session.exec(select(SendIntent.intent_id).where(SendIntent.run_id == run_id)).all()
+            if intent_id is not None
+        ]
         for model in (
             ImportedGateResult,
             SendIntent,
@@ -86,6 +92,13 @@ class DomainNormalizationService:
         ):
             for record in self.session.exec(select(model).where(col(model.imported_file_id).in_(imported_file_ids))).all():
                 self.session.delete(record)
+        for gate_result in self.session.exec(
+            select(ImportedGateResult).where(
+                ImportedGateResult.imported_file_id.is_(None),
+                col(ImportedGateResult.external_intent_id).in_(generated_gate_intent_ids),
+            )
+        ).all():
+            self.session.delete(gate_result)
         self.session.flush()
 
     def normalize_run(self, run_id: str) -> DomainNormalizationResult:
@@ -113,17 +126,84 @@ class DomainNormalizationService:
         }
         unresolved: list[dict[str, str]] = []
 
-        user_profile = self._normalize_user_profile(files["user_profile.json"], payloads["user_profile.json"])
-        master_cv_profile = self._normalize_master_cv_profile(
-            files["master_cv_profile.json"],
-            payloads["master_cv_profile.json"],
-        )
-        policy = self._normalize_policy(files["policy.json"], payloads["policy.json"])
-        self.session.add_all([user_profile, master_cv_profile, policy])
-        self.session.flush()
-        counts["user_profile_snapshots"] += 1
-        counts["master_cv_profile_snapshots"] += 1
-        counts["policy_snapshots"] += 1
+        user_profile = None
+        if "user_profile.json" in files:
+            user_profile = self._normalize_user_profile(files["user_profile.json"], payloads["user_profile.json"])
+            self.session.add(user_profile)
+            self.session.flush()
+            counts["user_profile_snapshots"] += 1
+
+        master_cv_profile = None
+        if "master_cv_profile.json" in files:
+            master_cv_profile = self._normalize_master_cv_profile(
+                files["master_cv_profile.json"],
+                payloads["master_cv_profile.json"],
+            )
+            self.session.add(master_cv_profile)
+            self.session.flush()
+            counts["master_cv_profile_snapshots"] += 1
+
+        policy = None
+        if "policy.json" in files:
+            policy = self._normalize_policy(files["policy.json"], payloads["policy.json"])
+            self.session.add(policy)
+            self.session.flush()
+            counts["policy_snapshots"] += 1
+
+        full_run_files = {
+            "company_candidate.json",
+            "contact_candidate.json",
+            "fit_evaluation.json",
+            "email_draft.json",
+            "send_intent.json",
+            "gate_result.json",
+        }
+        if not full_run_files.issubset(files):
+            companies_by_external_id: dict[str, Company] = {}
+            if "company_candidate.json" in files:
+                company = self._normalize_company(files["company_candidate.json"], payloads["company_candidate.json"])
+                self.session.add(company)
+                self.session.flush()
+                counts["companies"] += 1
+                companies_by_external_id[company.company_id] = company
+
+            if "fit_evaluation.json" in files:
+                fit_payload = payloads["fit_evaluation.json"]
+                fit_company = companies_by_external_id.get(fit_payload["company_id"])
+                if fit_company is None:
+                    unresolved.append({"entity": fit_payload["evaluation_id"], "field": "company_id", "value": fit_payload["company_id"]})
+                approved_user_profile = user_profile or self._approved_user_profile(fit_payload["profile_id"])
+                approved_policy = policy or self._approved_policy(fit_payload["policy_id"])
+                fit_evaluation = self._normalize_fit_evaluation(
+                    files["fit_evaluation.json"],
+                    fit_payload,
+                    company=fit_company,
+                    user_profile=approved_user_profile,
+                    policy=approved_policy,
+                )
+                if fit_evaluation.user_profile_snapshot_id is None:
+                    unresolved.append({"entity": fit_payload["evaluation_id"], "field": "profile_id", "value": fit_payload["profile_id"]})
+                if fit_evaluation.policy_snapshot_id is None:
+                    unresolved.append({"entity": fit_payload["evaluation_id"], "field": "policy_id", "value": fit_payload["policy_id"]})
+                self.session.add(fit_evaluation)
+                counts["fit_evaluations"] += 1
+
+            reason_codes = ["unresolved_references_present"] if unresolved else []
+            status = "domain_normalized_with_review" if unresolved else "domain_normalized"
+            self._audit(
+                run_id=run_id,
+                action="domain_normalization_completed",
+                result_status=status,
+                reason_codes=reason_codes,
+                metadata={"counts": counts, "unresolved_references": unresolved},
+            )
+            self.session.flush()
+            return DomainNormalizationResult(
+                status=status,
+                counts=counts,
+                reason_codes=reason_codes,
+                unresolved_references=unresolved,
+            )
 
         company = self._normalize_company(files["company_candidate.json"], payloads["company_candidate.json"])
         self.session.add(company)
@@ -153,8 +233,8 @@ class DomainNormalizationService:
             files["fit_evaluation.json"],
             fit_payload,
             company=fit_company,
-            user_profile=user_profile if fit_payload["profile_id"] == user_profile.profile_id else None,
-            policy=policy if fit_payload["policy_id"] == policy.policy_id else None,
+            user_profile=user_profile if user_profile is not None and fit_payload["profile_id"] == user_profile.profile_id else None,
+            policy=policy if policy is not None and fit_payload["policy_id"] == policy.policy_id else None,
         )
         if fit_evaluation.user_profile_snapshot_id is None:
             unresolved.append({"entity": fit_payload["evaluation_id"], "field": "profile_id"})
@@ -189,12 +269,18 @@ class DomainNormalizationService:
             ("company_id", intent_payload["company_id"], intent_company),
             ("contact_id", intent_payload["contact_id"], intent_contact),
             ("email_draft_id", intent_payload["email_draft_id"], intent_draft),
-            ("policy_id", intent_payload["policy_id"], policy if intent_payload["policy_id"] == policy.policy_id else None),
-            ("profile_id", intent_payload["profile_id"], user_profile if intent_payload["profile_id"] == user_profile.profile_id else None),
+            ("policy_id", intent_payload["policy_id"], policy if policy is not None and intent_payload["policy_id"] == policy.policy_id else None),
+            (
+                "profile_id",
+                intent_payload["profile_id"],
+                user_profile if user_profile is not None and intent_payload["profile_id"] == user_profile.profile_id else None,
+            ),
             (
                 "master_cv_profile_id",
                 intent_payload["master_cv_profile_id"],
-                master_cv_profile if intent_payload["master_cv_profile_id"] == master_cv_profile.profile_id else None,
+                master_cv_profile
+                if master_cv_profile is not None and intent_payload["master_cv_profile_id"] == master_cv_profile.profile_id
+                else None,
             ),
         ):
             if found is None:
@@ -206,9 +292,11 @@ class DomainNormalizationService:
             company=intent_company,
             contact=intent_contact,
             email_draft=intent_draft,
-            policy=policy if intent_payload["policy_id"] == policy.policy_id else None,
-            user_profile=user_profile if intent_payload["profile_id"] == user_profile.profile_id else None,
-            master_cv_profile=master_cv_profile if intent_payload["master_cv_profile_id"] == master_cv_profile.profile_id else None,
+            policy=policy if policy is not None and intent_payload["policy_id"] == policy.policy_id else None,
+            user_profile=user_profile if user_profile is not None and intent_payload["profile_id"] == user_profile.profile_id else None,
+            master_cv_profile=master_cv_profile
+            if master_cv_profile is not None and intent_payload["master_cv_profile_id"] == master_cv_profile.profile_id
+            else None,
         )
         if unresolved:
             send_intent.status = "needs_review"
@@ -221,7 +309,7 @@ class DomainNormalizationService:
             files["gate_result.json"],
             gate_payload,
             send_intent=send_intent if gate_payload["intent_id"] == send_intent.intent_id else None,
-            policy=policy if gate_payload.get("policy_snapshot_id") == policy.policy_id else None,
+            policy=policy if policy is not None and gate_payload.get("policy_snapshot_id") == policy.policy_id else None,
         )
         if gate_result.send_intent_id is None:
             unresolved.append({"entity": gate_payload["gate_result_id"], "field": "intent_id"})
@@ -253,9 +341,26 @@ class DomainNormalizationService:
             source_created_at=_parse_datetime(data.get("created_at")),
             source_updated_at=_parse_datetime(data.get("updated_at")),
             content_hash=_content_hash(raw_json),
+            status=SNAPSHOT_STATUS_CANDIDATE,
             raw_json=raw_json,
             imported_file_id=imported_file.id,
         )
+
+    def _approved_user_profile(self, profile_id: str) -> UserProfileSnapshot | None:
+        return self.session.exec(
+            select(UserProfileSnapshot).where(
+                UserProfileSnapshot.profile_id == profile_id,
+                UserProfileSnapshot.status == "approved",
+            )
+        ).first()
+
+    def _approved_policy(self, policy_id: str) -> PolicySnapshot | None:
+        return self.session.exec(
+            select(PolicySnapshot).where(
+                PolicySnapshot.policy_id == policy_id,
+                PolicySnapshot.status == "approved",
+            )
+        ).first()
 
     def _normalize_master_cv_profile(self, imported_file: ImportedFile, data: dict[str, Any]) -> MasterCvProfileSnapshot:
         raw_json = imported_file.raw_json or _json_dumps(data)
@@ -264,6 +369,7 @@ class DomainNormalizationService:
             schema_version=data["schema_version"],
             source_created_at=_parse_datetime(data.get("created_at")),
             content_hash=_content_hash(raw_json),
+            status=SNAPSHOT_STATUS_CANDIDATE,
             raw_json=raw_json,
             imported_file_id=imported_file.id,
         )
@@ -275,6 +381,7 @@ class DomainNormalizationService:
             schema_version=data["schema_version"],
             source_created_at=_parse_datetime(data.get("created_at")),
             content_hash=_content_hash(raw_json),
+            status=SNAPSHOT_STATUS_CANDIDATE,
             raw_json=raw_json,
             imported_file_id=imported_file.id,
         )
