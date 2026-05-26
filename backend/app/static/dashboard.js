@@ -328,7 +328,7 @@ async function refresh() {
     renderSummary(summary);
     state.rows = rows;
     if (section.id === "companies") {
-      const rowIds = new Set(rows.filter((row) => row.can_draft_application).map((row) => row.company_id));
+      const rowIds = new Set(rows.filter((row) => isCompanyDraftable(row)).map((row) => row.company_id));
       state.selectedCompanyIds = new Set([...state.selectedCompanyIds].filter((companyId) => rowIds.has(companyId)));
     }
     state.selectedIndex = rows.length ? 0 : null;
@@ -1784,8 +1784,9 @@ function mainCell(primary, secondary) {
 
 function companySelectCheckbox(row) {
   const checked = state.selectedCompanyIds.has(row.company_id) ? " checked" : "";
-  const disabled = row.can_draft_application ? "" : " disabled";
-  const title = row.can_draft_application ? "Select company" : applicationDraftBlockLabel(row.application_draft_block_reason);
+  const draftable = isCompanyDraftable(row);
+  const disabled = draftable ? "" : " disabled";
+  const title = draftable ? "Select company" : applicationDraftBlockLabel(applicationDraftBlockReason(row));
   return `<input type="checkbox" data-company-select="${escapeHtml(row.company_id)}" aria-label="Select company" title="${escapeHtml(title)}"${checked}${disabled}>`;
 }
 
@@ -1801,7 +1802,7 @@ function draftStatus(hasApplicationDraft) {
 function companyOutreachState(row) {
   const items = [
     row.has_application_draft ? tag("drafted", "ok") : tag("no draft", "warn"),
-    row.is_active_profile_scope ? tag("in scope", "ok") : tag("out of scope", "danger"),
+    row.is_active_profile_scope ? tag("in scope", "ok") : tag("not scoped", ""),
     row.has_send_intent
       ? tag(row.send_gate_status ? `queued: ${row.send_gate_status}` : row.send_intent_status || "queued", sendStateTone(row))
       : tag("not queued", "warn"),
@@ -1832,14 +1833,29 @@ function applicationDraftButton(row) {
   if (row.has_application_draft) {
     return `<button class="action-button compact" type="button" disabled>Drafted</button>`;
   }
-  if (!row.can_draft_application) {
-    return `<button class="action-button compact" type="button" disabled>${escapeHtml(applicationDraftBlockLabel(row.application_draft_block_reason))}</button>`;
+  if (!isCompanyDraftable(row)) {
+    return `<button class="action-button compact" type="button" disabled>${escapeHtml(applicationDraftBlockLabel(applicationDraftBlockReason(row)))}</button>`;
   }
   return `<button class="action-button compact" type="button" data-application-draft-company="${escapeHtml(row.company_id)}">Draft</button>`;
 }
 
+function isCompanyDraftable(row) {
+  if (typeof row.can_draft_application === "boolean") return row.can_draft_application;
+  return !row.has_application_draft && !hasItems(row.policy_conflicts);
+}
+
+function hasItems(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function applicationDraftBlockReason(row) {
+  if (row.application_draft_block_reason) return row.application_draft_block_reason;
+  if (row.has_application_draft) return "draft_already_exists";
+  if (hasItems(row.policy_conflicts)) return "policy_conflict_present";
+  return null;
+}
+
 function applicationDraftBlockLabel(reason) {
-  if (reason === "not_in_active_profile_scope") return "Out of scope";
   if (reason === "draft_already_exists") return "Drafted";
   if (reason === "policy_conflict_present") return "Policy conflict";
   return "Not draftable";
@@ -2124,7 +2140,7 @@ async function applicationDraftLaunchForCompany(companyId) {
 }
 
 async function applicationDraftBatchSelected() {
-  const draftableIds = new Set(state.rows.filter((row) => row.can_draft_application).map((row) => row.company_id));
+  const draftableIds = new Set(state.rows.filter((row) => isCompanyDraftable(row)).map((row) => row.company_id));
   const companyIds = Array.from(state.selectedCompanyIds).filter((companyId) => draftableIds.has(companyId));
   if (!companyIds.length) {
     elements.apiState.textContent = "Select draftable in-scope companies first";
