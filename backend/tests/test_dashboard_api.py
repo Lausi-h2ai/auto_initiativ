@@ -691,8 +691,8 @@ def test_application_draft_batch_selected_prepares_and_bounded_launches(client, 
     assert by_company["batch-eligible"]["run_id"].startswith("application-draft-application-robotics-")
     assert by_company["batch-needs-contact-research"]["status"] == "skipped"
     assert by_company["batch-needs-contact-research"]["reason"] == "needs_contact"
-    assert by_company["batch-out-of-scope"]["status"] == "skipped"
-    assert by_company["batch-out-of-scope"]["reason"] == "not_in_active_profile_scope"
+    assert by_company["batch-out-of-scope"]["status"] in {"queued", "launched", "running", "completed"}
+    assert by_company["batch-out-of-scope"]["reason"] is None
     assert (runs_root / by_company["batch-eligible"]["run_id"] / "input" / "application_draft.json").exists()
     assert by_company["batch-needs-contact-research"].get("run_id") is None
 
@@ -754,6 +754,8 @@ def test_companies_list_detail_and_filters(client, db_session, runs_root):
     assert undrafted["has_application_draft"] is False
     assert undrafted["has_send_intent"] is False
     assert undrafted["has_been_contacted"] is False
+    assert undrafted["can_draft_application"] is True
+    assert undrafted["application_draft_block_reason"] is None
 
     detail = client.get("/companies/company-1")
     assert detail.status_code == 200

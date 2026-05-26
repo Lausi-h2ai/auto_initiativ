@@ -428,11 +428,9 @@ def _company_response(
     is_active_profile_scope = company.id in (active_profile_company_ids or set())
     has_application_draft = company.company_id in (drafted_company_ids or set())
     has_policy_conflicts = _json_has_items(company.policy_conflicts_json)
-    can_draft_application = is_active_profile_scope and not has_application_draft and not has_policy_conflicts
+    can_draft_application = not has_application_draft and not has_policy_conflicts
     block_reason = None
-    if not is_active_profile_scope:
-        block_reason = "not_in_active_profile_scope"
-    elif has_application_draft:
+    if has_application_draft:
         block_reason = "draft_already_exists"
     elif has_policy_conflicts:
         block_reason = "policy_conflict_present"
@@ -1215,13 +1213,8 @@ def _company_ids_for_application_draft_batch(
 ) -> list[str]:
     if request.mode == "selected":
         return list(dict.fromkeys(request.company_ids))
-    active_company_ids = _active_profile_company_ids(session, user_profile)
-    if not active_company_ids:
-        return []
     drafted_company_ids = _existing_draft_company_ids(session)
-    companies = session.exec(
-        select(Company).where(col(Company.id).in_(active_company_ids)).order_by(Company.created_at.desc(), Company.name)
-    ).all()
+    companies = session.exec(select(Company).order_by(Company.created_at.desc(), Company.name)).all()
     return [company.company_id for company in companies if company.company_id not in drafted_company_ids]
 
 
@@ -1233,7 +1226,6 @@ def _prepare_application_draft_batch_items(
     batch_id: str,
 ) -> list[dict[str, Any]]:
     user_profile, _master_cv, _policy = _approved_profile_bundle(session)
-    active_company_ids = _active_profile_company_ids(session, user_profile)
     drafted_company_ids = _existing_draft_company_ids(session)
     company_ids = _company_ids_for_application_draft_batch(request, session=session, user_profile=user_profile)
     items: list[dict[str, Any]] = []
@@ -1241,9 +1233,6 @@ def _prepare_application_draft_batch_items(
         company = session.exec(select(Company).where(Company.company_id == company_id)).first()
         if company is None:
             items.append({"company_id": company_id, "status": "skipped", "reason": "company_not_found"})
-            continue
-        if company.id not in active_company_ids:
-            items.append({"company_id": company_id, "status": "skipped", "reason": "not_in_active_profile_scope"})
             continue
         if company.company_id in drafted_company_ids:
             items.append({"company_id": company_id, "status": "skipped", "reason": "draft_already_exists"})
