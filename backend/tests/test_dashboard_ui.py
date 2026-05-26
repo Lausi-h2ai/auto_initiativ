@@ -76,6 +76,12 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "/dashboard/summary",
         "/profile/summary",
         "/campaigns/company-research",
+        "/campaigns/company-research/",
+        "/application-drafts",
+        "/application-drafts/",
+        "/application-drafts/batches",
+        "/launch",
+        "/status",
         "/runs",
         "/onboarding/chat/",
         "/onboarding/runs/",
@@ -107,7 +113,15 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "Candidate artifacts",
         "Approve reviewed profile",
         "Review each JSON artifact",
-        "Prepare company research run",
+        "Launch company research",
+        "Application draft",
+        "Application draft progress",
+        "Application draft batch progress",
+        "Open PDF",
+        "Draft selected",
+        "Draft all missing",
+        "Time budget",
+        "Auto-refreshing every 10 seconds",
         "Generated files and transcript",
         "user_profile.json",
         "master_cv_profile.json",
@@ -122,6 +136,8 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
 
     assert "Start Onboarding" not in combined
     assert 'label: "Onboarding"' not in combined
+    assert "Max companies" not in combined
+    assert "companyResearchLocations" not in combined
 
 
 def test_dashboard_assets_do_not_expose_sending_or_external_ai_surfaces(client):
@@ -129,21 +145,17 @@ def test_dashboard_assets_do_not_expose_sending_or_external_ai_surfaces(client):
     combined = "\n".join([html, *assets.values()]).lower()
 
     forbidden_terms = {
-        "gmail",
         "openai",
         "email adapter",
         "send adapter",
-        "reservation",
         "reserve for send",
         "send now",
         "send email",
-        "approve send",
     }
     for term in forbidden_terms:
         assert term not in combined
 
     forbidden_endpoint_patterns = [
-        r"['\"]\/send(?:['\"/?#]|\b)",
         r"['\"][^'\"]*\/send-reservations(?:['\"/?#]|\b)",
         r"['\"][^'\"]*\/dashboard\/send-reservations(?:['\"/?#]|\b)",
         r"['\"][^'\"]*\/gate\/evaluations\/",

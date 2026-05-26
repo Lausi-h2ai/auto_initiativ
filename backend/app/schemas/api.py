@@ -227,7 +227,8 @@ class CompanyResearchCampaignRequest(BaseModel):
     run_id: str | None = Field(default=None, min_length=1, max_length=120)
     role_focus: str = Field(default="Profile-aligned roles", min_length=1, max_length=240)
     locations: list[str] = Field(default_factory=list)
-    max_companies: int = Field(default=10, ge=1, le=50)
+    time_budget_minutes: int = Field(default=30, ge=1, le=240)
+    max_companies: int | None = Field(default=None, ge=1, le=100)
     notes: str | None = Field(default=None, max_length=2000)
 
 
@@ -241,6 +242,117 @@ class CompanyResearchCampaignResponse(BaseModel):
     import_endpoint: str
     expected_output_files: list[str]
     next_action: str
+
+
+class CompanyResearchLaunchResponse(BaseModel):
+    run_id: str
+    status: str
+    runtime: str
+    command: list[str]
+    workdir: str
+    status_endpoint: str
+
+
+class CompanyResearchStatusResponse(BaseModel):
+    run_id: str
+    runtime: str
+    status: str
+    state: dict[str, Any]
+    artifact_counts: dict[str, int]
+    validation: dict[str, Any]
+    import_state: dict[str, Any]
+    logs: list[dict[str, Any]]
+
+
+class CompanyResearchImportResponse(BaseModel):
+    run_id: str
+    import_result: ImportResponse
+    status: CompanyResearchStatusResponse
+
+
+class ApplicationDraftRequest(BaseModel):
+    run_id: str | None = Field(default=None, min_length=1, max_length=120)
+    company_id: str = Field(min_length=1, max_length=240)
+    contact_id: str | None = Field(default=None, min_length=1, max_length=240)
+    language: str | None = Field(default=None, max_length=40)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ApplicationDraftResponse(BaseModel):
+    run_id: str
+    status: str
+    company_id: str
+    contact_id: str
+    draft_id: str
+    run_path: str
+    input_path: str
+    output_path: str
+    prompt_path: str
+    launch_endpoint: str
+    import_endpoint: str
+    status_endpoint: str
+    expected_output_files: list[str]
+    expected_attachment_files: list[str]
+    next_action: str
+
+
+class ApplicationDraftLaunchResponse(BaseModel):
+    run_id: str
+    status: str
+    runtime: str
+    command: list[str]
+    workdir: str
+    status_endpoint: str
+
+
+class ApplicationDraftStatusResponse(BaseModel):
+    run_id: str
+    runtime: str
+    status: str
+    state: dict[str, Any]
+    artifact_counts: dict[str, int]
+    validation: dict[str, Any]
+    import_state: dict[str, Any]
+    logs: list[dict[str, Any]]
+
+
+class ApplicationDraftImportResponse(BaseModel):
+    run_id: str
+    import_result: ImportResponse
+    status: ApplicationDraftStatusResponse
+
+
+class ApplicationDraftBatchRequest(BaseModel):
+    mode: str = Field(default="selected", pattern="^(selected|all_missing)$")
+    company_ids: list[str] = Field(default_factory=list)
+    concurrency: int = Field(default=1, ge=1, le=3)
+    language: str | None = Field(default=None, max_length=40)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ApplicationDraftBatchItemResponse(BaseModel):
+    company_id: str
+    status: str
+    reason: str | None = None
+    run_id: str | None = None
+    draft_id: str | None = None
+    contact_id: str | None = None
+    detail: str | None = None
+
+
+class ApplicationDraftBatchResponse(BaseModel):
+    batch_id: str
+    status: str
+    mode: str
+    concurrency: int
+    requested_count: int
+    queued_count: int
+    launched_count: int
+    completed_count: int
+    skipped_count: int
+    failed_count: int
+    status_endpoint: str
+    items: list[ApplicationDraftBatchItemResponse]
 
 
 class AuditLogResponse(BaseModel):
@@ -275,9 +387,20 @@ class DashboardSummaryResponse(BaseModel):
     send_intents: int
     gate_results: int
     outreach_records: int
+    send_approval_snapshots: int = 0
+    sent_messages: int = 0
     send_intents_by_status: dict[str, int]
     gate_results_by_status: dict[str, int]
     outreach_records_by_status: dict[str, int]
+
+
+class EmailDeliverySettingsResponse(BaseModel):
+    sending_enabled: bool
+    provider: str
+    allow_real_recipients: bool
+    sandbox_recipient: str | None = None
+    gmail_configured: bool
+    mode: str
 
 
 class GateResultSummaryResponse(BaseModel):
@@ -304,6 +427,15 @@ class CompanyResponse(BaseModel):
     confidence: float
     review_flags: list[Any]
     policy_conflicts: list[Any]
+    is_active_profile_scope: bool = False
+    can_draft_application: bool = False
+    application_draft_block_reason: str | None = None
+    has_application_draft: bool = False
+    has_send_intent: bool = False
+    send_intent_status: str | None = None
+    send_gate_status: str | None = None
+    has_been_contacted: bool = False
+    outreach_status: str | None = None
     raw: dict[str, Any]
     imported_file_id: int | None
     created_at: datetime
@@ -368,6 +500,8 @@ class EmailDraftResponse(BaseModel):
     raw: dict[str, Any]
     imported_file_id: int | None
     created_at: datetime
+    queued_send_intent_id: str | None = None
+    queued_gate_status: str | None = None
 
 
 class SendIntentResponse(BaseModel):
@@ -407,6 +541,16 @@ class SendIntentResponse(BaseModel):
     latest_gate_result: GateResultSummaryResponse | None = None
 
 
+class QueueDraftForSendRequest(BaseModel):
+    reviewer_id: str = Field(min_length=1, max_length=120)
+
+
+class QueueDraftForSendResponse(BaseModel):
+    send_intent: SendIntentResponse
+    gate_result: GateResultSummaryResponse
+    created: bool
+
+
 class GateResultResponse(BaseModel):
     id: int
     gate_result_id: str
@@ -440,3 +584,41 @@ class OutreachRecordResponse(BaseModel):
     occurred_at: datetime
     source: str
     notes: dict[str, Any]
+
+
+class SendBatchRequest(BaseModel):
+    intent_ids: list[str] = Field(min_length=1, max_length=100)
+    reviewer_id: str = Field(min_length=1, max_length=120)
+
+
+class SendBatchItemResponse(BaseModel):
+    intent_id: str
+    status: str
+    approval_id: str | None = None
+    gate_result_id: str | None = None
+    reservation_id: str | None = None
+    sent_message_id: str | None = None
+    outreach_record_id: str | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    detail: str | None = None
+
+
+class SendBatchResponse(BaseModel):
+    batch_id: str
+    status: str
+    requested_count: int
+    sent_count: int
+    blocked_count: int
+    items: list[SendBatchItemResponse]
+
+
+class OutreachResolutionRequest(BaseModel):
+    resolution: str = Field(pattern="^(mark_sent|mark_not_sent|keep_blocked|void_record)$")
+    reviewer_id: str = Field(min_length=1, max_length=120)
+    comment: str = Field(min_length=1, max_length=2000)
+
+
+class OutreachResolutionResponse(BaseModel):
+    outreach_record: OutreachRecordResponse
+    previous_status: str
+    resolution: str

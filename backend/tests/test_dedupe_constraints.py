@@ -104,7 +104,7 @@ def test_company_dedupe_flag_allows_policy_permitted_parallel_reservations(sessi
     )
 
 
-def test_duplicate_contacted_recipient_is_rejected(session: Session):
+def test_duplicate_contacted_recipient_rows_are_allowed_for_window_aware_gate(session: Session):
     _commit(
         session,
         OutreachRecord(
@@ -113,21 +113,16 @@ def test_duplicate_contacted_recipient_is_rejected(session: Session):
             company_policy_key="domain:example.com",
             status="sent",
         ),
+        OutreachRecord(
+            outreach_record_id="outreach-2",
+            normalized_recipient_email="lead@example.com",
+            company_policy_key="domain:other.example",
+            status="sent",
+        ),
     )
 
-    with pytest.raises(IntegrityError):
-        _commit(
-            session,
-            OutreachRecord(
-                outreach_record_id="outreach-2",
-                normalized_recipient_email="lead@example.com",
-                company_policy_key="domain:other.example",
-                status="contacted",
-            ),
-        )
 
-
-def test_duplicate_contacted_company_is_rejected(session: Session):
+def test_duplicate_contacted_company_rows_are_allowed_for_window_aware_gate(session: Session):
     _commit(
         session,
         OutreachRecord(
@@ -136,18 +131,13 @@ def test_duplicate_contacted_company_is_rejected(session: Session):
             company_policy_key="domain:example.com",
             status="sent",
         ),
+        OutreachRecord(
+            outreach_record_id="outreach-2",
+            normalized_recipient_email="two@example.com",
+            company_policy_key="domain:example.com",
+            status="sent",
+        ),
     )
-
-    with pytest.raises(IntegrityError):
-        _commit(
-            session,
-            OutreachRecord(
-                outreach_record_id="outreach-2",
-                normalized_recipient_email="two@example.com",
-                company_policy_key="domain:example.com",
-                status="delivered",
-            ),
-        )
 
 
 def test_non_contacted_outreach_status_does_not_block_completed_outreach(session: Session):

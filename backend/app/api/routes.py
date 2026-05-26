@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
@@ -16,6 +21,15 @@ from backend.app.agents.company_research import (
     build_company_research_inputs,
     build_company_research_task,
 )
+from backend.app.agents.company_research_runtime import CompanyResearchRuntime
+from backend.app.agents.application_draft import (
+    APPLICATION_DRAFT_INSTRUCTIONS,
+    ApplicationDraftBrief,
+    build_application_draft_inputs,
+    build_application_draft_task,
+    slugify,
+)
+from backend.app.agents.application_draft_runtime import ApplicationDraftRuntime
 from backend.app.agents.onboarding_chat import OnboardingCodexChatAdapter
 from backend.app.agents.onboarding_recruiter_prompt import (
     ONBOARDING_ARTIFACT_FILENAMES,
@@ -37,24 +51,45 @@ from backend.app.db.models import (
     MasterCvProfileSnapshot,
     OutreachRecord,
     PolicySnapshot,
+    SendApprovalSnapshot,
     Run,
     SendIntent,
+    SentMessage,
     UserProfileSnapshot,
     ValidationResult,
 )
+from backend.app.email_delivery import OutreachResolutionError, OutreachResolutionService, SendBatchService
 from backend.app.db.session import get_session
 from backend.app.gates.evaluate_only import EvaluateOnlyGateService
 from backend.app.imports.file_classifier import classify_filename
-from backend.app.imports.import_service import COMPANY_RESEARCH_FILENAMES, ONBOARDING_CHAT_FILENAMES, RunImportService
+from backend.app.imports.import_service import (
+    APPLICATION_DRAFT_FILENAMES,
+    APPLICATION_DRAFT_RUN_TYPE,
+    COMPANY_RESEARCH_FILENAMES,
+    ONBOARDING_CHAT_FILENAMES,
+    RunImportService,
+)
 from backend.app.onboarding.promotion import OnboardingPromotionService, SnapshotPromotionRequest
 from backend.app.schemas.api import (
     AuditLogResponse,
+    ApplicationDraftImportResponse,
+    ApplicationDraftBatchRequest,
+    ApplicationDraftBatchResponse,
+    ApplicationDraftBatchItemResponse,
+    ApplicationDraftLaunchResponse,
+    ApplicationDraftRequest,
+    ApplicationDraftResponse,
+    ApplicationDraftStatusResponse,
     CompanyResearchCampaignRequest,
     CompanyResearchCampaignResponse,
+    CompanyResearchImportResponse,
+    CompanyResearchLaunchResponse,
+    CompanyResearchStatusResponse,
     CompanyResponse,
     ContactResponse,
     DashboardSummaryResponse,
     EmailDraftResponse,
+    EmailDeliverySettingsResponse,
     FitEvaluationResponse,
     GateEvaluationResponse,
     GateResultResponse,
@@ -82,15 +117,26 @@ from backend.app.schemas.api import (
     OnboardingSnapshotResponse,
     ProfileSnapshotSummaryResponse,
     ProfileSummaryResponse,
+    QueueDraftForSendRequest,
+    QueueDraftForSendResponse,
     OutreachRecordResponse,
     RunDetailResponse,
     RunResponse,
     SendIntentResponse,
+    SendBatchItemResponse,
+    SendBatchRequest,
+    SendBatchResponse,
+    OutreachResolutionRequest,
+    OutreachResolutionResponse,
     ValidationResultResponse,
 )
+from backend.app.send_intents import DraftQueueError, DraftSendIntentQueueService
 
 router = APIRouter()
 ONBOARDING_RUNTIME_ERRORS = (TmuxCodexError, PiRpcError)
+APPLICATION_DRAFT_BATCH_TERMINAL_STATUSES = {"imported", "imported_with_errors", "import_failed", "application_draft_failed", "failed"}
+_APPLICATION_DRAFT_BATCHES: dict[str, dict[str, Any]] = {}
+_APPLICATION_DRAFT_BATCH_LOCK = threading.Lock()
 
 
 def _json_loads(value: str, fallback: Any) -> Any:
@@ -256,6 +302,14 @@ def get_onboarding_chat_adapter(settings: Settings = Depends(get_settings)) -> O
     )
 
 
+def get_company_research_runtime(settings: Settings = Depends(get_settings)) -> CompanyResearchRuntime:
+    return CompanyResearchRuntime(settings=settings)
+
+
+def get_application_draft_runtime(settings: Settings = Depends(get_settings)) -> ApplicationDraftRuntime:
+    return ApplicationDraftRuntime(settings=settings)
+
+
 def _onboarding_finalization_prompt(run_id: str) -> str:
     artifact_list = ", ".join(f"`../output/{filename}`" for filename in ONBOARDING_ARTIFACT_FILENAMES)
     schema_bundle = _onboarding_schema_bundle()
@@ -333,7 +387,55 @@ def _audit_response(log: AuditLog) -> AuditLogResponse:
     )
 
 
-def _company_response(company: Company) -> CompanyResponse:
+def _drafted_company_ids(session: Session) -> set[str]:
+    values = session.exec(select(EmailDraft.external_company_id)).all()
+    return {value for value in values if value}
+
+
+CONTACTED_OUTREACH_STATUSES = {"sent", "provider_accepted", "outcome_uncertain"}
+
+
+def _latest_company_send_intent(session: Session, company: Company) -> SendIntent | None:
+    return session.exec(
+        select(SendIntent)
+        .where(SendIntent.external_company_id == company.company_id)
+        .order_by(SendIntent.created_at.desc(), SendIntent.id.desc())
+    ).first()
+
+
+def _latest_company_outreach(session: Session, company: Company) -> OutreachRecord | None:
+    return session.exec(
+        select(OutreachRecord)
+        .where(
+            (OutreachRecord.company_id == company.id)
+            | (OutreachRecord.company_policy_key == company.company_policy_key)
+        )
+        .where(OutreachRecord.status.in_(CONTACTED_OUTREACH_STATUSES))
+        .order_by(OutreachRecord.occurred_at.desc(), OutreachRecord.id.desc())
+    ).first()
+
+
+def _company_response(
+    company: Company,
+    *,
+    session: Session,
+    drafted_company_ids: set[str] | None = None,
+    active_profile_company_ids: set[int] | None = None,
+) -> CompanyResponse:
+    send_intent = _latest_company_send_intent(session, company)
+    latest_gate = _latest_gate_result(session, send_intent.intent_id) if send_intent is not None else None
+    outreach = _latest_company_outreach(session, company)
+    is_active_profile_scope = company.id in (active_profile_company_ids or set())
+    has_application_draft = company.company_id in (drafted_company_ids or set())
+    has_policy_conflicts = _json_has_items(company.policy_conflicts_json)
+    can_draft_application = is_active_profile_scope and not has_application_draft and not has_policy_conflicts
+    block_reason = None
+    if not is_active_profile_scope:
+        block_reason = "not_in_active_profile_scope"
+    elif has_application_draft:
+        block_reason = "draft_already_exists"
+    elif has_policy_conflicts:
+        block_reason = "policy_conflict_present"
     return CompanyResponse(
         id=company.id or 0,
         company_id=company.company_id,
@@ -351,6 +453,15 @@ def _company_response(company: Company) -> CompanyResponse:
         confidence=company.confidence,
         review_flags=_json_loads(company.review_flags_json, []),
         policy_conflicts=_json_loads(company.policy_conflicts_json, []),
+        is_active_profile_scope=is_active_profile_scope,
+        can_draft_application=can_draft_application,
+        application_draft_block_reason=block_reason,
+        has_application_draft=has_application_draft,
+        has_send_intent=send_intent is not None,
+        send_intent_status=send_intent.status if send_intent is not None else None,
+        send_gate_status=latest_gate.status if latest_gate is not None else None,
+        has_been_contacted=outreach is not None,
+        outreach_status=outreach.status if outreach is not None else None,
         raw=_json_loads(company.raw_json, {}),
         imported_file_id=company.imported_file_id,
         created_at=company.created_at,
@@ -401,7 +512,13 @@ def _fit_evaluation_response(evaluation: FitEvaluation) -> FitEvaluationResponse
     )
 
 
-def _email_draft_response(draft: EmailDraft) -> EmailDraftResponse:
+def _email_draft_response(draft: EmailDraft, session: Session | None = None) -> EmailDraftResponse:
+    queued_intent = (
+        session.exec(select(SendIntent).where(SendIntent.external_email_draft_id == draft.draft_id)).first()
+        if session is not None
+        else None
+    )
+    queued_gate = _latest_gate_result(session, queued_intent.intent_id) if session is not None and queued_intent is not None else None
     return EmailDraftResponse(
         id=draft.id or 0,
         draft_id=draft.draft_id,
@@ -421,6 +538,8 @@ def _email_draft_response(draft: EmailDraft) -> EmailDraftResponse:
         raw=_json_loads(draft.raw_json, {}),
         imported_file_id=draft.imported_file_id,
         created_at=draft.created_at,
+        queued_send_intent_id=queued_intent.intent_id if queued_intent is not None else None,
+        queued_gate_status=queued_gate.status if queued_gate is not None else None,
     )
 
 
@@ -663,7 +782,7 @@ def _approved_profile_bundle(session: Session) -> tuple[UserProfileSnapshot, Mas
     master_cv = _latest_snapshot(session, MasterCvProfileSnapshot, "approved")
     policy = _latest_snapshot(session, PolicySnapshot, "approved")
     if user_profile is None or master_cv is None or policy is None:
-        raise HTTPException(status_code=409, detail="Company research requires approved user profile, master CV profile, and policy snapshots.")
+        raise HTTPException(status_code=409, detail="This workflow requires approved user profile, master CV profile, and policy snapshots.")
     return user_profile, master_cv, policy
 
 
@@ -674,6 +793,49 @@ def _raw_json_object(snapshot: Any) -> dict[str, Any]:
     return data
 
 
+def _profile_target_locations(user_profile: dict[str, Any]) -> list[str]:
+    preferences = user_profile.get("preferences")
+    if not isinstance(preferences, dict):
+        return []
+    values = preferences.get("target_locations")
+    if not isinstance(values, list):
+        return []
+    locations: list[str] = []
+    for item in values:
+        if isinstance(item, dict) and isinstance(item.get("value"), str) and item["value"].strip():
+            locations.append(item["value"].strip())
+        elif isinstance(item, str) and item.strip():
+            locations.append(item.strip())
+    return locations
+
+
+def _known_company_summaries(session: Session, user_profile: UserProfileSnapshot) -> list[dict[str, Any]]:
+    evaluations = session.exec(
+        select(FitEvaluation)
+        .where(FitEvaluation.user_profile_snapshot_id == user_profile.id)
+        .order_by(FitEvaluation.created_at.desc())
+    ).all()
+    company_ids = {evaluation.company_id for evaluation in evaluations if evaluation.company_id is not None}
+    if not company_ids:
+        return []
+    companies = session.exec(select(Company).where(col(Company.id).in_(company_ids)).order_by(Company.normalized_name, Company.company_id)).all()
+    summaries: list[dict[str, Any]] = []
+    for company in companies:
+        summaries.append(
+            {
+                "company_id": company.company_id,
+                "name": company.name,
+                "normalized_name": company.normalized_name,
+                "domain": company.normalized_domain or company.raw_domain,
+                "company_policy_key": company.company_policy_key,
+                "company_policy_key_kind": company.company_policy_key_kind,
+                "profile_id": user_profile.profile_id,
+                "profile_snapshot_id": user_profile.id,
+            }
+        )
+    return summaries
+
+
 def _safe_campaign_run_id(value: str | None) -> str:
     if value is None or not value.strip():
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -682,6 +844,108 @@ def _safe_campaign_run_id(value: str | None) -> str:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}", run_id):
         raise HTTPException(status_code=400, detail="run_id must use only letters, numbers, dots, dashes, or underscores.")
     return run_id
+
+
+def _safe_application_draft_run_id(value: str | None, company_slug: str) -> str:
+    if value is None or not value.strip():
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return f"application-draft-{company_slug}-{stamp}"
+    run_id = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}", run_id):
+        raise HTTPException(status_code=400, detail="run_id must use only letters, numbers, dots, dashes, or underscores.")
+    return run_id
+
+
+def _read_required_text(path: Any, description: str) -> str:
+    resolved = Path(path)
+    if not resolved.is_file():
+        raise HTTPException(status_code=409, detail=f"Missing {description}: {resolved}")
+    return resolved.read_text(encoding="utf-8")
+
+
+def _selected_application_contact(session: Session, company: Company, contact_id: str | None) -> Contact | None:
+    if contact_id:
+        contact = session.exec(select(Contact).where(Contact.contact_id == contact_id)).first()
+        if contact is None:
+            raise _not_found("Contact")
+        if contact.external_company_id != company.company_id and contact.company_id != company.id:
+            raise HTTPException(status_code=409, detail="Selected contact does not belong to the selected company.")
+        return contact
+    contacts = session.exec(select(Contact).where(Contact.external_company_id == company.company_id)).all()
+    if not contacts:
+        return None
+    return sorted(contacts, key=lambda item: (item.confidence, item.created_at), reverse=True)[0]
+
+
+def _application_draft_contact_placeholder(company: Company, run_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "contact_id": f"contact-{run_id}",
+        "company_id": company.company_id,
+        "status": "missing_imported_contact",
+        "instructions": (
+            "No imported contact exists for this company. Research one public professional contact email and write "
+            "output/contact_candidate.json with this contact_id before writing email_draft.json."
+        ),
+    }
+
+
+def _latest_fit_for_company(session: Session, company: Company) -> FitEvaluation | None:
+    return session.exec(
+        select(FitEvaluation)
+        .where(FitEvaluation.external_company_id == company.company_id)
+        .order_by(FitEvaluation.created_at.desc())
+    ).first()
+
+
+def _active_profile_company_ids(session: Session, user_profile: UserProfileSnapshot) -> set[int]:
+    return {
+        company_id
+        for company_id in session.exec(
+            select(FitEvaluation.company_id).where(FitEvaluation.user_profile_snapshot_id == user_profile.id)
+        ).all()
+        if company_id is not None
+    }
+
+
+def _existing_draft_company_ids(session: Session) -> set[str]:
+    return {
+        company_id
+        for company_id in session.exec(select(EmailDraft.external_company_id)).all()
+        if company_id
+    }
+
+
+def _application_draft_batch_id() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"application-draft-batch-{stamp}-{uuid.uuid4().hex[:8]}"
+
+
+def _batch_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "queued_count": sum(1 for item in items if item["status"] == "queued"),
+        "launched_count": sum(1 for item in items if item["status"] in {"launched", "running"}),
+        "completed_count": sum(1 for item in items if item["status"] == "completed"),
+        "skipped_count": sum(1 for item in items if item["status"] == "skipped"),
+        "failed_count": sum(1 for item in items if item["status"] == "failed"),
+    }
+
+
+def _application_draft_batch_response(batch: dict[str, Any]) -> ApplicationDraftBatchResponse:
+    items = [ApplicationDraftBatchItemResponse(**item) for item in batch["items"]]
+    counts = _batch_counts(batch["items"])
+    active_count = counts["queued_count"] + counts["launched_count"]
+    status = "completed" if active_count == 0 else batch["status"]
+    return ApplicationDraftBatchResponse(
+        batch_id=batch["batch_id"],
+        status=status,
+        mode=batch["mode"],
+        concurrency=batch["concurrency"],
+        requested_count=batch["requested_count"],
+        status_endpoint=f"/application-drafts/batches/{batch['batch_id']}",
+        items=items,
+        **counts,
+    )
 
 
 def _count_by_status(session: Session, model: type[Any], status_column: Any) -> dict[str, int]:
@@ -726,21 +990,26 @@ def prepare_company_research_campaign(
     settings: Settings = Depends(get_settings),
 ) -> CompanyResearchCampaignResponse:
     user_profile, master_cv, policy = _approved_profile_bundle(session)
+    user_profile_payload = _raw_json_object(user_profile)
+    target_locations = request.locations or _profile_target_locations(user_profile_payload)
     run_id = _safe_campaign_run_id(request.run_id)
     campaign = CompanyResearchCampaign(
         run_id=run_id,
         role_focus=request.role_focus,
-        locations=request.locations,
-        max_companies=request.max_companies,
+        locations=target_locations,
+        time_budget_minutes=request.time_budget_minutes,
         notes=request.notes,
     )
+    existing_companies = _known_company_summaries(session, user_profile)
     input_payloads = build_company_research_inputs(
-        user_profile=_raw_json_object(user_profile),
+        user_profile=user_profile_payload,
         master_cv_profile=_raw_json_object(master_cv),
         policy=_raw_json_object(policy),
         company_schema=(settings.schemas_root / "company_candidate.schema.json").read_text(encoding="utf-8"),
+        contact_schema=(settings.schemas_root / "contact_candidate.schema.json").read_text(encoding="utf-8"),
         fit_schema=(settings.schemas_root / "fit_evaluation.schema.json").read_text(encoding="utf-8"),
         campaign=campaign,
+        existing_companies=existing_companies,
     )
     folder = RunFolderGenerator(settings=settings, session=session).prepare(
         RunFolderSpec(
@@ -754,6 +1023,7 @@ def prepare_company_research_campaign(
                 "profile_snapshot_id": user_profile.id,
                 "master_cv_snapshot_id": master_cv.id,
                 "policy_snapshot_id": policy.id,
+                "existing_company_count": len(existing_companies),
             },
         )
     )
@@ -769,9 +1039,378 @@ def prepare_company_research_campaign(
         input_path=str(folder.input_dir),
         output_path=str(folder.output_dir),
         prompt_path=str(folder.prompt_path),
-        import_endpoint=f"/runs/{run_id}/import?run_type=company_research",
+        import_endpoint=f"/campaigns/company-research/{run_id}/import",
         expected_output_files=list(COMPANY_RESEARCH_FILENAMES),
-        next_action="Run the company research agent in the prepared folder, then import the generated company_candidate.json and fit_evaluation.json.",
+        next_action="Launch company research to write batch JSON artifacts and import them after the Pi RPC process completes.",
+    )
+
+
+@router.post("/campaigns/company-research/{run_id}/launch", response_model=CompanyResearchLaunchResponse)
+def launch_company_research_campaign(
+    run_id: str,
+    runtime: CompanyResearchRuntime = Depends(get_company_research_runtime),
+) -> CompanyResearchLaunchResponse:
+    try:
+        result = runtime.launch(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return CompanyResearchLaunchResponse(
+        run_id=result.run_id,
+        status=result.status,
+        runtime="pi_rpc",
+        command=result.command,
+        workdir=str(result.workdir),
+        status_endpoint=f"/campaigns/company-research/{run_id}/status",
+    )
+
+
+@router.get("/campaigns/company-research/{run_id}/status", response_model=CompanyResearchStatusResponse)
+def company_research_campaign_status(
+    run_id: str,
+    runtime: CompanyResearchRuntime = Depends(get_company_research_runtime),
+) -> CompanyResearchStatusResponse:
+    return CompanyResearchStatusResponse(**runtime.status(run_id))
+
+
+@router.post("/campaigns/company-research/{run_id}/import", response_model=CompanyResearchImportResponse)
+def import_company_research_campaign(
+    run_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    runtime: CompanyResearchRuntime = Depends(get_company_research_runtime),
+) -> CompanyResearchImportResponse:
+    result = RunImportService(session=session, settings=settings).import_run(run_id, run_type="company_research")
+    return CompanyResearchImportResponse(
+        run_id=run_id,
+        import_result=_import_response(result),
+        status=CompanyResearchStatusResponse(**runtime.status(run_id)),
+    )
+
+
+@router.post("/application-drafts", response_model=ApplicationDraftResponse)
+def prepare_application_draft(
+    request: ApplicationDraftRequest,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> ApplicationDraftResponse:
+    return _prepare_application_draft_response(request, session=session, settings=settings)
+
+
+def _prepare_application_draft_response(
+    request: ApplicationDraftRequest,
+    *,
+    session: Session,
+    settings: Settings,
+) -> ApplicationDraftResponse:
+    user_profile, master_cv, policy = _approved_profile_bundle(session)
+    company = session.exec(select(Company).where(Company.company_id == request.company_id)).first()
+    if company is None:
+        raise _not_found("Company")
+    fit_evaluation = _latest_fit_for_company(session, company)
+    company_slug = slugify(company.name or company.company_id, fallback=company.company_id)
+    run_id = _safe_application_draft_run_id(request.run_id, company_slug)
+    contact = _selected_application_contact(session, company, request.contact_id)
+    contact_needs_research = contact is None
+    if contact_needs_research and not settings.application_draft_allow_contact_research:
+        raise HTTPException(
+            status_code=409,
+            detail="Application drafts require an imported contact. Run contact research before drafting.",
+        )
+    selected_contact_id = contact.contact_id if contact is not None else f"contact-{run_id}"
+    brief = ApplicationDraftBrief(
+        run_id=run_id,
+        draft_id=f"draft-{run_id}",
+        company_id=company.company_id,
+        contact_id=selected_contact_id,
+        company_slug=company_slug,
+        contact_needs_research=contact_needs_research,
+        language=request.language,
+        notes=request.notes,
+    )
+    handoff_docs: dict[str, str] = {}
+    if settings.application_draft_include_handoff_docs:
+        handoff_dir = settings.application_draft_handoff_dir
+        handoff_docs = {
+            "initiativbewerbung-style-guide.md": _read_required_text(
+                handoff_dir / "initiativbewerbung-style-guide.md",
+                "application draft style guide",
+            ),
+            "initiativbewerbung-workflow.md": _read_required_text(
+                handoff_dir / "initiativbewerbung-workflow.md",
+                "application draft workflow guide",
+            ),
+            "resume-job-search-context.md": _read_required_text(
+                handoff_dir / "resume-job-search-context.md",
+                "resume rendering context",
+            ),
+        }
+    input_payloads = build_application_draft_inputs(
+        brief=brief,
+        user_profile=_raw_json_object(user_profile),
+        master_cv_profile=_raw_json_object(master_cv),
+        policy=_raw_json_object(policy),
+        company=_json_loads(company.raw_json, {}),
+        contact=_json_loads(contact.raw_json, {}) if contact is not None else _application_draft_contact_placeholder(company, run_id),
+        fit_evaluation=_json_loads(fit_evaluation.raw_json, {}) if fit_evaluation is not None else None,
+        email_draft_schema=(settings.schemas_root / "email_draft.schema.json").read_text(encoding="utf-8"),
+        contact_schema=(settings.schemas_root / "contact_candidate.schema.json").read_text(encoding="utf-8"),
+        master_cv_html=_read_required_text(settings.application_draft_master_cv_html_path, "master CV HTML"),
+        handoff_docs=handoff_docs,
+    )
+    expected_json_outputs = APPLICATION_DRAFT_FILENAMES + (
+        ("contact_candidate.json",) if contact_needs_research and settings.application_draft_allow_contact_research else ()
+    )
+    folder = RunFolderGenerator(settings=settings, session=session).prepare(
+        RunFolderSpec(
+            run_id=run_id,
+            task=build_application_draft_task(brief),
+            instructions=APPLICATION_DRAFT_INSTRUCTIONS,
+            inputs=tuple(RunInputFile(path, content) for path, content in sorted(input_payloads.items())),
+            expected_output_files=expected_json_outputs + (f"attachments/{brief.html_filename}", f"attachments/{brief.pdf_filename}"),
+            metadata={
+                "task_type": APPLICATION_DRAFT_RUN_TYPE,
+                "profile_snapshot_id": user_profile.id,
+                "master_cv_snapshot_id": master_cv.id,
+                "policy_snapshot_id": policy.id,
+                "company_id": company.company_id,
+                "contact_id": selected_contact_id,
+                "contact_needs_research": contact_needs_research,
+                "draft_id": brief.draft_id,
+            },
+        )
+    )
+    (folder.output_dir / "attachments").mkdir(parents=True, exist_ok=True)
+    run = session.exec(select(Run).where(Run.run_id == run_id)).first()
+    if run is not None:
+        run.agent_type = APPLICATION_DRAFT_RUN_TYPE
+        session.add(run)
+        session.commit()
+    return ApplicationDraftResponse(
+        run_id=run_id,
+        status="prepared",
+        company_id=company.company_id,
+        contact_id=selected_contact_id,
+        draft_id=brief.draft_id,
+        run_path=str(folder.path),
+        input_path=str(folder.input_dir),
+        output_path=str(folder.output_dir),
+        prompt_path=str(folder.prompt_path),
+        launch_endpoint=f"/application-drafts/{run_id}/launch",
+        import_endpoint=f"/application-drafts/{run_id}/import",
+        status_endpoint=f"/application-drafts/{run_id}/status",
+        expected_output_files=list(expected_json_outputs),
+        expected_attachment_files=[f"attachments/{brief.html_filename}", f"attachments/{brief.pdf_filename}"],
+        next_action=(
+            "Launch the application draft agent to write a tailored CV PDF and email_draft.json, then import the draft "
+            "for manual review."
+        ),
+    )
+
+
+def _company_ids_for_application_draft_batch(
+    request: ApplicationDraftBatchRequest,
+    *,
+    session: Session,
+    user_profile: UserProfileSnapshot,
+) -> list[str]:
+    if request.mode == "selected":
+        return list(dict.fromkeys(request.company_ids))
+    active_company_ids = _active_profile_company_ids(session, user_profile)
+    if not active_company_ids:
+        return []
+    drafted_company_ids = _existing_draft_company_ids(session)
+    companies = session.exec(
+        select(Company).where(col(Company.id).in_(active_company_ids)).order_by(Company.created_at.desc(), Company.name)
+    ).all()
+    return [company.company_id for company in companies if company.company_id not in drafted_company_ids]
+
+
+def _prepare_application_draft_batch_items(
+    request: ApplicationDraftBatchRequest,
+    *,
+    session: Session,
+    settings: Settings,
+    batch_id: str,
+) -> list[dict[str, Any]]:
+    user_profile, _master_cv, _policy = _approved_profile_bundle(session)
+    active_company_ids = _active_profile_company_ids(session, user_profile)
+    drafted_company_ids = _existing_draft_company_ids(session)
+    company_ids = _company_ids_for_application_draft_batch(request, session=session, user_profile=user_profile)
+    items: list[dict[str, Any]] = []
+    for index, company_id in enumerate(company_ids, start=1):
+        company = session.exec(select(Company).where(Company.company_id == company_id)).first()
+        if company is None:
+            items.append({"company_id": company_id, "status": "skipped", "reason": "company_not_found"})
+            continue
+        if company.id not in active_company_ids:
+            items.append({"company_id": company_id, "status": "skipped", "reason": "not_in_active_profile_scope"})
+            continue
+        if company.company_id in drafted_company_ids:
+            items.append({"company_id": company_id, "status": "skipped", "reason": "draft_already_exists"})
+            continue
+        if _json_has_items(company.policy_conflicts_json):
+            items.append({"company_id": company_id, "status": "skipped", "reason": "policy_conflict_present"})
+            continue
+        run_id = f"application-draft-{slugify(company.name or company.company_id, fallback=company.company_id)}-{batch_id[-15:]}-{index:03d}"
+        try:
+            prepared = _prepare_application_draft_response(
+                ApplicationDraftRequest(
+                    run_id=run_id[:120],
+                    company_id=company.company_id,
+                    language=request.language,
+                    notes=request.notes,
+                ),
+                session=session,
+                settings=settings,
+            )
+        except HTTPException as exc:
+            reason = "needs_contact" if exc.status_code == 409 and "contact" in str(exc.detail).lower() else "prepare_failed"
+            items.append({"company_id": company_id, "status": "skipped", "reason": reason, "detail": str(exc.detail)})
+            continue
+        items.append(
+            {
+                "company_id": company_id,
+                "status": "queued",
+                "run_id": prepared.run_id,
+                "draft_id": prepared.draft_id,
+                "contact_id": prepared.contact_id,
+            }
+        )
+    return items
+
+
+@router.post("/application-drafts/batches", response_model=ApplicationDraftBatchResponse)
+def create_application_draft_batch(
+    request: ApplicationDraftBatchRequest,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> ApplicationDraftBatchResponse:
+    batch_id = _application_draft_batch_id()
+    items = _prepare_application_draft_batch_items(request, session=session, settings=settings, batch_id=batch_id)
+    batch = {
+        "batch_id": batch_id,
+        "status": "running" if any(item["status"] == "queued" for item in items) else "completed",
+        "mode": request.mode,
+        "concurrency": request.concurrency,
+        "requested_count": len(request.company_ids) if request.mode == "selected" else len(items),
+        "items": items,
+    }
+    with _APPLICATION_DRAFT_BATCH_LOCK:
+        _APPLICATION_DRAFT_BATCHES[batch_id] = batch
+    thread = threading.Thread(
+        target=_run_application_draft_batch_scheduler,
+        args=(batch_id, settings),
+        daemon=True,
+    )
+    thread.start()
+    return _application_draft_batch_response(batch)
+
+
+@router.get("/application-drafts/batches/{batch_id}", response_model=ApplicationDraftBatchResponse)
+def get_application_draft_batch(batch_id: str) -> ApplicationDraftBatchResponse:
+    with _APPLICATION_DRAFT_BATCH_LOCK:
+        batch = _APPLICATION_DRAFT_BATCHES.get(batch_id)
+        if batch is None:
+            raise _not_found("Application draft batch")
+        snapshot = json.loads(json.dumps(batch))
+    return _application_draft_batch_response(snapshot)
+
+
+def _run_application_draft_batch_scheduler(batch_id: str, settings: Settings) -> None:
+    runtime = ApplicationDraftRuntime(settings=settings)
+    while True:
+        with _APPLICATION_DRAFT_BATCH_LOCK:
+            batch = _APPLICATION_DRAFT_BATCHES.get(batch_id)
+            if batch is None:
+                return
+            items = batch["items"]
+            running_items = [item for item in items if item["status"] in {"launched", "running"} and item.get("run_id")]
+        for item in running_items:
+            try:
+                status = runtime.status(item["run_id"])
+                status_value = status.get("status")
+                with _APPLICATION_DRAFT_BATCH_LOCK:
+                    item_ref = next((candidate for candidate in _APPLICATION_DRAFT_BATCHES[batch_id]["items"] if candidate is item), None)
+                    if item_ref is None:
+                        continue
+                    if status_value in APPLICATION_DRAFT_BATCH_TERMINAL_STATUSES:
+                        item_ref["status"] = "completed" if status_value == "imported" else "failed"
+                        item_ref["reason"] = status_value if status_value != "imported" else None
+                    else:
+                        item_ref["status"] = "running"
+            except Exception as exc:
+                with _APPLICATION_DRAFT_BATCH_LOCK:
+                    item["status"] = "failed"
+                    item["reason"] = "status_failed"
+                    item["detail"] = str(exc)
+        with _APPLICATION_DRAFT_BATCH_LOCK:
+            batch = _APPLICATION_DRAFT_BATCHES.get(batch_id)
+            if batch is None:
+                return
+            running_count = sum(1 for item in batch["items"] if item["status"] in {"launched", "running"})
+            launch_slots = max(0, int(batch["concurrency"]) - running_count)
+            queued = [item for item in batch["items"] if item["status"] == "queued" and item.get("run_id")]
+            to_launch = queued[:launch_slots]
+        for item in to_launch:
+            try:
+                runtime.launch(item["run_id"])
+                with _APPLICATION_DRAFT_BATCH_LOCK:
+                    item["status"] = "launched"
+            except Exception as exc:
+                with _APPLICATION_DRAFT_BATCH_LOCK:
+                    item["status"] = "failed"
+                    item["reason"] = "launch_failed"
+                    item["detail"] = str(exc)
+        with _APPLICATION_DRAFT_BATCH_LOCK:
+            batch = _APPLICATION_DRAFT_BATCHES.get(batch_id)
+            if batch is None:
+                return
+            counts = _batch_counts(batch["items"])
+            if counts["queued_count"] + counts["launched_count"] == 0:
+                batch["status"] = "completed"
+                return
+        time.sleep(5)
+
+
+@router.post("/application-drafts/{run_id}/launch", response_model=ApplicationDraftLaunchResponse)
+def launch_application_draft(
+    run_id: str,
+    runtime: ApplicationDraftRuntime = Depends(get_application_draft_runtime),
+) -> ApplicationDraftLaunchResponse:
+    try:
+        result = runtime.launch(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ApplicationDraftLaunchResponse(
+        run_id=result.run_id,
+        status=result.status,
+        runtime="pi_rpc",
+        command=result.command,
+        workdir=str(result.workdir),
+        status_endpoint=f"/application-drafts/{run_id}/status",
+    )
+
+
+@router.get("/application-drafts/{run_id}/status", response_model=ApplicationDraftStatusResponse)
+def application_draft_status(
+    run_id: str,
+    runtime: ApplicationDraftRuntime = Depends(get_application_draft_runtime),
+) -> ApplicationDraftStatusResponse:
+    return ApplicationDraftStatusResponse(**runtime.status(run_id))
+
+
+@router.post("/application-drafts/{run_id}/import", response_model=ApplicationDraftImportResponse)
+def import_application_draft(
+    run_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    runtime: ApplicationDraftRuntime = Depends(get_application_draft_runtime),
+) -> ApplicationDraftImportResponse:
+    result = RunImportService(session=session, settings=settings).import_run(run_id, run_type=APPLICATION_DRAFT_RUN_TYPE)
+    return ApplicationDraftImportResponse(
+        run_id=run_id,
+        import_result=_import_response(result),
+        status=ApplicationDraftStatusResponse(**runtime.status(run_id)),
     )
 
 
@@ -1166,9 +1805,35 @@ def dashboard_summary(session: Session = Depends(get_session)) -> DashboardSumma
         send_intents=_count(session, SendIntent),
         gate_results=_count(session, ImportedGateResult),
         outreach_records=_count(session, OutreachRecord),
+        send_approval_snapshots=_count(session, SendApprovalSnapshot),
+        sent_messages=_count(session, SentMessage),
         send_intents_by_status=_count_by_status(session, SendIntent, SendIntent.status),
         gate_results_by_status=_count_by_status(session, ImportedGateResult, ImportedGateResult.status),
         outreach_records_by_status=_count_by_status(session, OutreachRecord, OutreachRecord.status),
+    )
+
+
+@router.get("/email-delivery/settings", response_model=EmailDeliverySettingsResponse)
+def email_delivery_settings(settings: Settings = Depends(get_settings)) -> EmailDeliverySettingsResponse:
+    gmail_configured = (
+        settings.gmail_oauth_client_secrets_path is not None
+        and settings.gmail_oauth_token_path is not None
+    )
+    if not settings.email_sending_enabled:
+        mode = "disabled"
+    elif settings.email_provider == "gmail_sandbox":
+        mode = "gmail_sandbox"
+    elif settings.email_provider == "gmail" and settings.email_allow_real_recipients:
+        mode = "gmail_real_recipients"
+    else:
+        mode = "blocked_by_configuration"
+    return EmailDeliverySettingsResponse(
+        sending_enabled=settings.email_sending_enabled,
+        provider=settings.email_provider,
+        allow_real_recipients=settings.email_allow_real_recipients,
+        sandbox_recipient=settings.gmail_sandbox_recipient,
+        gmail_configured=gmail_configured,
+        mode=mode,
     )
 
 
@@ -1178,17 +1843,27 @@ def list_companies(
     min_confidence: float | None = Query(default=None, ge=0, le=1),
     has_review_flags: bool | None = None,
     has_policy_conflicts: bool | None = None,
+    draft_status: str | None = Query(default=None, pattern="^(drafted|missing)$"),
     session: Session = Depends(get_session),
 ) -> list[CompanyResponse]:
     imported_file_ids = _imported_file_ids_for_run(session, run_id) if run_id is not None else None
+    drafted_company_ids = _drafted_company_ids(session)
+    user_profile = _latest_snapshot(session, UserProfileSnapshot, "approved")
+    active_profile_company_ids = _active_profile_company_ids(session, user_profile) if user_profile is not None else set()
     companies = session.exec(select(Company).order_by(Company.created_at.desc(), Company.name)).all()
     return [
-        _company_response(company)
+        _company_response(
+            company,
+            session=session,
+            drafted_company_ids=drafted_company_ids,
+            active_profile_company_ids=active_profile_company_ids,
+        )
         for company in companies
         if _matches_import_run(company.imported_file_id, imported_file_ids)
         and (min_confidence is None or company.confidence >= min_confidence)
         and _matches_json_flag(company.review_flags_json, has_review_flags)
         and _matches_json_flag(company.policy_conflicts_json, has_policy_conflicts)
+        and (draft_status is None or (company.company_id in drafted_company_ids) == (draft_status == "drafted"))
     ]
 
 
@@ -1197,7 +1872,14 @@ def get_company(company_id: str, session: Session = Depends(get_session)) -> Com
     company = session.exec(select(Company).where(Company.company_id == company_id)).first()
     if company is None:
         raise _not_found("Company")
-    return _company_response(company)
+    user_profile = _latest_snapshot(session, UserProfileSnapshot, "approved")
+    active_profile_company_ids = _active_profile_company_ids(session, user_profile) if user_profile is not None else set()
+    return _company_response(
+        company,
+        session=session,
+        drafted_company_ids=_drafted_company_ids(session),
+        active_profile_company_ids=active_profile_company_ids,
+    )
 
 
 @router.get("/contacts", response_model=list[ContactResponse])
@@ -1272,7 +1954,7 @@ def list_email_drafts(
     imported_file_ids = _imported_file_ids_for_run(session, run_id) if run_id is not None else None
     drafts = session.exec(select(EmailDraft).order_by(EmailDraft.created_at.desc(), EmailDraft.draft_id)).all()
     return [
-        _email_draft_response(draft)
+        _email_draft_response(draft, session)
         for draft in drafts
         if _matches_import_run(draft.imported_file_id, imported_file_ids)
         and (company_id is None or draft.external_company_id == company_id)
@@ -1287,7 +1969,78 @@ def get_email_draft(draft_id: str, session: Session = Depends(get_session)) -> E
     draft = session.exec(select(EmailDraft).where(EmailDraft.draft_id == draft_id)).first()
     if draft is None:
         raise _not_found("Email draft")
-    return _email_draft_response(draft)
+    return _email_draft_response(draft, session)
+
+
+@router.post("/email-drafts/{draft_id}/queue-send", response_model=QueueDraftForSendResponse)
+def queue_email_draft_for_send(
+    draft_id: str,
+    request: QueueDraftForSendRequest,
+    session: Session = Depends(get_session),
+) -> QueueDraftForSendResponse:
+    try:
+        result = DraftSendIntentQueueService(session).queue_draft(draft_id, reviewer_id=request.reviewer_id)
+    except DraftQueueError as exc:
+        status_code = 404 if exc.code == "draft_not_found" else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    session.commit()
+    session.refresh(result.send_intent)
+    return QueueDraftForSendResponse(
+        send_intent=_send_intent_response(result.send_intent, session),
+        gate_result=GateResultSummaryResponse(
+            gate_result_id=result.gate_evaluation.gate_result.gate_result_id,
+            status=result.gate_evaluation.gate_result.status,
+            evaluated_at=result.gate_evaluation.gate_result.evaluated_at,
+            reasons=_json_loads(result.gate_evaluation.gate_result.reasons_json, []),
+        ),
+        created=result.created,
+    )
+
+
+@router.get("/application-drafts/{draft_id}/attachments/{attachment_id}")
+def get_application_draft_attachment(
+    draft_id: str,
+    attachment_id: str,
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    draft = session.exec(select(EmailDraft).where(EmailDraft.draft_id == draft_id)).first()
+    if draft is None:
+        raise _not_found("Email draft")
+    attachments = _json_loads(draft.attachments_json, [])
+    attachment = next(
+        (
+            item
+            for item in attachments
+            if isinstance(item, dict) and item.get("attachment_id") == attachment_id
+        ),
+        None,
+    )
+    if attachment is None:
+        raise _not_found("Attachment")
+    attachment_path = attachment.get("path")
+    if not isinstance(attachment_path, str) or not attachment_path:
+        raise HTTPException(status_code=404, detail="Attachment path is missing.")
+    imported_file = session.get(ImportedFile, draft.imported_file_id) if draft.imported_file_id is not None else None
+    if imported_file is None:
+        raise HTTPException(status_code=404, detail="Draft is not linked to an imported file.")
+    run = session.exec(select(Run).where(Run.run_id == imported_file.run_id)).first()
+    if run is None:
+        raise _not_found("Run")
+    output_root = Path(run.output_path).resolve()
+    attachments_root = (output_root / "attachments").resolve()
+    relative_path = Path(attachment_path.replace("\\", "/"))
+    if relative_path.is_absolute():
+        raise HTTPException(status_code=400, detail="Invalid attachment path.")
+    if relative_path.parts and relative_path.parts[0] == "output":
+        relative_path = Path(*relative_path.parts[1:])
+    file_path = (output_root / relative_path).resolve()
+    if file_path != attachments_root and attachments_root not in file_path.parents:
+        raise HTTPException(status_code=400, detail="Invalid attachment path.")
+    if not file_path.is_file():
+        raise _not_found("Attachment file")
+    suffix = file_path.suffix.lower()
+    media_type = "application/pdf" if suffix == ".pdf" else "text/html" if suffix == ".html" else "application/octet-stream"
+    return FileResponse(path=file_path, media_type=media_type, filename=file_path.name)
 
 
 @router.get("/send-intents", response_model=list[SendIntentResponse])
@@ -1423,6 +2176,57 @@ def get_outreach_record(outreach_record_id: str, session: Session = Depends(get_
     if record is None:
         raise _not_found("Outreach record")
     return _outreach_record_response(record)
+
+
+@router.post("/send-batches", response_model=SendBatchResponse)
+def send_batch(request: SendBatchRequest, session: Session = Depends(get_session)) -> SendBatchResponse:
+    result = SendBatchService(session=session).approve_and_send(request.intent_ids, request.reviewer_id)
+    session.commit()
+    return SendBatchResponse(
+        batch_id=result.batch_id,
+        status=result.status,
+        requested_count=result.requested_count,
+        sent_count=result.sent_count,
+        blocked_count=result.blocked_count,
+        items=[
+            SendBatchItemResponse(
+                intent_id=item.intent_id,
+                status=item.status,
+                approval_id=item.approval_id,
+                gate_result_id=item.gate_result_id,
+                reservation_id=item.reservation_id,
+                sent_message_id=item.sent_message_id,
+                outreach_record_id=item.outreach_record_id,
+                reason_codes=item.reason_codes,
+                detail=item.detail,
+            )
+            for item in result.items
+        ],
+    )
+
+
+@router.post("/outreach-records/{outreach_record_id}/resolve", response_model=OutreachResolutionResponse)
+def resolve_outreach_record(
+    outreach_record_id: str,
+    request: OutreachResolutionRequest,
+    session: Session = Depends(get_session),
+) -> OutreachResolutionResponse:
+    try:
+        result = OutreachResolutionService(session).resolve(
+            outreach_record_id,
+            resolution=request.resolution,
+            reviewer_id=request.reviewer_id,
+            comment=request.comment,
+        )
+        session.commit()
+    except OutreachResolutionError as exc:
+        status_code = 404 if exc.code == "outreach_record_missing" else 400
+        raise HTTPException(status_code=status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+    return OutreachResolutionResponse(
+        outreach_record=_outreach_record_response(result.record),
+        previous_status=result.previous_status,
+        resolution=result.resolution,
+    )
 
 
 @router.post("/gate/evaluations/{intent_id}", response_model=GateEvaluationResponse)

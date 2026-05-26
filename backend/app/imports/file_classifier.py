@@ -16,7 +16,25 @@ FILENAME_TO_SCHEMA = {
 
 EXPECTED_FILENAMES = tuple(FILENAME_TO_SCHEMA.keys())
 
+COMPANY_RESEARCH_DIRECTORY_TO_SCHEMA = {
+    "companies": "company_candidate.schema.json",
+    "contacts": "contact_candidate.schema.json",
+    "fit_evaluations": "fit_evaluation.schema.json",
+}
+
 
 def classify_filename(filename: str) -> str | None:
     """Return the exact schema filename for a known Phase 1 output filename."""
     return FILENAME_TO_SCHEMA.get(filename)
+
+
+def classify_output_path(path: str) -> str | None:
+    """Return a schema filename for a run output relative path."""
+    normalized = path.replace("\\", "/").strip("/")
+    if "/" not in normalized:
+        return classify_filename(normalized)
+    parent, filename = normalized.rsplit("/", 1)
+    if not filename.endswith(".json"):
+        return None
+    directory = parent.rsplit("/", 1)[-1]
+    return COMPANY_RESEARCH_DIRECTORY_TO_SCHEMA.get(directory)

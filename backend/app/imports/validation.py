@@ -8,7 +8,7 @@ from typing import Any
 
 from jsonschema.exceptions import ValidationError
 
-from backend.app.imports.file_classifier import classify_filename
+from backend.app.imports.file_classifier import classify_filename, classify_output_path
 from backend.app.imports.schema_registry import SchemaRegistry
 
 
@@ -50,9 +50,10 @@ class JsonValidationService:
     def __init__(self, registry: SchemaRegistry | None = None) -> None:
         self.registry = registry or SchemaRegistry()
 
-    def validate_file(self, path: Path) -> ValidationOutcome:
-        schema_name = classify_filename(path.name)
+    def validate_file(self, path: Path, *, relative_path: str | None = None) -> ValidationOutcome:
+        schema_name = classify_output_path(relative_path) if relative_path is not None else classify_filename(path.name)
         if schema_name is None:
+            label = relative_path or path.name
             return ValidationOutcome(
                 status="unknown_file_type",
                 schema_name=None,
@@ -60,7 +61,7 @@ class JsonValidationService:
                 errors=[
                     {
                         "path": "$",
-                        "message": f"No schema is registered for filename '{path.name}'.",
+                        "message": f"No schema is registered for filename '{label}'.",
                         "reason_code": "unknown_file_type",
                     }
                 ],
@@ -134,4 +135,3 @@ class JsonValidationService:
             reason_codes=["schema_validation_passed"],
             data=data,
         )
-

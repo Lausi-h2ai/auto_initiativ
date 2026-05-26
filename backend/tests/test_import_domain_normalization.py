@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from sqlmodel import select
 
@@ -35,7 +36,7 @@ def test_valid_import_normalizes_schema_valid_outputs_into_domain_tables(db_sess
     result = RunImportService(db_session).import_run("run-valid-domain")
 
     assert result.run.status == "imported"
-    assert len(db_session.exec(select(ImportedFile)).all()) == 9
+    assert len(db_session.exec(select(ImportedFile)).all()) == 10
 
     user_profile = db_session.exec(select(UserProfileSnapshot)).one()
     master_cv = db_session.exec(select(MasterCvProfileSnapshot)).one()
@@ -50,6 +51,9 @@ def test_valid_import_normalizes_schema_valid_outputs_into_domain_tables(db_sess
     assert user_profile.profile_id == "profile-1"
     assert master_cv.profile_id == "master-cv-1"
     assert policy.policy_id == "policy-1"
+    assert user_profile.status == "candidate"
+    assert master_cv.status == "candidate"
+    assert policy.status == "candidate"
     assert company.normalized_domain == "example.com"
     assert company.company_policy_key == "domain:example.com"
     assert contact.company_id == company.id
@@ -135,6 +139,30 @@ def test_reimport_replaces_prior_domain_rows_for_same_run(db_session, runs_root)
     assert len(intents) == 1
     assert companies[0].normalized_domain == "second-example.test"
     assert companies[0].company_policy_key == "domain:second-example.test"
+
+
+def test_reimport_clears_generated_evaluate_only_gate_results(db_session, runs_root):
+    copy_valid_run(runs_root, "run-reimport-gate")
+    service = RunImportService(db_session)
+    service.import_run("run-reimport-gate")
+
+    gate_result = ImportedGateResult(
+        gate_result_id="gate-evaluate-only-intent-1",
+        external_intent_id="intent-1",
+        status="passed_evaluate_only",
+        checks_json="[]",
+        reasons_json="[]",
+        evaluated_at=datetime.now(),
+        imported_file_id=None,
+    )
+    db_session.add(gate_result)
+    db_session.commit()
+
+    service.import_run("run-reimport-gate")
+
+    assert db_session.exec(
+        select(ImportedGateResult).where(ImportedGateResult.gate_result_id == "gate-evaluate-only-intent-1")
+    ).all() == []
 
 
 def test_domain_normalization_does_not_create_send_state(db_session, runs_root):

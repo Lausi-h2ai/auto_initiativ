@@ -40,6 +40,12 @@ Before implementing changes:
 3. Validate assumptions against schemas in `schemas/`.
 4. Keep changes small and aligned with `docs/IMPLEMENTATION_PLAN.md`.
 
+After completing a tick or any meaningful repo change:
+
+- Commit the completed change set to git before starting the next tick, unless the user explicitly asks not to commit.
+- Keep commits focused on the files changed for that tick; do not include unrelated dirty worktree changes.
+- If the worktree already contains unrelated changes, leave them untouched and commit only the relevant paths.
+
 When adding code later:
 
 - Use FastAPI for the backend.
@@ -88,4 +94,3 @@ Email sending must remain impossible unless the backend gate checks at least:
 Prefer clear docs, schemas, tests, and deterministic code over premature automation.
 
 The first implementation should be dry-run safe. Build observability and audit logging from the beginning.
-

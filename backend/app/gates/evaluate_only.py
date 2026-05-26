@@ -24,9 +24,11 @@ from backend.app.db.models import (
 )
 from backend.app.db.normalization import normalize_company_domain, normalize_company_name
 from backend.app.imports.schema_registry import SchemaRegistry
+from backend.app.onboarding.promotion import SNAPSHOT_STATUS_APPROVED
 
 
-CONTACTED_OUTREACH_STATUSES = {"sent", "delivered", "contacted"}
+CONTACTED_OUTREACH_STATUSES = {"sent", "provider_accepted", "outcome_uncertain"}
+DEFAULT_DEDUPE_WINDOW_DAYS = 365
 SAFE_EMAIL_SOURCES = {"company_site", "public_profile"}
 REVIEW_EMAIL_SOURCES = {"user_provided", "inferred_pattern", "other"}
 
@@ -63,14 +65,20 @@ def _json_dumps(value: Any) -> str:
 def _json_loads(value: str | None) -> dict[str, Any]:
     if value is None:
         return {}
-    data = json.loads(value)
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
     return data if isinstance(data, dict) else {}
 
 
 def _json_list(value: str | None) -> list[Any]:
     if value is None:
         return []
-    data = json.loads(value)
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return []
     return data if isinstance(data, list) else []
 
 
@@ -147,6 +155,7 @@ class EvaluateOnlyGateService:
         self._check_schema(intent, state)
         policy_payload = self._check_policy(intent, related["policy"], state)
         master_cv_payload = self._check_required_records(intent, related, state)
+        self._check_snapshot_statuses(related, state)
         self._check_dedupe(intent, related["company"], policy_payload, state)
         self._check_policy_exclusions(intent, related["company"], policy_payload, state)
         self._check_sources_and_attachments(intent, related["email_draft"], state)
@@ -208,8 +217,14 @@ class EvaluateOnlyGateService:
             state.fail_check("schema_validity", "Send intent raw JSON is missing.", field="raw_json")
             return
 
+        try:
+            payload = json.loads(intent.raw_json)
+        except json.JSONDecodeError as exc:
+            state.fail_check("schema_invalid_json", exc.msg, field="raw_json")
+            return
+
         validator = self.registry.get_validator("send_intent.schema.json")
-        errors = sorted(validator.iter_errors(_json_loads(intent.raw_json)), key=lambda error: list(error.absolute_path))
+        errors = sorted(validator.iter_errors(payload), key=lambda error: list(error.absolute_path))
         if not errors:
             state.pass_check("schema_validity", "Send intent raw JSON validates against schema.")
             return
@@ -245,18 +260,39 @@ class EvaluateOnlyGateService:
         master_cv = related["master_cv_profile"]
         return _json_loads(master_cv.raw_json) if master_cv is not None else {}
 
+    def _check_snapshot_statuses(self, related: dict[str, Any], state: _GateState) -> None:
+        snapshots = {
+            "policy_id": related["policy"],
+            "profile_id": related["user_profile"],
+            "master_cv_profile_id": related["master_cv_profile"],
+        }
+        blocked: list[str] = []
+        for field_name, snapshot in snapshots.items():
+            if snapshot is not None and snapshot.status != SNAPSHOT_STATUS_APPROVED:
+                blocked.append(field_name)
+                state.fail_check(
+                    "snapshot_not_approved",
+                    "Linked onboarding snapshot is not approved for automated use.",
+                    field=field_name,
+                )
+        if not blocked and all(snapshot is not None for snapshot in snapshots.values()):
+            state.pass_check("snapshots_approved", "Linked onboarding snapshots are approved.")
+
     def _check_dedupe(self, intent: SendIntent, company: Company | None, policy: dict[str, Any], state: _GateState) -> None:
         outreach_policy = policy.get("outreach", {})
         if not outreach_policy.get("allow_recipient_repeat", False):
+            recipient_window_days = int(outreach_policy.get("recipient_dedupe_window_days") or DEFAULT_DEDUPE_WINDOW_DAYS)
+            recipient_cutoff = utc_now() - timedelta(days=recipient_window_days)
             duplicate = self.session.exec(
                 select(OutreachRecord).where(
                     OutreachRecord.normalized_recipient_email == intent.normalized_recipient_email,
                     OutreachRecord.status.in_(CONTACTED_OUTREACH_STATUSES),
                     OutreachRecord.dedupe_recipient == True,  # noqa: E712
+                    OutreachRecord.occurred_at >= recipient_cutoff,
                 )
             ).first()
             if duplicate is not None:
-                state.fail_check("duplicate_recipient", "Recipient was already contacted under policy.", field="recipient_email")
+                state.fail_check("duplicate_recipient", "Recipient was already contacted inside the dedupe window.", field="recipient_email")
             else:
                 state.pass_check("recipient_not_previously_contacted", "Recipient dedupe check passed.")
         else:
@@ -264,19 +300,22 @@ class EvaluateOnlyGateService:
 
         if not outreach_policy.get("allow_company_repeat", False):
             company_key = company.company_policy_key if company is not None else None
+            company_window_days = int(outreach_policy.get("company_dedupe_window_days") or DEFAULT_DEDUPE_WINDOW_DAYS)
+            company_cutoff = utc_now() - timedelta(days=company_window_days)
             duplicate = (
                 self.session.exec(
                     select(OutreachRecord).where(
                         OutreachRecord.company_policy_key == company_key,
                         OutreachRecord.status.in_(CONTACTED_OUTREACH_STATUSES),
                         OutreachRecord.dedupe_company == True,  # noqa: E712
+                        OutreachRecord.occurred_at >= company_cutoff,
                     )
                 ).first()
                 if company_key
                 else None
             )
             if duplicate is not None:
-                state.fail_check("duplicate_company", "Company was already contacted under policy.", field="company_id")
+                state.fail_check("duplicate_company", "Company was already contacted inside the dedupe window.", field="company_id")
             elif company_key:
                 state.pass_check("company_not_previously_contacted", "Company dedupe check passed.")
         else:

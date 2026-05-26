@@ -268,15 +268,23 @@ class SendReservation(SQLModel, table=True):
             "uq_send_reservations_active_recipient",
             "normalized_recipient_email",
             unique=True,
-            postgresql_where=text("dedupe_recipient = true AND status IN ('active', 'reserved')"),
-            sqlite_where=text("dedupe_recipient = 1 AND status IN ('active', 'reserved')"),
+            postgresql_where=text(
+                "dedupe_recipient = true AND status IN ('active', 'reserved', 'attempting_provider_send', 'outcome_uncertain')"
+            ),
+            sqlite_where=text(
+                "dedupe_recipient = 1 AND status IN ('active', 'reserved', 'attempting_provider_send', 'outcome_uncertain')"
+            ),
         ),
         Index(
             "uq_send_reservations_active_company",
             "company_policy_key",
             unique=True,
-            postgresql_where=text("dedupe_company = true AND status IN ('active', 'reserved')"),
-            sqlite_where=text("dedupe_company = 1 AND status IN ('active', 'reserved')"),
+            postgresql_where=text(
+                "dedupe_company = true AND status IN ('active', 'reserved', 'attempting_provider_send', 'outcome_uncertain')"
+            ),
+            sqlite_where=text(
+                "dedupe_company = 1 AND status IN ('active', 'reserved', 'attempting_provider_send', 'outcome_uncertain')"
+            ),
         ),
     )
 
@@ -298,22 +306,6 @@ class SendReservation(SQLModel, table=True):
 
 class OutreachRecord(SQLModel, table=True):
     __tablename__ = "outreach_records"
-    __table_args__ = (
-        Index(
-            "uq_outreach_records_contacted_recipient",
-            "normalized_recipient_email",
-            unique=True,
-            postgresql_where=text("dedupe_recipient = true AND status IN ('sent', 'delivered', 'contacted')"),
-            sqlite_where=text("dedupe_recipient = 1 AND status IN ('sent', 'delivered', 'contacted')"),
-        ),
-        Index(
-            "uq_outreach_records_contacted_company",
-            "company_policy_key",
-            unique=True,
-            postgresql_where=text("dedupe_company = true AND status IN ('sent', 'delivered', 'contacted')"),
-            sqlite_where=text("dedupe_company = 1 AND status IN ('sent', 'delivered', 'contacted')"),
-        ),
-    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     outreach_record_id: str = Field(index=True, unique=True)
@@ -330,3 +322,87 @@ class OutreachRecord(SQLModel, table=True):
     occurred_at: datetime = Field(default_factory=utc_now)
     source: str = Field(default="backend", index=True)
     notes_json: str = Field(default="{}", sa_column=Column(Text))
+
+
+class CompanyIdentity(SQLModel, table=True):
+    __tablename__ = "company_identities"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    identity_id: str = Field(index=True, unique=True)
+    canonical_company_policy_key: str = Field(index=True, unique=True)
+    display_name: str
+    normalized_name: str = Field(index=True)
+    primary_domain: Optional[str] = Field(default=None, index=True)
+    confidence: float = Field(default=1.0, sa_column=Column(Float))
+    needs_review: bool = Field(default=False, index=True)
+    source: str = Field(default="backend", index=True)
+    notes_json: str = Field(default="{}", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class CompanyIdentityAlias(SQLModel, table=True):
+    __tablename__ = "company_identity_aliases"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    alias_id: str = Field(index=True, unique=True)
+    identity_id: Optional[int] = Field(default=None, foreign_key="company_identities.id", index=True)
+    alias_type: str = Field(index=True)
+    alias_value: str = Field(index=True)
+    normalized_value: str = Field(index=True)
+    confidence: float = Field(default=1.0, sa_column=Column(Float))
+    needs_review: bool = Field(default=False, index=True)
+    source: str = Field(default="backend", index=True)
+    notes_json: str = Field(default="{}", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class SendApprovalSnapshot(SQLModel, table=True):
+    __tablename__ = "send_approval_snapshots"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    approval_id: str = Field(index=True, unique=True)
+    batch_id: str = Field(index=True)
+    send_intent_id: Optional[int] = Field(default=None, foreign_key="send_intents.id", index=True)
+    external_intent_id: str = Field(index=True)
+    reviewer_id: str = Field(index=True)
+    status: str = Field(default="approved", index=True)
+    normalized_recipient_email: str = Field(index=True)
+    raw_recipient_email: str
+    subject: str
+    body_text: str = Field(sa_column=Column(Text))
+    body_html: Optional[str] = Field(default=None, sa_column=Column(Text))
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
+    company_policy_key: str = Field(index=True)
+    company_identity_key: str = Field(index=True)
+    policy_snapshot_id: Optional[int] = Field(default=None, foreign_key="policy_snapshots.id", index=True)
+    user_profile_snapshot_id: Optional[int] = Field(default=None, foreign_key="user_profile_snapshots.id", index=True)
+    master_cv_profile_snapshot_id: Optional[int] = Field(default=None, foreign_key="master_cv_profile_snapshots.id", index=True)
+    email_draft_id: Optional[int] = Field(default=None, foreign_key="email_drafts.id", index=True)
+    payload_hash: str = Field(index=True)
+    attachments_json: str = Field(default="[]", sa_column=Column(Text))
+    source_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    claim_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    frozen_json: str = Field(sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class SentMessage(SQLModel, table=True):
+    __tablename__ = "sent_messages"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sent_message_id: str = Field(index=True, unique=True)
+    approval_snapshot_id: Optional[int] = Field(default=None, foreign_key="send_approval_snapshots.id", index=True)
+    send_intent_id: Optional[int] = Field(default=None, foreign_key="send_intents.id", index=True)
+    reservation_id: Optional[int] = Field(default=None, foreign_key="send_reservations.id", index=True)
+    provider: str = Field(index=True)
+    provider_message_id: Optional[str] = Field(default=None, index=True)
+    provider_thread_id: Optional[str] = Field(default=None, index=True)
+    status: str = Field(index=True)
+    normalized_recipient_email: str = Field(index=True)
+    company_policy_key: str = Field(index=True)
+    network_performed: bool = Field(default=False, index=True)
+    provider_response_json: str = Field(default="{}", sa_column=Column(Text))
+    error_json: str = Field(default="{}", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utc_now)
+    accepted_at: Optional[datetime] = None

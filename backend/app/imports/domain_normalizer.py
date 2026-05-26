@@ -18,6 +18,7 @@ from backend.app.db.models import (
     ImportedGateResult,
     MasterCvProfileSnapshot,
     PolicySnapshot,
+    Run,
     SendIntent,
     UserProfileSnapshot,
 )
@@ -102,15 +103,13 @@ class DomainNormalizationService:
         self.session.flush()
 
     def normalize_run(self, run_id: str) -> DomainNormalizationResult:
-        files = {
-            imported_file.filename: imported_file
-            for imported_file in self.session.exec(
-                select(ImportedFile).where(
-                    ImportedFile.run_id == run_id,
-                    ImportedFile.status == "schema_validation_passed",
-                )
-            ).all()
-        }
+        valid_files = self.session.exec(
+            select(ImportedFile).where(
+                ImportedFile.run_id == run_id,
+                ImportedFile.status == "schema_validation_passed",
+            )
+        ).all()
+        files = {imported_file.filename: imported_file for imported_file in valid_files}
 
         payloads = {filename: _json_loads(imported_file.raw_json) for filename, imported_file in files.items()}
         counts = {
@@ -149,6 +148,38 @@ class DomainNormalizationService:
             self.session.add(policy)
             self.session.flush()
             counts["policy_snapshots"] += 1
+
+        run = self.session.exec(select(Run).where(Run.run_id == run_id)).first()
+        if run is not None and run.agent_type == "application_draft":
+            return self._normalize_application_draft(run_id, files, payloads, counts)
+
+        company_research_files = [
+            imported_file
+            for imported_file in valid_files
+            if (
+                imported_file.schema_name
+                in (
+                    "company_candidate.schema.json",
+                    "contact_candidate.schema.json",
+                    "fit_evaluation.schema.json",
+                )
+                and (
+                    imported_file.filename.startswith("companies/")
+                    or imported_file.filename.startswith("contacts/")
+                    or imported_file.filename.startswith("fit_evaluations/")
+                    or run is not None
+                    and run.agent_type == "company_research"
+                )
+            )
+        ]
+        if company_research_files:
+            return self._normalize_company_research_batch(
+                run_id,
+                company_research_files,
+                counts,
+                user_profile=user_profile,
+                policy=policy,
+            )
 
         full_run_files = {
             "company_candidate.json",
@@ -315,6 +346,200 @@ class DomainNormalizationService:
             unresolved.append({"entity": gate_payload["gate_result_id"], "field": "intent_id"})
         self.session.add(gate_result)
         counts["imported_gate_results"] += 1
+
+        reason_codes = ["unresolved_references_present"] if unresolved else []
+        status = "domain_normalized_with_review" if unresolved else "domain_normalized"
+        self._audit(
+            run_id=run_id,
+            action="domain_normalization_completed",
+            result_status=status,
+            reason_codes=reason_codes,
+            metadata={"counts": counts, "unresolved_references": unresolved},
+        )
+        self.session.flush()
+        return DomainNormalizationResult(
+            status=status,
+            counts=counts,
+            reason_codes=reason_codes,
+            unresolved_references=unresolved,
+            )
+
+    def _normalize_company_research_batch(
+        self,
+        run_id: str,
+        imported_files: list[ImportedFile],
+        counts: dict[str, int],
+        *,
+        user_profile: UserProfileSnapshot | None,
+        policy: PolicySnapshot | None,
+    ) -> DomainNormalizationResult:
+        unresolved: list[dict[str, str]] = []
+        duplicate_ids: list[dict[str, str]] = []
+        companies_by_external_id: dict[str, Company] = {}
+        seen_company_ids: set[str] = set()
+        seen_contact_ids: set[str] = set()
+        seen_evaluation_ids: set[str] = set()
+
+        company_files = [item for item in imported_files if item.schema_name == "company_candidate.schema.json"]
+        contact_files = [item for item in imported_files if item.schema_name == "contact_candidate.schema.json"]
+        fit_files = [item for item in imported_files if item.schema_name == "fit_evaluation.schema.json"]
+
+        for imported_file in company_files:
+            payload = _json_loads(imported_file.raw_json)
+            company_id = payload["company_id"]
+            if company_id in seen_company_ids:
+                duplicate_ids.append({"entity": company_id, "field": "company_id"})
+                continue
+            existing_company = self.session.exec(select(Company).where(Company.company_id == company_id)).first()
+            if existing_company is not None:
+                companies_by_external_id[company_id] = existing_company
+                seen_company_ids.add(company_id)
+                continue
+            company = self._normalize_company(imported_file, payload)
+            self.session.add(company)
+            self.session.flush()
+            counts["companies"] += 1
+            companies_by_external_id[company.company_id] = company
+            seen_company_ids.add(company.company_id)
+
+        for imported_file in contact_files:
+            payload = _json_loads(imported_file.raw_json)
+            contact_id = payload["contact_id"]
+            if contact_id in seen_contact_ids:
+                duplicate_ids.append({"entity": contact_id, "field": "contact_id"})
+                continue
+            existing_contact = self.session.exec(select(Contact).where(Contact.contact_id == contact_id)).first()
+            if existing_contact is not None:
+                seen_contact_ids.add(contact_id)
+                continue
+            contact_company = companies_by_external_id.get(payload["company_id"])
+            if contact_company is None:
+                unresolved.append({"entity": contact_id, "field": "company_id", "value": payload["company_id"]})
+            contact = self._normalize_contact(imported_file, payload, company=contact_company)
+            self.session.add(contact)
+            self.session.flush()
+            counts["contacts"] += 1
+            seen_contact_ids.add(contact_id)
+
+        for imported_file in fit_files:
+            payload = _json_loads(imported_file.raw_json)
+            evaluation_id = payload["evaluation_id"]
+            if evaluation_id in seen_evaluation_ids:
+                duplicate_ids.append({"entity": evaluation_id, "field": "evaluation_id"})
+                continue
+            existing_fit = self.session.exec(select(FitEvaluation).where(FitEvaluation.evaluation_id == evaluation_id)).first()
+            if existing_fit is not None:
+                seen_evaluation_ids.add(evaluation_id)
+                continue
+            fit_company = companies_by_external_id.get(payload["company_id"])
+            if fit_company is None:
+                unresolved.append({"entity": evaluation_id, "field": "company_id", "value": payload["company_id"]})
+            approved_user_profile = user_profile or self._approved_user_profile(payload["profile_id"])
+            approved_policy = policy or self._approved_policy(payload["policy_id"])
+            fit_evaluation = self._normalize_fit_evaluation(
+                imported_file,
+                payload,
+                company=fit_company,
+                user_profile=approved_user_profile,
+                policy=approved_policy,
+            )
+            if fit_evaluation.user_profile_snapshot_id is None:
+                unresolved.append({"entity": evaluation_id, "field": "profile_id", "value": payload["profile_id"]})
+            if fit_evaluation.policy_snapshot_id is None:
+                unresolved.append({"entity": evaluation_id, "field": "policy_id", "value": payload["policy_id"]})
+            self.session.add(fit_evaluation)
+            self.session.flush()
+            counts["fit_evaluations"] += 1
+            seen_evaluation_ids.add(evaluation_id)
+
+        reason_codes = []
+        if unresolved:
+            reason_codes.append("unresolved_references_present")
+        if duplicate_ids:
+            reason_codes.append("duplicate_external_ids_present")
+        status = "domain_normalized_with_review" if reason_codes else "domain_normalized"
+        all_unresolved = unresolved + duplicate_ids
+        self._audit(
+            run_id=run_id,
+            action="domain_normalization_completed",
+            result_status=status,
+            reason_codes=reason_codes,
+            metadata={"counts": counts, "unresolved_references": all_unresolved},
+        )
+        self.session.flush()
+        return DomainNormalizationResult(
+            status=status,
+            counts=counts,
+            reason_codes=reason_codes,
+            unresolved_references=all_unresolved,
+        )
+
+    def _normalize_application_draft(
+        self,
+        run_id: str,
+        files: dict[str, ImportedFile],
+        payloads: dict[str, dict[str, Any]],
+        counts: dict[str, int],
+    ) -> DomainNormalizationResult:
+        unresolved: list[dict[str, str]] = []
+        contacts_by_external_id: dict[str, Contact] = {}
+        contact_file = files.get("contact_candidate.json")
+        contact_payload = payloads.get("contact_candidate.json")
+        if contact_file is not None and contact_payload is not None:
+            contact_company = self.session.exec(
+                select(Company).where(Company.company_id == contact_payload["company_id"])
+            ).first()
+            if contact_company is None:
+                unresolved.append(
+                    {
+                        "entity": contact_payload["contact_id"],
+                        "field": "company_id",
+                        "value": contact_payload["company_id"],
+                    }
+                )
+            existing_contact = self.session.exec(select(Contact).where(Contact.contact_id == contact_payload["contact_id"])).first()
+            if existing_contact is None:
+                contact = self._normalize_contact(contact_file, contact_payload, company=contact_company)
+                self.session.add(contact)
+                self.session.flush()
+                counts["contacts"] += 1
+            else:
+                contact = existing_contact
+            contacts_by_external_id[contact.contact_id] = contact
+
+        draft_file = files.get("email_draft.json")
+        draft_payload = payloads.get("email_draft.json")
+        if draft_file is None or draft_payload is None:
+            unresolved.append({"entity": run_id, "field": "email_draft.json", "value": "missing"})
+        else:
+            draft_company = self.session.exec(
+                select(Company).where(Company.company_id == draft_payload["company_id"])
+            ).first()
+            draft_contact = contacts_by_external_id.get(draft_payload["contact_id"]) or self.session.exec(
+                select(Contact).where(Contact.contact_id == draft_payload["contact_id"])
+            ).first()
+            if draft_company is None:
+                unresolved.append({"entity": draft_payload["draft_id"], "field": "company_id", "value": draft_payload["company_id"]})
+            if draft_contact is None:
+                unresolved.append({"entity": draft_payload["draft_id"], "field": "contact_id", "value": draft_payload["contact_id"]})
+            if draft_company is not None and draft_contact is not None and draft_contact.company_id != draft_company.id:
+                unresolved.append(
+                    {
+                        "entity": draft_payload["draft_id"],
+                        "field": "contact_id",
+                        "value": draft_payload["contact_id"],
+                    }
+                )
+                draft_contact = None
+            email_draft = self._normalize_email_draft(
+                draft_file,
+                draft_payload,
+                company=draft_company,
+                contact=draft_contact,
+            )
+            self.session.add(email_draft)
+            self.session.flush()
+            counts["email_drafts"] += 1
 
         reason_codes = ["unresolved_references_present"] if unresolved else []
         status = "domain_normalized_with_review" if unresolved else "domain_normalized"

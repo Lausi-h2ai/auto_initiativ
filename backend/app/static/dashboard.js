@@ -1,7 +1,7 @@
 const apiPaths = {
   sendIntents: "/" + "send-intents",
 };
-// Read-only dashboard API coverage: /send-intents
+// Dashboard API coverage: /send-intents and controlled backend send batches
 
 const onboardingArtifactFiles = [
   "user_profile.json",
@@ -9,6 +9,9 @@ const onboardingArtifactFiles = [
   "policy.json",
   "onboarding_review.json",
 ];
+
+const companyResearchStatusIntervalMs = 10000;
+const applicationDraftStatusIntervalMs = 10000;
 
 const sections = [
   {
@@ -27,15 +30,16 @@ const sections = [
     title: "Companies",
     navGroup: "Recruiter workflow",
     endpoint: "/companies",
-    subtitle: "Imported company profiles, policy keys, evidence, and conflicts",
-    filters: ["run_id", "min_confidence", "has_review_flags", "has_policy_conflicts"],
+    subtitle: "Company profiles with draft, queue, and contact state",
+    filters: ["run_id", "min_confidence", "has_review_flags", "has_policy_conflicts", "draft_status"],
     columns: [
+      { label: "Select", value: (r) => companySelectCheckbox(r) },
       { label: "Company", value: (r) => mainCell(r.name, r.company_id) },
       { label: "Domain", value: (r) => mainCell(r.normalized_domain || "No domain", r.company_policy_key) },
-      { label: "Remote", value: (r) => text(r.remote_policy || "Unknown") },
-      { label: "Confidence", value: (r) => confidence(r.confidence) },
-      { label: "Review", value: (r) => tags(r.review_flags, "warn") },
-      { label: "Conflicts", value: (r) => tags(r.policy_conflicts, "danger") },
+      { label: "Score", value: (r) => confidence(r.confidence) },
+      { label: "Outreach", value: (r) => companyOutreachState(r) },
+      { label: "Issues", value: (r) => companyIssues(r) },
+      { label: "Draft", value: (r) => applicationDraftButton(r) },
     ],
   },
   {
@@ -88,7 +92,9 @@ const sections = [
       { label: "Tone", value: (r) => text(r.tone || "Unspecified") },
       { label: "Confidence", value: (r) => confidence(r.confidence) },
       { label: "Claims", value: (r) => tags(r.claim_refs) },
+      { label: "Attachments", value: (r) => attachmentLinks(r) },
       { label: "Review", value: (r) => tags(r.review_flags, "warn") },
+      { label: "Queue", value: (r) => queueDraftButton(r.draft_id) },
     ],
   },
   {
@@ -98,7 +104,7 @@ const sections = [
     navGroup: "Developer logs",
     endpoint: "/runs",
     subtitle: "Imports, output paths, and run lifecycle state",
-    filters: ["status"],
+    filters: ["run_id", "status"],
     clientFilters: true,
     columns: [
       { label: "Run", value: (r) => mainCell(r.run_id, r.agent_type || "Unknown type") },
@@ -116,9 +122,10 @@ const sections = [
     title: "Send Queue",
     navGroup: "Developer logs",
     endpoint: apiPaths.sendIntents,
-    subtitle: "Imported send intents and latest deterministic gate result",
+    subtitle: "Imported send intents, deterministic gate results, and controlled backend send actions",
     filters: ["run_id", "company_id", "contact_id", "status", "gate_status", "reason_code", "min_confidence", "has_review_flags"],
     columns: [
+      { label: "Select", value: (r) => sendIntentSelectCheckbox(r.intent_id) },
       { label: "Intent", value: (r) => mainCell(r.intent_id, r.subject) },
       { label: "Recipient", value: (r) => mainCell(r.normalized_recipient_email, r.recipient_name || r.external_contact_id) },
       { label: "Company", value: (r) => mainCell(r.external_company_id, r.company_domain || "No domain") },
@@ -126,6 +133,7 @@ const sections = [
       { label: "Gate", value: (r) => gateSummary(r.latest_gate_result) },
       { label: "Confidence", value: (r) => confidence(r.confidence) },
       { label: "Review", value: (r) => tags(r.review_flags, "warn") },
+      { label: "Send", value: (r) => sendIntentButton(r.intent_id) },
     ],
   },
   {
@@ -179,6 +187,7 @@ const sections = [
       { label: "Status", value: (r) => statusTag(r.status) },
       { label: "Dedupe", value: (r) => tags([`recipient:${r.dedupe_recipient}`, `company:${r.dedupe_company}`]) },
       { label: "Occurred", value: (r) => dateTime(r.occurred_at) },
+      { label: "Resolve", value: (r) => outreachResolveButton(r) },
     ],
   },
   {
@@ -209,7 +218,7 @@ const filterDefinitions = {
   entity_id: { label: "Entity ID", type: "text", placeholder: "record id" },
   action: { label: "Action", type: "text", placeholder: "gate.evaluate" },
   status: { label: "Status", type: "text", placeholder: "imported" },
-  gate_status: { label: "Gate status", type: "select", options: ["", "passed_evaluate_only", "blocked", "needs_review"] },
+  gate_status: { label: "Gate status", type: "select", options: ["", "passed_evaluate_only", "reserved_for_send", "blocked", "needs_review"] },
   result_status: { label: "Result status", type: "text", placeholder: "success" },
   reason_code: { label: "Reason code", type: "text", placeholder: "missing_source" },
   email_source: { label: "Email source", type: "text", placeholder: "public" },
@@ -217,6 +226,7 @@ const filterDefinitions = {
   min_confidence: { label: "Min confidence", type: "number", min: "0", max: "1", step: "0.05", placeholder: "0.70" },
   has_review_flags: { label: "Review flags", type: "select", options: ["", "true", "false"] },
   has_policy_conflicts: { label: "Policy conflicts", type: "select", options: ["", "true", "false"] },
+  draft_status: { label: "Draft status", type: "select", options: ["", "missing", "drafted"] },
   limit: { label: "Limit", type: "number", min: "1", max: "500", step: "1", placeholder: "100" },
 };
 
@@ -226,6 +236,16 @@ const state = {
   selectedIndex: null,
   controllers: new Map(),
   filters: {},
+  selectedCompanyIds: new Set(),
+  selectedIntentIds: new Set(),
+  applicationDraftBatch: null,
+  applicationDraft: {
+    runId: "",
+    status: null,
+    pollTimer: null,
+    batchPollTimer: null,
+  },
+  emailDelivery: null,
   onboarding: {
     runId: localStorage.getItem("onboardingRunId") || "onboarding-local",
     entries: [],
@@ -239,7 +259,10 @@ const state = {
     lastResult: null,
   },
   campaign: {
+    runId: localStorage.getItem("companyResearchRunId") || "",
     lastResult: null,
+    status: null,
+    pollTimer: null,
   },
 };
 
@@ -267,6 +290,9 @@ function init() {
   renderNav();
   elements.refreshButton.addEventListener("click", () => refresh());
   refresh();
+  if (state.campaign.runId) {
+    startCompanyResearchPolling();
+  }
 }
 
 async function refresh() {
@@ -293,14 +319,23 @@ async function refresh() {
   renderTableLoading(section);
 
   try {
-    const [summary, rows] = await Promise.all([fetchJson("/dashboard/summary"), loadRows(section)]);
+    const [summary, emailDelivery, rows] = await Promise.all([
+      fetchJson("/dashboard/summary"),
+      fetchJson("/email-delivery/settings"),
+      loadRows(section),
+    ]);
+    state.emailDelivery = emailDelivery;
     renderSummary(summary);
     state.rows = rows;
+    if (section.id === "companies") {
+      const rowIds = new Set(rows.filter((row) => row.can_draft_application).map((row) => row.company_id));
+      state.selectedCompanyIds = new Set([...state.selectedCompanyIds].filter((companyId) => rowIds.has(companyId)));
+    }
     state.selectedIndex = rows.length ? 0 : null;
     renderTable(section, rows);
     renderDetail();
-    elements.apiState.textContent = "Read-only API connected";
-    elements.apiState.className = "state-pill ok";
+    elements.apiState.textContent = deliveryStateLabel(emailDelivery);
+    elements.apiState.className = deliveryStateClass(emailDelivery);
   } catch (error) {
     elements.apiState.textContent = "API load failed";
     elements.apiState.className = "state-pill error";
@@ -340,6 +375,7 @@ function renderSummary(summary) {
     ["Contacts", summary.contacts],
     ["Fit evaluations", summary.fit_evaluations],
     ["Drafts", summary.email_drafts],
+    ["Sent messages", summary.sent_messages],
     ["Runs", summary.runs],
   ];
   elements.summaryGrid.innerHTML = metrics
@@ -381,6 +417,40 @@ function renderFilters(section) {
   button.textContent = "Apply";
   button.addEventListener("click", () => refresh());
   wrapper.append(label, button);
+  if (section.id === "companies") {
+    const selectedButton = document.createElement("button");
+    selectedButton.className = "action-button";
+    selectedButton.type = "button";
+    selectedButton.textContent = "Draft selected";
+    selectedButton.addEventListener("click", () => applicationDraftBatchSelected());
+    const allMissingButton = document.createElement("button");
+    allMissingButton.className = "action-button";
+    allMissingButton.type = "button";
+    allMissingButton.textContent = "Draft all missing";
+    allMissingButton.addEventListener("click", () => applicationDraftBatchAllMissing());
+    wrapper.append(selectedButton, allMissingButton);
+  }
+  if (section.id === "drafts") {
+    const queueAllButton = document.createElement("button");
+    queueAllButton.className = "action-button primary";
+    queueAllButton.type = "button";
+    queueAllButton.textContent = "Queue all shown";
+    queueAllButton.addEventListener("click", () => queueAllShownDrafts());
+    wrapper.append(queueAllButton);
+  }
+  if (section.id === "queue") {
+    const sendSelectedButton = document.createElement("button");
+    sendSelectedButton.className = "action-button primary";
+    sendSelectedButton.type = "button";
+    sendSelectedButton.textContent = "Send selected";
+    sendSelectedButton.addEventListener("click", () => sendSelectedIntents());
+    const sendAllButton = document.createElement("button");
+    sendAllButton.className = "action-button primary";
+    sendAllButton.type = "button";
+    sendAllButton.textContent = "Send all shown";
+    sendAllButton.addEventListener("click", () => sendAllShownIntents());
+    wrapper.append(sendSelectedButton, sendAllButton);
+  }
   elements.filtersPanel.append(wrapper);
 }
 
@@ -440,9 +510,13 @@ async function loadRows(section) {
 }
 
 function applyClientFilters(section, rows) {
+  const runId = document.querySelector("#filter-run_id")?.value?.trim();
   const status = document.querySelector("#filter-status")?.value?.trim();
-  if (!status) return rows;
-  return rows.filter((row) => row.status === status);
+  return rows.filter((row) => {
+    if (runId && row.run_id !== runId) return false;
+    if (status && row.status !== status) return false;
+    return true;
+  });
 }
 
 async function renderProfileShell() {
@@ -455,13 +529,16 @@ async function renderProfileShell() {
   bindOnboardingControls();
 
   try {
-    const [summary, profile, sessionState, artifacts, inputFiles, snapshots] = await Promise.all([
+    const [summary, profile, sessionState, artifacts, inputFiles, snapshots, campaignStatus] = await Promise.all([
       fetchJson("/dashboard/summary"),
       fetchJson("/profile/summary"),
       fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/status`),
       fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/artifacts`),
       fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/input-files`),
       fetchJson(`/onboarding/runs/${encodeURIComponent(state.onboarding.runId)}/snapshots`),
+      state.campaign.runId
+        ? fetchJson(`/campaigns/company-research/${encodeURIComponent(state.campaign.runId)}/status`).catch(() => null)
+        : Promise.resolve(null),
     ]);
     renderSummary(summary);
     state.onboarding.profile = profile;
@@ -470,6 +547,19 @@ async function renderProfileShell() {
     state.onboarding.artifacts = artifacts.artifacts || [];
     state.onboarding.inputFiles = inputFiles.files || [];
     state.onboarding.snapshots = snapshots || [];
+    state.campaign.status = campaignStatus;
+    if (campaignStatus) {
+      state.campaign.lastResult = {
+        ...(state.campaign.lastResult || {}),
+        run_id: state.campaign.runId,
+        output_path: campaignStatus.import_state?.output_path || `runs/${state.campaign.runId}/output`,
+      };
+      if (isCompanyResearchTerminal(campaignStatus)) {
+        stopCompanyResearchPolling();
+      } else {
+        startCompanyResearchPolling();
+      }
+    }
     renderProfileAndChat();
     bindOnboardingControls();
     elements.detailJson.textContent = JSON.stringify({ profile, session_state: sessionState, artifacts, input_files: inputFiles, snapshots }, null, 2);
@@ -618,42 +708,66 @@ function renderApprovedProfilePanel() {
 
 function renderCompanyResearchPanel() {
   const result = state.campaign.lastResult;
+  const status = state.campaign.status;
+  const runId = result?.run_id || status?.run_id || state.campaign.runId || "";
+  const counts = status?.artifact_counts || {};
+  const importState = status?.import_state || {};
+  const outputPath = result?.output_path || importState.output_path || "";
+  const updatedAt = status?.state?.updated_at || "";
+  const pollLabel = runId && status && !isCompanyResearchTerminal(status) ? "Auto-refreshing every 10 seconds" : "";
   return `
     <section class="workflow-panel company-research-panel">
       <div class="workflow-panel-header">
         <div>
           <span class="profile-kicker">Next step</span>
-          <h3>Prepare company research</h3>
+          <h3>Launch company research</h3>
         </div>
-        <button class="action-button primary" id="companyResearchPrepare" type="button">Prepare company research run</button>
+        <div class="campaign-actions">
+          <button class="action-button" id="companyResearchLoad" type="button">Load run</button>
+          <button class="action-button" id="companyResearchImport" type="button">Import artifacts</button>
+          <button class="action-button primary" id="companyResearchLaunch" type="button">Launch company research</button>
+        </div>
       </div>
       <div class="campaign-form">
         <label class="filter-field">
           <span>Run ID</span>
-          <input id="companyResearchRunId" type="text" placeholder="company-research-local">
+          <input id="companyResearchRunId" type="text" value="${escapeHtml(runId)}" placeholder="company-research-local">
         </label>
         <label class="filter-field">
           <span>Role focus</span>
           <input id="companyResearchRoleFocus" type="text" value="Profile-aligned roles">
         </label>
         <label class="filter-field">
-          <span>Locations</span>
-          <input id="companyResearchLocations" type="text" placeholder="Berlin, Zurich, remote Europe">
-        </label>
-        <label class="filter-field">
-          <span>Max companies</span>
-          <input id="companyResearchMaxCompanies" type="number" min="1" max="50" step="1" value="10">
+          <span>Time budget</span>
+          <input id="companyResearchTimeBudget" type="number" min="1" max="240" step="1" value="30">
         </label>
         <label class="filter-field campaign-notes">
           <span>Notes</span>
           <input id="companyResearchNotes" type="text" placeholder="Optional constraints or preferences">
         </label>
       </div>
-      ${result ? `
+      ${runId ? `
         <div class="campaign-result">
-          <strong>${escapeHtml(result.run_id)}</strong>
-          <p>${escapeHtml(result.next_action)}</p>
-          <code>${escapeHtml(result.output_path)}</code>
+          <strong>${escapeHtml(runId)}</strong>
+          <p>${escapeHtml(status?.status || result?.next_action || "Run loaded from local state. Import artifacts to update backend records.")}</p>
+          <code>${escapeHtml(outputPath || `runs/${runId}/output`)}</code>
+          ${status ? `
+            <div class="campaign-status-grid">
+              <span>${statusTag(status.status)}</span>
+              <span>${escapeHtml(String(counts.companies || 0))} companies</span>
+              <span>${escapeHtml(String(counts.contacts || 0))} contacts</span>
+              <span>${escapeHtml(String(counts.fit_evaluations || 0))} fit evaluations</span>
+              <span>${escapeHtml(importState.run_status || "not imported")}</span>
+              <span>${escapeHtml(String(status.validation?.passed || 0))} valid files</span>
+            </div>
+            <p class="muted">${escapeHtml([updatedAt ? `Updated ${updatedAt}` : "", pollLabel].filter(Boolean).join(" · "))}</p>
+          ` : ""}
+          <div class="campaign-links">
+            <button class="link-button" type="button" data-section-link="companies" data-run-filter="${escapeHtml(runId)}">Companies</button>
+            <button class="link-button" type="button" data-section-link="contacts" data-run-filter="${escapeHtml(runId)}">Contacts</button>
+            <button class="link-button" type="button" data-section-link="fit" data-run-filter="${escapeHtml(runId)}">Fit evaluations</button>
+            <button class="link-button" type="button" data-section-link="runs" data-run-filter="${escapeHtml(runId)}">Run details</button>
+          </div>
         </div>
       ` : ""}
     </section>
@@ -984,7 +1098,28 @@ function bindOnboardingControls() {
   document.querySelectorAll("[data-artifact-view]").forEach((button) => {
     button.addEventListener("click", () => onboardingViewArtifact(button.dataset.artifactView));
   });
-  document.querySelector("#companyResearchPrepare")?.addEventListener("click", () => companyResearchPrepare());
+  const companyRunInput = document.querySelector("#companyResearchRunId");
+  if (companyRunInput) {
+    companyRunInput.addEventListener("change", () => {
+      state.campaign.runId = companyRunInput.value.trim();
+      if (state.campaign.runId) localStorage.setItem("companyResearchRunId", state.campaign.runId);
+      state.campaign.status = null;
+    });
+  }
+  document.querySelector("#companyResearchLoad")?.addEventListener("click", () => companyResearchLoad());
+  document.querySelector("#companyResearchImport")?.addEventListener("click", () => companyResearchImport());
+  document.querySelector("#companyResearchLaunch")?.addEventListener("click", () => companyResearchLaunch());
+  document.querySelectorAll("[data-section-link]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.sectionLink;
+      const runFilter = button.dataset.runFilter;
+      if (runFilter) {
+        state.filters[target] = { ...(state.filters[target] || {}), run_id: runFilter };
+      }
+      state.activeSection = target;
+      refresh();
+    });
+  });
   document.querySelector("#onboardingResumeUpload")?.addEventListener("change", (event) => onboardingUploadInputFile(event));
   document.querySelector("#onboardingComposer")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -992,31 +1127,258 @@ function bindOnboardingControls() {
   });
 }
 
-async function companyResearchPrepare() {
+async function companyResearchLaunch() {
   const runId = document.querySelector("#companyResearchRunId")?.value?.trim() || null;
   const roleFocus = document.querySelector("#companyResearchRoleFocus")?.value?.trim() || "Profile-aligned roles";
-  const locations = (document.querySelector("#companyResearchLocations")?.value || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const maxCompanies = Number.parseInt(document.querySelector("#companyResearchMaxCompanies")?.value || "10", 10);
+  const timeBudget = Number.parseInt(document.querySelector("#companyResearchTimeBudget")?.value || "30", 10);
   const notes = document.querySelector("#companyResearchNotes")?.value?.trim() || null;
-  setOnboardingStatus("Preparing company research run...");
+  setOnboardingStatus("Launching company research run...");
   try {
-    const result = await fetchJson("/campaigns/company-research", {
+    const prepared = await fetchJson("/campaigns/company-research", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         run_id: runId,
         role_focus: roleFocus,
-        locations,
-        max_companies: Number.isFinite(maxCompanies) ? maxCompanies : 10,
+        time_budget_minutes: Number.isFinite(timeBudget) ? timeBudget : 30,
         notes,
       }),
     });
-    state.campaign.lastResult = result;
-    state.onboarding.lastResult = result;
-    rerenderActiveOnboarding("Company research run prepared.");
+    const launched = await fetchJson(`/campaigns/company-research/${encodeURIComponent(prepared.run_id)}/launch`, { method: "POST" });
+    const status = await fetchJson(`/campaigns/company-research/${encodeURIComponent(prepared.run_id)}/status`);
+    state.campaign.runId = prepared.run_id;
+    localStorage.setItem("companyResearchRunId", prepared.run_id);
+    state.campaign.lastResult = { ...prepared, launch: launched };
+    state.campaign.status = status;
+    state.onboarding.lastResult = state.campaign.lastResult;
+    startCompanyResearchPolling();
+    rerenderActiveOnboarding("Company research launched.");
+    elements.detailJson.textContent = JSON.stringify({ prepared, launched, status }, null, 2);
+  } catch (error) {
+    showOnboardingError(error);
+  }
+}
+
+function isCompanyResearchTerminal(status) {
+  const value = status?.status || status?.import_state?.run_status || "";
+  return ["imported", "imported_with_errors", "import_failed", "research_failed", "failed"].includes(value);
+}
+
+function isApplicationDraftTerminal(status) {
+  const value = status?.status || status?.import_state?.run_status || "";
+  return ["imported", "imported_with_errors", "import_failed", "application_draft_failed", "failed"].includes(value);
+}
+
+function applicationDraftProgressLabel(status) {
+  if (!status) return "Application draft status unavailable";
+  const counts = status.artifact_counts || {};
+  const valid = status.validation?.passed || 0;
+  const failed = status.validation?.failed || 0;
+  return [
+    status.status || "unknown",
+    `${counts.contact_candidate || 0} contact`,
+    `${counts.email_draft || 0} draft`,
+    `${counts.cv_pdf || 0} PDF`,
+    `${valid} valid`,
+    failed ? `${failed} failed` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function stopApplicationDraftPolling() {
+  if (!state.applicationDraft.pollTimer) return;
+  clearInterval(state.applicationDraft.pollTimer);
+  state.applicationDraft.pollTimer = null;
+}
+
+function startApplicationDraftPolling(runId) {
+  if (!runId) return;
+  state.applicationDraft.runId = runId;
+  stopApplicationDraftPolling();
+  state.applicationDraft.pollTimer = setInterval(() => {
+    applicationDraftRefreshStatus(runId, { quiet: true });
+  }, applicationDraftStatusIntervalMs);
+}
+
+async function applicationDraftRefreshStatus(runId, { quiet = false } = {}) {
+  if (!runId) return null;
+  try {
+    const status = await fetchJson(`/application-drafts/${encodeURIComponent(runId)}/status`);
+    state.applicationDraft.status = status;
+    if (isApplicationDraftTerminal(status)) {
+      stopApplicationDraftPolling();
+    }
+    const label = applicationDraftProgressLabel(status);
+    elements.apiState.textContent = isApplicationDraftTerminal(status) ? `Application draft done: ${label}` : `Application draft running: ${label}`;
+    elements.apiState.className = isApplicationDraftTerminal(status) ? "state-pill ok" : "state-pill";
+    if (!quiet || elements.detailSubtitle.textContent === "Application draft progress") {
+      elements.detailSubtitle.textContent = "Application draft progress";
+      elements.detailJson.textContent = JSON.stringify(status, null, 2);
+    }
+    return status;
+  } catch (error) {
+    if (!quiet) {
+      elements.apiState.textContent = "Application draft status failed";
+      elements.apiState.className = "state-pill error";
+      elements.detailSubtitle.textContent = "Application draft status error";
+      elements.detailJson.textContent = error.stack || error.message;
+    }
+    return null;
+  }
+}
+
+function isApplicationDraftBatchTerminal(batch) {
+  if (!batch) return true;
+  return batch.status === "completed" || ((batch.queued_count || 0) + (batch.launched_count || 0) === 0);
+}
+
+function applicationDraftBatchProgressLabel(batch) {
+  if (!batch) return "Application draft batch unavailable";
+  return [
+    `${batch.queued_count || 0} queued`,
+    `${batch.launched_count || 0} running`,
+    `${batch.completed_count || 0} completed`,
+    `${batch.skipped_count || 0} skipped`,
+    `${batch.failed_count || 0} failed`,
+  ].join(" · ");
+}
+
+function stopApplicationDraftBatchPolling() {
+  if (!state.applicationDraft.batchPollTimer) return;
+  clearInterval(state.applicationDraft.batchPollTimer);
+  state.applicationDraft.batchPollTimer = null;
+}
+
+function startApplicationDraftBatchPolling(batchId) {
+  if (!batchId) return;
+  stopApplicationDraftBatchPolling();
+  state.applicationDraft.batchPollTimer = setInterval(() => {
+    applicationDraftBatchRefreshStatus(batchId, { quiet: true });
+  }, applicationDraftStatusIntervalMs);
+}
+
+async function applicationDraftBatchRefreshStatus(batchId, { quiet = false } = {}) {
+  if (!batchId) return null;
+  try {
+    const batch = await fetchJson(`/application-drafts/batches/${encodeURIComponent(batchId)}`);
+    state.applicationDraftBatch = batch;
+    const label = applicationDraftBatchProgressLabel(batch);
+    elements.apiState.textContent = isApplicationDraftBatchTerminal(batch)
+      ? `Application draft batch done: ${label}`
+      : `Application draft batch running: ${label}`;
+    elements.apiState.className = isApplicationDraftBatchTerminal(batch) ? "state-pill ok" : "state-pill";
+    if (isApplicationDraftBatchTerminal(batch)) {
+      stopApplicationDraftBatchPolling();
+    }
+    if (!quiet || elements.detailSubtitle.textContent === "Application draft batch progress") {
+      elements.detailSubtitle.textContent = "Application draft batch progress";
+      elements.detailJson.textContent = JSON.stringify(batch, null, 2);
+    }
+    return batch;
+  } catch (error) {
+    if (!quiet) {
+      elements.apiState.textContent = "Application draft batch status failed";
+      elements.apiState.className = "state-pill error";
+      elements.detailSubtitle.textContent = "Application draft batch status error";
+      elements.detailJson.textContent = error.stack || error.message;
+    }
+    return null;
+  }
+}
+
+function stopCompanyResearchPolling() {
+  if (!state.campaign.pollTimer) return;
+  clearInterval(state.campaign.pollTimer);
+  state.campaign.pollTimer = null;
+}
+
+function startCompanyResearchPolling() {
+  if (!state.campaign.runId) return;
+  stopCompanyResearchPolling();
+  state.campaign.pollTimer = setInterval(() => {
+    companyResearchRefreshStatus({ quiet: true });
+  }, companyResearchStatusIntervalMs);
+}
+
+async function companyResearchRefreshStatus({ quiet = false } = {}) {
+  const runId = state.campaign.runId;
+  if (!runId) return null;
+  try {
+    const status = await fetchJson(`/campaigns/company-research/${encodeURIComponent(runId)}/status`);
+    state.campaign.status = status;
+    state.campaign.lastResult = {
+      ...(state.campaign.lastResult || {}),
+      run_id: runId,
+      output_path: status.import_state?.output_path || `runs/${runId}/output`,
+    };
+    if (isCompanyResearchTerminal(status)) {
+      stopCompanyResearchPolling();
+    }
+    if (currentSection().custom === "profileShell") {
+      renderProfileAndChat();
+      bindOnboardingControls();
+    }
+    if (!quiet) {
+      elements.detailJson.textContent = JSON.stringify(status, null, 2);
+    }
+    return status;
+  } catch (error) {
+    if (!quiet) showOnboardingError(error);
+    return null;
+  }
+}
+
+function syncCompanyResearchRunId() {
+  const input = document.querySelector("#companyResearchRunId");
+  state.campaign.runId = input?.value?.trim() || state.campaign.runId || "";
+  if (state.campaign.runId) localStorage.setItem("companyResearchRunId", state.campaign.runId);
+  return state.campaign.runId;
+}
+
+async function companyResearchLoad() {
+  const runId = syncCompanyResearchRunId();
+  if (!runId) {
+    setOnboardingStatus("Enter a company research run ID first.", "error");
+    return;
+  }
+  setOnboardingStatus("Loading company research run...");
+  try {
+    const status = await companyResearchRefreshStatus();
+    if (!status) return;
+    state.campaign.status = status;
+    state.campaign.lastResult = {
+      ...(state.campaign.lastResult || {}),
+      run_id: runId,
+      output_path: status.import_state?.output_path || `runs/${runId}/output`,
+    };
+    if (!isCompanyResearchTerminal(status)) startCompanyResearchPolling();
+    rerenderActiveOnboarding("Company research run loaded.");
+    elements.detailJson.textContent = JSON.stringify(status, null, 2);
+  } catch (error) {
+    showOnboardingError(error);
+  }
+}
+
+async function companyResearchImport() {
+  const runId = syncCompanyResearchRunId();
+  if (!runId) {
+    setOnboardingStatus("Enter a company research run ID first.", "error");
+    return;
+  }
+  setOnboardingStatus("Importing company research artifacts...");
+  try {
+    const result = await fetchJson(`/campaigns/company-research/${encodeURIComponent(runId)}/import`, { method: "POST" });
+    state.campaign.status = result.status;
+    state.campaign.lastResult = {
+      ...(state.campaign.lastResult || {}),
+      run_id: runId,
+      output_path: result.status?.import_state?.output_path || `runs/${runId}/output`,
+    };
+    if (isCompanyResearchTerminal(result.status)) {
+      stopCompanyResearchPolling();
+    } else {
+      startCompanyResearchPolling();
+    }
+    rerenderActiveOnboarding(result.import_result?.run?.status || "Company research artifacts imported.");
     elements.detailJson.textContent = JSON.stringify(result, null, 2);
   } catch (error) {
     showOnboardingError(error);
@@ -1376,6 +1738,7 @@ function renderTable(section, rows) {
     }
     elements.tableBody.append(tr);
   });
+  bindTableActions();
 }
 
 async function renderDetail() {
@@ -1417,6 +1780,387 @@ function renderError(error) {
 
 function mainCell(primary, secondary) {
   return `<span class="cell-main"><strong>${escapeHtml(primary ?? "None")}</strong><span>${escapeHtml(secondary ?? "")}</span></span>`;
+}
+
+function companySelectCheckbox(row) {
+  const checked = state.selectedCompanyIds.has(row.company_id) ? " checked" : "";
+  const disabled = row.can_draft_application ? "" : " disabled";
+  const title = row.can_draft_application ? "Select company" : applicationDraftBlockLabel(row.application_draft_block_reason);
+  return `<input type="checkbox" data-company-select="${escapeHtml(row.company_id)}" aria-label="Select company" title="${escapeHtml(title)}"${checked}${disabled}>`;
+}
+
+function sendIntentSelectCheckbox(intentId) {
+  const checked = state.selectedIntentIds.has(intentId) ? " checked" : "";
+  return `<input type="checkbox" data-intent-select="${escapeHtml(intentId)}" aria-label="Select send intent"${checked}>`;
+}
+
+function draftStatus(hasApplicationDraft) {
+  return hasApplicationDraft ? tag("drafted", "ok") : tag("not drafted", "warn");
+}
+
+function companyOutreachState(row) {
+  const items = [
+    row.has_application_draft ? tag("drafted", "ok") : tag("no draft", "warn"),
+    row.is_active_profile_scope ? tag("in scope", "ok") : tag("out of scope", "danger"),
+    row.has_send_intent
+      ? tag(row.send_gate_status ? `queued: ${row.send_gate_status}` : row.send_intent_status || "queued", sendStateTone(row))
+      : tag("not queued", "warn"),
+    row.has_been_contacted ? tag(row.outreach_status || "contacted", "ok") : tag("not contacted", ""),
+  ];
+  return `<span class="tags workflow-tags">${items.join("")}</span>`;
+}
+
+function sendStateTone(row) {
+  const value = `${row.send_gate_status || ""} ${row.send_intent_status || ""}`;
+  if (value.includes("blocked") || value.includes("failed")) return "danger";
+  if (value.includes("needs_review") || value.includes("disabled")) return "warn";
+  return "ok";
+}
+
+function companyIssues(row) {
+  const issueTags = [];
+  if (Array.isArray(row.policy_conflicts) && row.policy_conflicts.length) {
+    issueTags.push(tag(`${row.policy_conflicts.length} conflict${row.policy_conflicts.length === 1 ? "" : "s"}`, "danger"));
+  }
+  if (Array.isArray(row.review_flags) && row.review_flags.length) {
+    issueTags.push(tag(`${row.review_flags.length} review`, "warn"));
+  }
+  return issueTags.length ? `<span class="tags">${issueTags.join("")}</span>` : tag("clear", "ok");
+}
+
+function applicationDraftButton(row) {
+  if (row.has_application_draft) {
+    return `<button class="action-button compact" type="button" disabled>Drafted</button>`;
+  }
+  if (!row.can_draft_application) {
+    return `<button class="action-button compact" type="button" disabled>${escapeHtml(applicationDraftBlockLabel(row.application_draft_block_reason))}</button>`;
+  }
+  return `<button class="action-button compact" type="button" data-application-draft-company="${escapeHtml(row.company_id)}">Draft</button>`;
+}
+
+function applicationDraftBlockLabel(reason) {
+  if (reason === "not_in_active_profile_scope") return "Out of scope";
+  if (reason === "draft_already_exists") return "Drafted";
+  if (reason === "policy_conflict_present") return "Policy conflict";
+  return "Not draftable";
+}
+
+function sendIntentButton(intentId) {
+  return `<button class="action-button compact" type="button" data-send-intent="${escapeHtml(intentId)}">Send</button>`;
+}
+
+function queueDraftButton(draftId) {
+  const row = state.rows.find((item) => item.draft_id === draftId);
+  if (row?.queued_send_intent_id) {
+    const label = row.queued_gate_status ? `Queued: ${row.queued_gate_status}` : "Queued";
+    return `<button class="action-button compact" type="button" disabled>${escapeHtml(label)}</button>`;
+  }
+  return `<button class="action-button compact" type="button" data-queue-draft="${escapeHtml(draftId)}">Queue</button>`;
+}
+
+function outreachResolveButton(row) {
+  if (!["outcome_uncertain", "sent", "provider_accepted"].includes(row.status)) {
+    return `<button class="action-button compact" type="button" disabled>Resolve</button>`;
+  }
+  return `<button class="action-button compact" type="button" data-outreach-resolve="${escapeHtml(row.outreach_record_id)}">Resolve</button>`;
+}
+
+function attachmentLinks(row) {
+  const attachments = Array.isArray(row.attachments) ? row.attachments : [];
+  const links = attachments
+    .filter((item) => item && typeof item === "object" && item.attachment_id)
+    .map((item) => {
+      const href = `/application-drafts/${encodeURIComponent(row.draft_id)}/attachments/${encodeURIComponent(item.attachment_id)}`;
+      const label = item.kind === "cv" ? "Open PDF" : item.attachment_id;
+      return `<a class="tag ok" href="${href}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+    });
+  if (!links.length) return `<span class="muted">None</span>`;
+  return `<span class="tags">${links.join("")}</span>`;
+}
+
+function bindTableActions() {
+  document.querySelectorAll("[data-company-select]").forEach((checkbox) => {
+    checkbox.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    checkbox.addEventListener("change", (event) => {
+      event.stopPropagation();
+      const companyId = checkbox.dataset.companySelect;
+      if (!companyId) return;
+      if (checkbox.checked) {
+        state.selectedCompanyIds.add(companyId);
+      } else {
+        state.selectedCompanyIds.delete(companyId);
+      }
+    });
+  });
+  document.querySelectorAll("[data-intent-select]").forEach((checkbox) => {
+    checkbox.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    checkbox.addEventListener("change", (event) => {
+      event.stopPropagation();
+      const intentId = checkbox.dataset.intentSelect;
+      if (!intentId) return;
+      if (checkbox.checked) {
+        state.selectedIntentIds.add(intentId);
+      } else {
+        state.selectedIntentIds.delete(intentId);
+      }
+    });
+  });
+  document.querySelectorAll("[data-application-draft-company]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await applicationDraftLaunchForCompany(button.dataset.applicationDraftCompany);
+    });
+  });
+  document.querySelectorAll("[data-queue-draft]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const draftId = button.dataset.queueDraft;
+      if (!draftId) return;
+      await queueDraftForSend(draftId);
+    });
+  });
+  document.querySelectorAll("[data-send-intent]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const intentId = button.dataset.sendIntent;
+      if (!intentId) return;
+      await sendIntentBatch([intentId]);
+    });
+  });
+  document.querySelectorAll("[data-outreach-resolve]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const outreachRecordId = button.dataset.outreachResolve;
+      if (!outreachRecordId) return;
+      await resolveOutreachRecord(outreachRecordId);
+    });
+  });
+}
+
+async function sendSelectedIntents() {
+  const intentIds = Array.from(state.selectedIntentIds);
+  if (!intentIds.length) {
+    elements.apiState.textContent = "Select send intents first";
+    elements.apiState.className = "state-pill error";
+    return;
+  }
+  await sendIntentBatch(intentIds);
+}
+
+async function sendAllShownIntents() {
+  const intentIds = state.rows.map((row) => row.intent_id).filter(Boolean);
+  if (!intentIds.length) {
+    elements.apiState.textContent = "No send intents shown";
+    elements.apiState.className = "state-pill error";
+    return;
+  }
+  await sendIntentBatch(intentIds);
+}
+
+async function queueAllShownDrafts() {
+  const draftIds = state.rows.filter((row) => !row.queued_send_intent_id).map((row) => row.draft_id).filter(Boolean);
+  if (!draftIds.length) {
+    elements.apiState.textContent = "No unqueued drafts shown";
+    elements.apiState.className = "state-pill warn";
+    return;
+  }
+  await queueDraftsForSend(draftIds);
+}
+
+async function queueDraftForSend(draftId) {
+  await queueDraftsForSend([draftId]);
+}
+
+async function queueDraftsForSend(draftIds) {
+  const ok = window.confirm(`Queue ${draftIds.length} draft${draftIds.length === 1 ? "" : "s"} for backend send checks?`);
+  if (!ok) return;
+  elements.apiState.textContent = "Queueing drafts";
+  elements.apiState.className = "state-pill";
+  try {
+    const reviewerId = localStorage.getItem("sendReviewerId") || "local-user";
+    localStorage.setItem("sendReviewerId", reviewerId);
+    const results = [];
+    for (const draftId of draftIds) {
+      results.push(
+        await fetchJson(`/email-drafts/${encodeURIComponent(draftId)}/queue-send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reviewer_id: reviewerId }),
+        }),
+      );
+    }
+    const passed = results.filter((result) => result.gate_result.status === "passed_evaluate_only").length;
+    elements.apiState.textContent = `Queued ${results.length}: ${passed} passed checks`;
+    elements.apiState.className = passed === results.length ? "state-pill ok" : "state-pill warn";
+    elements.detailSubtitle.textContent = "Queued send intents";
+    elements.detailJson.textContent = JSON.stringify(results, null, 2);
+    state.activeSection = "queue";
+    state.selectedIndex = null;
+    await refresh();
+  } catch (error) {
+    elements.apiState.textContent = "Queueing failed";
+    elements.apiState.className = "state-pill error";
+    elements.detailSubtitle.textContent = "Queue error";
+    elements.detailJson.textContent = error.stack || error.message;
+  }
+}
+
+async function sendIntentBatch(intentIds) {
+  const delivery = state.emailDelivery || (await fetchJson("/email-delivery/settings"));
+  state.emailDelivery = delivery;
+  const ok = window.confirm(
+    `Approve and send ${intentIds.length} frozen email payload${intentIds.length === 1 ? "" : "s"}?\n\n${deliveryConfirmText(delivery)}`,
+  );
+  if (!ok) return;
+  elements.apiState.textContent = "Submitting send batch";
+  elements.apiState.className = "state-pill";
+  try {
+    const reviewerId = localStorage.getItem("sendReviewerId") || "local-user";
+    localStorage.setItem("sendReviewerId", reviewerId);
+    const result = await fetchJson("/send-batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ intent_ids: intentIds, reviewer_id: reviewerId }),
+    });
+    elements.apiState.textContent = `Send batch ${result.status}: ${result.sent_count} sent, ${result.blocked_count} blocked`;
+    elements.apiState.className = result.blocked_count ? "state-pill warn" : "state-pill ok";
+    elements.detailSubtitle.textContent = "Send batch result";
+    elements.detailJson.textContent = JSON.stringify(result, null, 2);
+    await refresh();
+  } catch (error) {
+    elements.apiState.textContent = "Send batch failed";
+    elements.apiState.className = "state-pill error";
+    elements.detailSubtitle.textContent = "Send batch error";
+    elements.detailJson.textContent = error.stack || error.message;
+  }
+}
+
+function deliveryStateLabel(delivery) {
+  if (!delivery) return "API connected";
+  if (!delivery.sending_enabled) return "Sending disabled";
+  if (delivery.mode === "gmail_sandbox") {
+    return delivery.sandbox_recipient ? `Gmail sandbox: ${delivery.sandbox_recipient}` : "Gmail sandbox missing recipient";
+  }
+  if (delivery.mode === "gmail_real_recipients") return "Gmail real-recipient sending enabled";
+  return `Email delivery blocked: ${delivery.provider}`;
+}
+
+function deliveryStateClass(delivery) {
+  if (!delivery || !delivery.sending_enabled) return "state-pill warn";
+  if (delivery.mode === "gmail_sandbox" && delivery.sandbox_recipient) return "state-pill ok";
+  if (delivery.mode === "gmail_real_recipients") return "state-pill warn";
+  return "state-pill error";
+}
+
+function deliveryConfirmText(delivery) {
+  if (!delivery.sending_enabled) {
+    return "Sending is disabled. The backend will freeze an approval snapshot and skip provider delivery.";
+  }
+  if (delivery.mode === "gmail_sandbox") {
+    return `Gmail sandbox mode is active. Messages will be sent through Gmail to ${delivery.sandbox_recipient || "an unconfigured sandbox recipient"}, not to the company recipients.`;
+  }
+  if (delivery.mode === "gmail_real_recipients") {
+    return "Gmail real-recipient mode is active. Messages may be delivered to the company recipients after the gate and reservation pass.";
+  }
+  return "Email delivery is blocked by configuration.";
+}
+
+async function resolveOutreachRecord(outreachRecordId) {
+  const resolution = window.prompt("Resolution: mark_sent, mark_not_sent, keep_blocked, or void_record", "keep_blocked");
+  if (!resolution) return;
+  const comment = window.prompt("Resolution comment");
+  if (!comment) return;
+  elements.apiState.textContent = "Resolving outreach record";
+  elements.apiState.className = "state-pill";
+  try {
+    const reviewerId = localStorage.getItem("sendReviewerId") || "local-user";
+    const result = await fetchJson(`/outreach-records/${encodeURIComponent(outreachRecordId)}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resolution, reviewer_id: reviewerId, comment }),
+    });
+    elements.apiState.textContent = `Outreach resolved: ${result.outreach_record.status}`;
+    elements.apiState.className = "state-pill ok";
+    elements.detailSubtitle.textContent = "Outreach resolution";
+    elements.detailJson.textContent = JSON.stringify(result, null, 2);
+    await refresh();
+  } catch (error) {
+    elements.apiState.textContent = "Outreach resolution failed";
+    elements.apiState.className = "state-pill error";
+    elements.detailSubtitle.textContent = "Outreach resolution error";
+    elements.detailJson.textContent = error.stack || error.message;
+  }
+}
+
+async function applicationDraftLaunchForCompany(companyId) {
+  if (!companyId) return;
+  elements.apiState.textContent = "Launching application draft";
+  elements.apiState.className = "state-pill";
+  try {
+    const prepared = await fetchJson("/application-drafts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company_id: companyId }),
+    });
+    const launched = await fetchJson(`/application-drafts/${encodeURIComponent(prepared.run_id)}/launch`, { method: "POST" });
+    const status = await fetchJson(`/application-drafts/${encodeURIComponent(prepared.run_id)}/status`);
+    state.applicationDraft.runId = prepared.run_id;
+    state.applicationDraft.status = status;
+    startApplicationDraftPolling(prepared.run_id);
+    elements.apiState.textContent = `Application draft running: ${applicationDraftProgressLabel(status)}`;
+    elements.apiState.className = "state-pill ok";
+    elements.detailSubtitle.textContent = "Application draft progress";
+    elements.detailJson.textContent = JSON.stringify({ prepared, launched, status }, null, 2);
+  } catch (error) {
+    elements.apiState.textContent = "Application draft failed";
+    elements.apiState.className = "state-pill error";
+    elements.detailSubtitle.textContent = "Application draft error";
+    elements.detailJson.textContent = error.stack || error.message;
+  }
+}
+
+async function applicationDraftBatchSelected() {
+  const draftableIds = new Set(state.rows.filter((row) => row.can_draft_application).map((row) => row.company_id));
+  const companyIds = Array.from(state.selectedCompanyIds).filter((companyId) => draftableIds.has(companyId));
+  if (!companyIds.length) {
+    elements.apiState.textContent = "Select draftable in-scope companies first";
+    elements.apiState.className = "state-pill error";
+    return;
+  }
+  await applicationDraftBatchLaunch({ mode: "selected", company_ids: companyIds });
+}
+
+async function applicationDraftBatchAllMissing() {
+  const ok = window.confirm("Draft application packages for all companies in the active profile scope that do not have a draft yet?");
+  if (!ok) return;
+  await applicationDraftBatchLaunch({ mode: "all_missing" });
+}
+
+async function applicationDraftBatchLaunch(payload) {
+  elements.apiState.textContent = "Launching application draft batch";
+  elements.apiState.className = "state-pill";
+  try {
+    const batch = await fetchJson("/application-drafts/batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ concurrency: 2, ...payload }),
+    });
+    state.applicationDraftBatch = batch;
+    startApplicationDraftBatchPolling(batch.batch_id);
+    elements.apiState.textContent = `Application draft batch queued: ${applicationDraftBatchProgressLabel(batch)}`;
+    elements.apiState.className = "state-pill ok";
+    elements.detailSubtitle.textContent = "Application draft batch progress";
+    elements.detailJson.textContent = JSON.stringify(batch, null, 2);
+  } catch (error) {
+    elements.apiState.textContent = "Application draft batch failed";
+    elements.apiState.className = "state-pill error";
+    elements.detailSubtitle.textContent = "Application draft batch error";
+    elements.detailJson.textContent = error.stack || error.message;
+  }
 }
 
 function text(value, className = "") {

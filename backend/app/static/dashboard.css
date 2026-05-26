@@ -179,6 +179,12 @@ select {
   background: #fef2f2;
 }
 
+.state-pill.warn {
+  color: var(--warn);
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
 .action-button {
   min-height: 36px;
   border: 1px solid var(--border);
@@ -273,11 +279,13 @@ select {
 }
 
 body[data-section="profile"] .content-grid,
+body[data-section="companies"] .content-grid,
 body[data-section="onboarding"] .content-grid {
   grid-template-columns: minmax(0, 1fr);
 }
 
 body[data-section="profile"] .detail-panel,
+body[data-section="companies"] .detail-panel,
 body[data-section="onboarding"] .detail-panel {
   display: none;
 }
@@ -322,6 +330,7 @@ table {
 }
 
 body[data-section="profile"] table,
+body[data-section="companies"] table,
 body[data-section="onboarding"] table {
   min-width: 0;
 }
@@ -375,6 +384,10 @@ tbody tr.selected {
   flex-wrap: wrap;
   gap: 5px;
   max-width: 280px;
+}
+
+.workflow-tags {
+  max-width: 360px;
 }
 
 .tag.danger {
@@ -607,6 +620,13 @@ tbody tr.selected {
   font-size: 16px;
 }
 
+.campaign-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .approved-snapshot-grid,
 .campaign-form {
   display: grid;
@@ -665,6 +685,35 @@ tbody tr.selected {
   color: var(--strong);
   font-size: 12px;
   word-break: break-word;
+}
+
+.campaign-status-grid,
+.campaign-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.campaign-status-grid span:not(.status-tag) {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 8px;
+}
+
+.link-button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0;
 }
 
 .technical-details {

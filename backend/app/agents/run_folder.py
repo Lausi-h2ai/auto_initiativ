@@ -37,7 +37,7 @@ Write all structured task outputs under `output/`. Treat stdout as diagnostic ou
 SECRET_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        r"sk-[a-z0-9_\-]{12,}",
+        r"(?<![a-z0-9])sk-[a-z0-9_\-]{12,}",
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
         r"\b(openai_api_key|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)\b\s*[:=]",
         r"\b(password|passwd|pwd)\b\s*[:=]",

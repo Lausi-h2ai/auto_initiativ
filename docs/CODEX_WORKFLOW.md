@@ -55,6 +55,17 @@ The backend imports `output/` files by:
 - `email_drafting`
 - `send_intent`
 
+## Bulk Application Draft Efficiency
+
+Bulk application drafting must keep the model's per-company context small:
+
+- Prepare `draft_context.json` as the compact source of truth for each company.
+- Do not copy large handoff documents into every draft run by default.
+- Do not do contact research inside application draft runs; run contact research first and skip companies without imported contacts.
+- Keep batch application drafting sequential by default unless the user explicitly accepts higher usage.
+- Use a smaller low-reasoning model for routine CV/email draft production.
+- Cap tool output and extract only the facts needed for JSON/PDF artifacts.
+
 ## Instructions Template Requirements
 
 Every run instruction should include:
@@ -64,4 +75,3 @@ Every run instruction should include:
 - A reminder that Codex must not send email.
 - A reminder to mark uncertainty.
 - A reminder that backend validation is authoritative.
-

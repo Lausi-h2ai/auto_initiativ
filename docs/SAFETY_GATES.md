@@ -138,4 +138,10 @@ Gate logic must be pure with respect to the same database snapshot and input fil
 
 `AM-003-003` expanded the deterministic gate test matrix across allow, block, needs-review, and warning outcomes.
 
-This implementation does not create send reservations, call an email adapter, call Gmail, send email, or use OpenAI. Future `reserve_for_send` behavior remains locked for a later phase.
+`AM-007-002` added a private `ReserveForSendGateService` that runs deterministic checks and creates a transactional `SendReservation` before any private fake adapter handoff is possible.
+
+`AM-008-001` exposed controlled backend send batches through `/send-batches` and the dashboard send queue. A send batch freezes a reviewer approval snapshot, reruns the deterministic gate in `reserve_for_send` mode, creates a transactional reservation, and only then calls the configured provider adapter.
+
+Sending remains disabled by default. Gmail delivery requires `EMAIL_SENDING_ENABLED=true`. The default provider is `gmail_sandbox`, which rewrites the actual Gmail recipient to `GMAIL_SANDBOX_RECIPIENT` while preserving the original company recipient in the subject/body and auditable approval snapshot. Real-recipient Gmail delivery requires both `EMAIL_PROVIDER=gmail` and `EMAIL_ALLOW_REAL_RECIPIENTS=true`.
+
+The gate itself still never calls Gmail, sends email, uses OpenAI, or interprets prompts.

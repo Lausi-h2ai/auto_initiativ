@@ -86,8 +86,9 @@ Phase 1 should persist only minimal run, import, validation, and audit records. 
 4. Backend normalizes accepted records into Postgres.
 5. Backend computes gate results for any `send_intent` in `evaluate_only` mode by default.
 6. Dashboard displays imported records, blocks, warnings, and audit history.
-7. In dry-run mode, no email adapter is called.
-8. In a future sending mode, the backend gate must first run `reserve_for_send` and create a transactional reservation before any email adapter is called.
+7. In disabled mode, no email adapter is called.
+8. In Gmail sandbox mode, the backend sends through Gmail only after explicit dashboard approval, a frozen approval snapshot, `reserve_for_send`, and a transactional reservation. The provider recipient is rewritten to the configured sandbox recipient.
+9. In real-recipient Gmail mode, the same gate and reservation path is required, plus explicit `EMAIL_ALLOW_REAL_RECIPIENTS=true`.
 
 ## Trust Boundaries
 
@@ -109,3 +110,32 @@ Trusted only after deterministic validation:
 ## Failure Defaults
 
 The system defaults to blocking, review, or dry-run when information is missing, low-confidence, contradictory, unsupported, or policy-relevant.
+
+## Email Delivery Configuration
+
+Default behavior is non-sending:
+
+```text
+EMAIL_SENDING_ENABLED=false
+EMAIL_PROVIDER=gmail_sandbox
+EMAIL_ALLOW_REAL_RECIPIENTS=false
+```
+
+Sandbox Gmail delivery for live provider testing:
+
+```text
+EMAIL_SENDING_ENABLED=true
+EMAIL_PROVIDER=gmail_sandbox
+GMAIL_SANDBOX_RECIPIENT=laurent.hug@gmx.de
+GMAIL_OAUTH_CLIENT_SECRETS_PATH=...
+GMAIL_OAUTH_TOKEN_PATH=...
+GMAIL_USER_ID=me
+```
+
+Real-recipient Gmail delivery is a separate opt-in:
+
+```text
+EMAIL_SENDING_ENABLED=true
+EMAIL_PROVIDER=gmail
+EMAIL_ALLOW_REAL_RECIPIENTS=true
+```

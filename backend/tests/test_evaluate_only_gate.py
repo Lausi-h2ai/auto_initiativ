@@ -19,6 +19,7 @@ from backend.app.db.models import (
 )
 from backend.app.gates.evaluate_only import EvaluateOnlyGateService
 from backend.app.imports.import_service import RunImportService
+from backend.app.onboarding.promotion import OnboardingPromotionService, SnapshotPromotionRequest
 from backend.app.schemas.agent_outputs import AGENT_OUTPUT_MODELS
 from backend.tests.conftest import copy_valid_run
 
@@ -27,6 +28,24 @@ def _import_valid_run(db_session, runs_root, run_id: str = "gate-valid") -> None
     copy_valid_run(runs_root, run_id)
     result = RunImportService(db_session).import_run(run_id)
     assert result.run.status == "imported"
+    promotion = OnboardingPromotionService(db_session).promote_run_snapshots(run_id, _promotion_request())
+    assert promotion.status == "approved"
+    db_session.commit()
+
+
+def _import_candidate_run(db_session, runs_root, run_id: str = "gate-valid") -> None:
+    copy_valid_run(runs_root, run_id)
+    result = RunImportService(db_session).import_run(run_id)
+    assert result.run.status == "imported"
+
+
+def _promotion_request() -> SnapshotPromotionRequest:
+    return SnapshotPromotionRequest(
+        reviewer_id="test-reviewer",
+        confirm_user_profile=True,
+        confirm_master_cv_profile=True,
+        confirm_policy=True,
+    )
 
 
 def _evaluate(db_session, intent_id: str = "intent-1"):
@@ -129,7 +148,7 @@ def test_evaluate_only_gate_blocks_duplicate_company(db_session, runs_root):
             outreach_record_id="outreach-existing-company",
             normalized_recipient_email="other@example.com",
             company_policy_key="domain:example.com",
-            status="contacted",
+            status="sent",
         )
     )
     db_session.commit()
@@ -216,6 +235,24 @@ def test_evaluate_only_gate_blocks_missing_raw_send_intent_json(db_session, runs
     assert "schema_validity" in _reason_codes(result)
 
 
+def test_evaluate_only_gate_blocks_malformed_raw_send_intent_json(db_session, runs_root):
+    _import_valid_run(db_session, runs_root)
+    send_intent = _intent(db_session)
+    send_intent.raw_json = "{"
+    db_session.add(send_intent)
+    db_session.commit()
+
+    result = _evaluate(db_session)
+
+    assert result.gate_result.status == "blocked"
+    assert "schema_invalid_json" in _reason_codes(result)
+    completed_audit = db_session.exec(
+        select(AuditLog).where(AuditLog.action == "gate_evaluation_completed").order_by(AuditLog.created_at.desc())
+    ).first()
+    assert completed_audit is not None
+    assert "schema_invalid_json" in json.loads(completed_audit.reason_codes_json)
+
+
 @pytest.mark.parametrize(
     ("mutator", "reason_code"),
     [
@@ -258,6 +295,15 @@ def test_evaluate_only_gate_blocks_policy_mismatch(db_session, runs_root):
 
     assert result.gate_result.status == "blocked"
     assert "policy_mismatch" in _reason_codes(result)
+
+
+def test_evaluate_only_gate_blocks_candidate_snapshots(db_session, runs_root):
+    _import_candidate_run(db_session, runs_root)
+
+    result = _evaluate(db_session)
+
+    assert result.gate_result.status == "blocked"
+    assert "snapshot_not_approved" in _reason_codes(result)
 
 
 @pytest.mark.parametrize(
@@ -596,6 +642,17 @@ def test_evaluate_only_gate_api_exposes_gate_result_without_send_endpoint(client
     copy_valid_run(runs_root, "gate-api")
     import_response = client.post("/runs/gate-api/import")
     assert import_response.status_code == 200
+    promotion_response = client.post(
+        "/onboarding/runs/gate-api/promote",
+        json={
+            "reviewer_id": "test-reviewer",
+            "confirm_user_profile": True,
+            "confirm_master_cv_profile": True,
+            "confirm_policy": True,
+        },
+    )
+    assert promotion_response.status_code == 200
+    assert promotion_response.json()["status"] == "approved"
 
     response = client.post("/gate/evaluations/intent-1")
 

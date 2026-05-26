@@ -10,6 +10,7 @@ Codex agents may be creative, exploratory, and language-heavy. The backend must 
 
 - Read task instructions and prepared input files.
 - Research companies and contacts.
+- Collect public career contact email addresses while crawling company sites for company research.
 - Summarize evidence with source references.
 - Evaluate fit against provided profile and policy context.
 - Draft CV variants from approved master CV claims.
@@ -55,6 +56,8 @@ When evidence is weak, the agent must:
 Every CV bullet and every user-descriptive email claim must reference approved claim IDs from the provided master CV profile snapshot.
 
 For contacts, agents should prefer publicly listed professional email addresses. Private, personal, guessed, pattern-inferred, weakly sourced, or stale emails must be marked with review flags and must not be presented as ready to send.
+
+Company research is for profile-aligned unsolicited outreach. Agents do not need to find currently open job listings before recording a company candidate, but they must still preserve evidence for why the company seems relevant.
 
 ## Boundary Violation Examples
 

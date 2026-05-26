@@ -11,7 +11,7 @@ from backend.app.core.config import get_settings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CURRENT_HEAD = "20260514_0002"
+CURRENT_HEAD = "20260525_0003"
 EXPECTED_TABLES = {
     "alembic_version",
     "runs",
@@ -29,6 +29,10 @@ EXPECTED_TABLES = {
     "imported_gate_results",
     "send_reservations",
     "outreach_records",
+    "company_identities",
+    "company_identity_aliases",
+    "send_approval_snapshots",
+    "sent_messages",
 }
 
 

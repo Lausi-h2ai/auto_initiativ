@@ -16,7 +16,8 @@ def test_schema_registry_loads_all_schemas(schemas_root):
     registry = SchemaRegistry(schemas_root=schemas_root)
     registry.load_all()
 
-    assert len(registry.schema_names) == 9
+    assert len(registry.schema_names) == 10
+    assert "onboarding_review.schema.json" in registry.schema_names
     assert "send_intent.schema.json" in registry.schema_names
 
 
@@ -162,3 +163,40 @@ def test_explicit_null_optional_fields_are_rejected_by_schema_and_pydantic(schem
     assert schema_name is not None
     with pytest.raises(ValidationError):
         AGENT_OUTPUT_MODELS[schema_name].model_validate(data)
+
+
+def test_onboarding_review_rejects_hidden_side_effects(schemas_root, tmp_path):
+    data = json.loads((FIXTURES_ROOT / "valid_run" / "output" / "onboarding_review.json").read_text(encoding="utf-8"))
+    data["items"][0]["send_email"] = True
+    fixture = tmp_path / "onboarding_review.json"
+    fixture.write_text(json.dumps(data), encoding="utf-8")
+
+    outcome = JsonValidationService(SchemaRegistry(schemas_root=schemas_root)).validate_file(fixture)
+
+    assert outcome.status == "schema_validation_failed"
+    assert "additional_property" in outcome.reason_codes
+    with pytest.raises(ValidationError):
+        AGENT_OUTPUT_MODELS["onboarding_review.schema.json"].model_validate(data)
+
+
+def test_onboarding_review_rejects_explicit_null_optional_nested_fields(schemas_root, tmp_path):
+    data = json.loads((FIXTURES_ROOT / "valid_run" / "output" / "onboarding_review.json").read_text(encoding="utf-8"))
+    data["items"][0]["related_json_pointers"] = None
+    fixture = tmp_path / "onboarding_review.json"
+    fixture.write_text(json.dumps(data), encoding="utf-8")
+
+    outcome = JsonValidationService(SchemaRegistry(schemas_root=schemas_root)).validate_file(fixture)
+
+    assert outcome.status == "schema_validation_failed"
+    with pytest.raises(ValidationError):
+        AGENT_OUTPUT_MODELS["onboarding_review.schema.json"].model_validate(data)
+
+
+@pytest.mark.parametrize("item_type", ["missing_required_information", "contradiction"])
+def test_onboarding_review_has_first_class_review_item_types(item_type):
+    data = json.loads((FIXTURES_ROOT / "valid_run" / "output" / "onboarding_review.json").read_text(encoding="utf-8"))
+    data["items"][0]["item_type"] = item_type
+
+    review = AGENT_OUTPUT_MODELS["onboarding_review.schema.json"].model_validate(data)
+
+    assert review.items[0].item_type == item_type

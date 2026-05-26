@@ -12,16 +12,16 @@ from backend.app.db import models  # noqa: F401
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_no_openai_or_gmail_dependencies_declared():
+def test_no_openai_dependency_declared_and_gmail_send_dependency_is_explicit():
     pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     dependencies = " ".join(pyproject["project"]["dependencies"]).lower()
 
     assert "openai" not in dependencies
-    assert "gmail" not in dependencies
-    assert "google-api-python-client" not in dependencies
+    assert "google-api-python-client" in dependencies
+    assert "google-auth-oauthlib" in dependencies
 
 
-def test_metadata_only_contains_operational_and_phase2_domain_tables():
+def test_metadata_contains_operational_domain_and_guarded_send_tables():
     assert set(SQLModel.metadata.tables) == {
         "runs",
         "imported_files",
@@ -38,20 +38,26 @@ def test_metadata_only_contains_operational_and_phase2_domain_tables():
         "imported_gate_results",
         "send_reservations",
         "outreach_records",
+        "company_identities",
+        "company_identity_aliases",
+        "send_approval_snapshots",
+        "sent_messages",
     }
 
 
-def test_no_email_adapter_module_exists():
+def test_real_email_provider_is_confined_to_backend_email_delivery():
     backend_files = [path.relative_to(PROJECT_ROOT).as_posix().lower() for path in (PROJECT_ROOT / "backend").rglob("*.py")]
 
-    assert not any("gmail" in path for path in backend_files)
-    assert not any("email_adapter" in path or "send_adapter" in path for path in backend_files)
+    assert not any("smtp" in path for path in backend_files)
+    assert not any("send_adapter" in path for path in backend_files)
 
 
-def test_no_email_adapter_configuration_exists():
+def test_email_adapter_configuration_defaults_to_disabled():
     config_fields = set(Settings.model_fields)
 
-    assert not any("gmail" in field for field in config_fields)
+    assert "email_sending_enabled" in config_fields
+    assert "gmail_user_id" in config_fields
     assert not any("smtp" in field for field in config_fields)
     assert "email_adapter" not in config_fields
     assert "send_adapter" not in config_fields
+    assert Settings().email_sending_enabled is False

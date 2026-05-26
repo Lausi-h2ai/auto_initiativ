@@ -1,0 +1,13 @@
+{
+  "name": "auto-initiativ-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "playwright:install": "playwright install chromium",
+    "playwright:check": "playwright --version"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0",
+    "playwright": "1.52.0"
+  }
+}

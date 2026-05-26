@@ -8,11 +8,11 @@ The product helps one user research companies, evaluate fit, tailor CV material 
 
 ## 2. Current Phase
 
-Current phase: Phase 4 and forward.
+Current phase: Phase 5 and forward.
 
-Phase 1 is complete and audited. Phase 2 is complete and audited in `docs/PHASE_2_FINAL_AUDIT.md`. Phase 3 has implemented and tested deterministic `evaluate_only` gate behavior. The backend currently provides a dry-run FastAPI skeleton, schema-backed run-output import, operational persistence, normalized Phase 2 domain persistence, deterministic normalization, database-backed dedupe constraints, API inspection endpoints, deterministic evaluate-only gate checks, and tests.
+Phase 1 is complete and audited. Phase 2 is complete and audited in `docs/PHASE_2_FINAL_AUDIT.md`. Phase 3 has implemented and tested deterministic `evaluate_only` gate behavior. Phase 4 has implemented read-only dashboard APIs and a local dashboard MVP. The backend currently provides a dry-run FastAPI skeleton, schema-backed run-output import, operational persistence, normalized Phase 2 domain persistence, deterministic normalization, database-backed dedupe constraints, API inspection endpoints, deterministic evaluate-only gate checks, a local dashboard, and tests.
 
-The next work is Phase 4: dashboard MVP. Phase 4 starts with read-only dashboard APIs and must not add email sending, Gmail access, OpenAI API usage, or an email adapter.
+The next work is Phase 5: onboarding review schemas and input manifest. Phase 5 must keep unapproved claims out of future CV tailoring and must not add email sending, Gmail access, OpenAI API usage, or an email adapter.
 
 ## 3. Non-Negotiable Safety Rules
 
@@ -99,11 +99,15 @@ Implemented after Phase 2:
 - Import-to-domain normalization for schema-valid outputs.
 - Deterministic evaluate-only safety gate.
 - Gate test matrix covering allow, block, needs-review, and warning outcomes.
+- Read-only dashboard APIs.
+- Local dashboard MVP.
+- Onboarding data contract plan.
+- Onboarding review/promotion workflow.
 
 Not implemented:
 
-- Dashboard.
-- Onboarding flow.
+- Structured onboarding review schema.
+- Onboarding input manifest.
 - Codex run orchestration.
 - Send reservation gate mode.
 - Email adapter interface.

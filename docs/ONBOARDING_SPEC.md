@@ -31,6 +31,26 @@ The onboarding agent should ask about:
 
 It may ask the user to provide old CVs, cover letters, LinkedIn text, portfolios, or other career documents.
 
+## Dashboard Chat Flow
+
+The onboarding dashboard should present a chat window backed by a long-running interactive Codex session in a local tmux pane.
+
+The backend should:
+
+- Start or attach to the configured tmux Codex session for the onboarding run.
+- Send user messages into the Codex session with `tmux set-buffer`, `tmux paste-buffer`, and Enter.
+- Capture Codex replies from the pane and append them to the onboarding transcript.
+- Persist the transcript as audit/review context, not as validated profile state.
+- Keep uploaded documents and transcript references in the run `input/` folder where practical.
+
+At the end of the chat, the backend should send a finalization instruction asking Codex to write:
+
+- `runs/<run_id>/output/user_profile.json`
+
+The file must match `schemas/user_profile.schema.json`. It must include provenance, confidence, source references, and review flags as required by the schema. If Codex lacks evidence for a field, it must either omit the optional field or mark the relevant item as `needs_review`.
+
+The backend must validate and import the JSON file through the normal import pipeline. The imported profile remains a candidate snapshot until the review/promotion workflow approves it.
+
 ## Provenance Classes
 
 Every factual claim should be classified as one of:
