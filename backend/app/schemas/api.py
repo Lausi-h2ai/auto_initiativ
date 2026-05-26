@@ -612,6 +612,33 @@ class SendBatchResponse(BaseModel):
     items: list[SendBatchItemResponse]
 
 
+class SentMessageResponse(BaseModel):
+    id: int
+    sent_message_id: str
+    approval_id: str | None = None
+    send_intent_id: int | None = None
+    external_intent_id: str | None = None
+    external_company_id: str | None = None
+    external_contact_id: str | None = None
+    external_email_draft_id: str | None = None
+    provider: str
+    provider_message_id: str | None = None
+    provider_thread_id: str | None = None
+    provider_url: str | None = None
+    status: str
+    normalized_recipient_email: str
+    company_policy_key: str
+    network_performed: bool
+    subject: str | None = None
+    body_text: str | None = None
+    body_html: str | None = None
+    attachments: list[Any]
+    provider_response: dict[str, Any]
+    error: dict[str, Any]
+    created_at: datetime
+    accepted_at: datetime | None = None
+
+
 class OutreachResolutionRequest(BaseModel):
     resolution: str = Field(pattern="^(mark_sent|mark_not_sent|keep_blocked|void_record)$")
     reviewer_id: str = Field(min_length=1, max_length=120)

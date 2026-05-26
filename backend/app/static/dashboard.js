@@ -191,6 +191,25 @@ const sections = [
     ],
   },
   {
+    id: "sent",
+    label: "Sent mail",
+    title: "Sent Mail",
+    navGroup: "Developer logs",
+    endpoint: "/sent-messages",
+    subtitle: "Provider delivery ledger with frozen approved subject/body and Gmail references",
+    filters: ["run_id", "company_id", "contact_id", "status"],
+    columns: [
+      { label: "Message", value: (r) => mainCell(r.sent_message_id, r.external_intent_id || "No intent") },
+      { label: "Recipient", value: (r) => mainCell(r.normalized_recipient_email, r.external_company_id || r.company_policy_key) },
+      { label: "Subject", value: (r) => text(r.subject || "No subject") },
+      { label: "Provider", value: (r) => mainCell(r.provider, r.provider_message_id || "No provider ID") },
+      { label: "Status", value: (r) => statusTag(r.status) },
+      { label: "Sent", value: (r) => dateTime(r.accepted_at || r.created_at) },
+      { label: "Open", value: (r) => providerLink(r) },
+    ],
+    detail: loadSentMessageDetail,
+  },
+  {
     id: "audit",
     label: "Audit logs",
     title: "Audit Logs",
@@ -1771,6 +1790,10 @@ async function loadRunDetail(row) {
   return { ...run, files, validation_results };
 }
 
+async function loadSentMessageDetail(row) {
+  return fetchJson(`/sent-messages/${encodeURIComponent(row.sent_message_id)}`);
+}
+
 function renderError(error) {
   elements.tableBody.innerHTML = `<tr><td class="error-state" colspan="8">${escapeHtml(error.message)}</td></tr>`;
   elements.recordCount.textContent = "Error";
@@ -1872,6 +1895,11 @@ function queueDraftButton(draftId) {
     return `<button class="action-button compact" type="button" disabled>${escapeHtml(label)}</button>`;
   }
   return `<button class="action-button compact" type="button" data-queue-draft="${escapeHtml(draftId)}">Queue</button>`;
+}
+
+function providerLink(row) {
+  if (!row.provider_url) return text("Unavailable");
+  return `<a class="action-button compact" href="${escapeHtml(row.provider_url)}" target="_blank" rel="noreferrer">Open</a>`;
 }
 
 function outreachResolveButton(row) {
@@ -2080,7 +2108,7 @@ function deliveryConfirmText(delivery) {
     return `Gmail sandbox mode is active. Messages will be sent through Gmail to ${delivery.sandbox_recipient || "an unconfigured sandbox recipient"}, not to the company recipients.`;
   }
   if (delivery.mode === "gmail_real_recipients") {
-    return "Gmail real-recipient mode is active. Messages may be delivered to the company recipients after the gate and reservation pass.";
+    return "Gmail real-recipient mode is active. Messages will be delivered to the company recipients after the gate and reservation pass. This is irreversible.";
   }
   return "Email delivery is blocked by configuration.";
 }

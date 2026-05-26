@@ -24,6 +24,10 @@ def copy_valid_run(runs_root: Path, run_id: str) -> Path:
 def runs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "runs"
     monkeypatch.setenv("RUNS_ROOT", str(root))
+    monkeypatch.setenv("EMAIL_SENDING_ENABLED", "false")
+    monkeypatch.setenv("EMAIL_PROVIDER", "gmail_sandbox")
+    monkeypatch.setenv("EMAIL_ALLOW_REAL_RECIPIENTS", "false")
+    monkeypatch.delenv("GMAIL_SANDBOX_RECIPIENT", raising=False)
     return root
 
 
@@ -73,4 +77,3 @@ def client(database_url: str, runs_root: Path, schemas_root: Path) -> Generator[
     app.dependency_overrides[get_session] = override_get_session
     with TestClient(app) as test_client:
         yield test_client
-

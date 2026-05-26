@@ -53,6 +53,10 @@ class _AcceptedAdapter(FakeDryRunEmailAdapter):
         )
 
 
+class _AcceptedGmailAdapter(_AcceptedAdapter):
+    provider = "gmail"
+
+
 class _KnownUnsentAdapter(FakeDryRunEmailAdapter):
     provider = "known_unsent"
 
@@ -99,6 +103,33 @@ def test_send_batch_freezes_payload_and_records_sent_ledger(db_session, runs_roo
 
     reservation = db_session.exec(select(SendReservation)).one()
     assert reservation.status == "released"
+
+
+def test_sent_messages_endpoint_exposes_frozen_payload_and_provider_link(client, db_session, runs_root):
+    _import_approved_run(db_session, runs_root)
+    adapter = _AcceptedGmailAdapter()
+
+    result = SendBatchService(db_session, adapter=adapter, sending_enabled=True).approve_and_send(["intent-1"], "local-user")
+    db_session.commit()
+
+    response = client.get("/sent-messages")
+
+    assert result.items[0].status == "sent"
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    sent = body[0]
+    assert sent["external_intent_id"] == "intent-1"
+    assert sent["normalized_recipient_email"] == "alex.hiring@example.com"
+    assert sent["subject"] == "Application for backend role"
+    assert sent["body_text"].startswith("Hello")
+    assert sent["provider"] == "gmail"
+    assert sent["provider_message_id"] == "provider-message-1"
+    assert sent["provider_url"] == "https://mail.google.com/mail/u/0/#all/thread-1"
+
+    detail = client.get(f"/sent-messages/{sent['sent_message_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["attachments"][0]["attachment_id"] == "attachment-1"
 
 
 def test_known_unsent_provider_failure_does_not_create_blocking_outreach(db_session, runs_root):

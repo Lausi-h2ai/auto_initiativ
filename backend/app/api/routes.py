@@ -126,6 +126,7 @@ from backend.app.schemas.api import (
     SendBatchItemResponse,
     SendBatchRequest,
     SendBatchResponse,
+    SentMessageResponse,
     OutreachResolutionRequest,
     OutreachResolutionResponse,
     ValidationResultResponse,
@@ -597,6 +598,47 @@ def _send_intent_response(intent: SendIntent, session: Session) -> SendIntentRes
         created_at=intent.created_at,
         updated_at=intent.updated_at,
         latest_gate_result=_latest_gate_result_summary(session, intent.intent_id),
+    )
+
+
+def _provider_url(message: SentMessage) -> str | None:
+    if message.provider != "gmail":
+        return None
+    identifier = message.provider_thread_id or message.provider_message_id
+    if not identifier:
+        return None
+    return f"https://mail.google.com/mail/u/0/#all/{identifier}"
+
+
+def _sent_message_response(message: SentMessage, session: Session) -> SentMessageResponse:
+    approval = session.get(SendApprovalSnapshot, message.approval_snapshot_id) if message.approval_snapshot_id is not None else None
+    intent = session.get(SendIntent, message.send_intent_id) if message.send_intent_id is not None else None
+    attachments = _json_loads(approval.attachments_json, []) if approval is not None else []
+    return SentMessageResponse(
+        id=message.id or 0,
+        sent_message_id=message.sent_message_id,
+        approval_id=approval.approval_id if approval is not None else None,
+        send_intent_id=message.send_intent_id,
+        external_intent_id=intent.intent_id if intent is not None else None,
+        external_company_id=intent.external_company_id if intent is not None else None,
+        external_contact_id=intent.external_contact_id if intent is not None else None,
+        external_email_draft_id=intent.external_email_draft_id if intent is not None else None,
+        provider=message.provider,
+        provider_message_id=message.provider_message_id,
+        provider_thread_id=message.provider_thread_id,
+        provider_url=_provider_url(message),
+        status=message.status,
+        normalized_recipient_email=message.normalized_recipient_email,
+        company_policy_key=message.company_policy_key,
+        network_performed=message.network_performed,
+        subject=approval.subject if approval is not None else None,
+        body_text=approval.body_text if approval is not None else None,
+        body_html=approval.body_html if approval is not None else None,
+        attachments=attachments if isinstance(attachments, list) else [],
+        provider_response=_json_loads(message.provider_response_json, {}),
+        error=_json_loads(message.error_json, {}),
+        created_at=message.created_at,
+        accepted_at=message.accepted_at,
     )
 
 
@@ -2165,6 +2207,38 @@ def get_outreach_record(outreach_record_id: str, session: Session = Depends(get_
     if record is None:
         raise _not_found("Outreach record")
     return _outreach_record_response(record)
+
+
+@router.get("/sent-messages", response_model=list[SentMessageResponse])
+def list_sent_messages(
+    run_id: str | None = None,
+    company_id: str | None = None,
+    contact_id: str | None = None,
+    status: str | None = None,
+    session: Session = Depends(get_session),
+) -> list[SentMessageResponse]:
+    messages = session.exec(select(SentMessage).order_by(SentMessage.created_at.desc(), SentMessage.sent_message_id)).all()
+    responses: list[SentMessageResponse] = []
+    for message in messages:
+        intent = session.get(SendIntent, message.send_intent_id) if message.send_intent_id is not None else None
+        if run_id is not None and (intent is None or intent.run_id != run_id):
+            continue
+        if company_id is not None and (intent is None or intent.external_company_id != company_id):
+            continue
+        if contact_id is not None and (intent is None or intent.external_contact_id != contact_id):
+            continue
+        if status is not None and message.status != status:
+            continue
+        responses.append(_sent_message_response(message, session))
+    return responses
+
+
+@router.get("/sent-messages/{sent_message_id}", response_model=SentMessageResponse)
+def get_sent_message(sent_message_id: str, session: Session = Depends(get_session)) -> SentMessageResponse:
+    message = session.exec(select(SentMessage).where(SentMessage.sent_message_id == sent_message_id)).first()
+    if message is None:
+        raise _not_found("Sent message")
+    return _sent_message_response(message, session)
 
 
 @router.post("/send-batches", response_model=SendBatchResponse)
