@@ -15,15 +15,58 @@ const applicationDraftStatusIntervalMs = 10000;
 
 const sections = [
   {
+    id: "today",
+    label: "Today",
+    title: "Today",
+    navGroup: "Workspace",
+    subtitle: "Current agent work, pending decisions, recent outcomes, and profile readiness",
+    custom: "todayWorkspace",
+    filters: [],
+    columns: [],
+  },
+  {
     id: "profile",
     label: "Profile",
-    title: "Profile Setup",
-    navGroup: "Recruiter workflow",
-    subtitle: "Create or review the local profile used for recruiting work",
+    title: "Profile",
+    navGroup: "Workspace",
+    subtitle: "Approved profile facts, constraints, source files, and Guided edits through the profile agent",
     custom: "profileShell",
     filters: [],
     columns: [],
   },
+  {
+    id: "opportunities",
+    label: "Opportunities",
+    title: "Opportunities",
+    navGroup: "Workspace",
+    subtitle: "Companies grouped by where they are in the agent workflow",
+    custom: "opportunitiesWorkspace",
+    filters: [],
+    columns: [],
+  },
+  {
+    id: "outreach",
+    label: "Outreach",
+    title: "Outreach",
+    navGroup: "Workspace",
+    subtitle: "Prepared emails, confirmations, blockers, sent mail, and contacted history",
+    custom: "outreachWorkspace",
+    filters: [],
+    columns: [],
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    title: "Advanced",
+    navGroup: "Workspace",
+    subtitle: "Raw backend records, audit logs, and troubleshooting tables",
+    custom: "advancedWorkspace",
+    filters: [],
+    columns: [],
+  },
+];
+
+const advancedSections = [
   {
     id: "companies",
     label: "Companies",
@@ -133,7 +176,7 @@ const sections = [
       { label: "Gate", value: (r) => gateSummary(r.latest_gate_result) },
       { label: "Confidence", value: (r) => confidence(r.confidence) },
       { label: "Review", value: (r) => tags(r.review_flags, "warn") },
-      { label: "Send", value: (r) => sendIntentButton(r.intent_id) },
+      { label: "Confirm", value: (r) => sendIntentButton(r.intent_id) },
     ],
   },
   {
@@ -251,7 +294,11 @@ const filterDefinitions = {
 
 const state = {
   activeSection: sections[0].id,
+  activeAdvancedSection: advancedSections[0].id,
   rows: [],
+  workspaceDraftIds: [],
+  workspaceIntentIds: [],
+  workspaceBlockedIntentIds: [],
   selectedIndex: null,
   controllers: new Map(),
   filters: {},
@@ -305,6 +352,11 @@ function currentSection() {
   return sections.find((section) => section.id === state.activeSection) || sections[0];
 }
 
+function currentDataSection() {
+  if (state.activeSection !== "advanced") return currentSection();
+  return advancedSections.find((section) => section.id === state.activeAdvancedSection) || advancedSections[0];
+}
+
 function init() {
   renderNav();
   elements.refreshButton.addEventListener("click", () => refresh());
@@ -316,7 +368,7 @@ function init() {
 
 async function refresh() {
   const section = currentSection();
-  captureFilterValues(section);
+  captureFilterValues(currentDataSection());
   document.body.dataset.section = section.id;
   elements.viewTitle.textContent = section.title;
   elements.tableTitle.textContent = section.title;
@@ -324,13 +376,28 @@ async function refresh() {
   elements.apiState.textContent = "Loading API state";
   elements.apiState.className = "state-pill";
 
+  if (section.custom === "todayWorkspace") {
+    await renderTodayWorkspace();
+    return;
+  }
+
   if (section.custom === "profileShell") {
     await renderProfileShell();
     return;
   }
 
-  if (section.custom === "onboardingChat") {
-    await renderOnboardingChat();
+  if (section.custom === "opportunitiesWorkspace") {
+    await renderOpportunitiesWorkspace();
+    return;
+  }
+
+  if (section.custom === "outreachWorkspace") {
+    await renderOutreachWorkspace();
+    return;
+  }
+
+  if (section.custom === "advancedWorkspace") {
+    await renderAdvancedWorkspace();
     return;
   }
 
@@ -461,12 +528,12 @@ function renderFilters(section) {
     const sendSelectedButton = document.createElement("button");
     sendSelectedButton.className = "action-button primary";
     sendSelectedButton.type = "button";
-    sendSelectedButton.textContent = "Send selected";
+    sendSelectedButton.textContent = "Confirm selected";
     sendSelectedButton.addEventListener("click", () => sendSelectedIntents());
     const sendAllButton = document.createElement("button");
     sendAllButton.className = "action-button primary";
     sendAllButton.type = "button";
-    sendAllButton.textContent = "Send all shown";
+    sendAllButton.textContent = "Confirm all shown";
     sendAllButton.addEventListener("click", () => sendAllShownIntents());
     wrapper.append(sendSelectedButton, sendAllButton);
   }
@@ -536,6 +603,733 @@ function applyClientFilters(section, rows) {
     if (status && row.status !== status) return false;
     return true;
   });
+}
+
+function resetWorkspaceChrome(recordLabel = "Workspace") {
+  elements.filtersPanel.hidden = true;
+  elements.filtersPanel.innerHTML = "";
+  elements.tableHead.innerHTML = "";
+  elements.recordCount.textContent = recordLabel;
+  elements.detailSubtitle.textContent = "Context";
+  elements.detailJson.textContent = "Select an item or open Advanced for raw records.";
+}
+
+function renderWorkspaceBody(html) {
+  elements.tableBody.innerHTML = `
+    <tr>
+      <td class="workspace-cell">
+        ${html}
+      </td>
+    </tr>
+  `;
+}
+
+function workspaceLoading(label) {
+  resetWorkspaceChrome(label);
+  renderWorkspaceBody(`<div class="workspace-loading">Loading ${escapeHtml(label.toLowerCase())}...</div>`);
+}
+
+async function loadWorkspaceData(options = {}) {
+  const requests = [
+    ["summary", fetchJson("/dashboard/summary")],
+    ["profile", fetchJson("/profile/summary")],
+    ["emailDelivery", fetchJson("/email-delivery/settings")],
+    ["companies", fetchJson("/companies")],
+    ["drafts", fetchJson("/email-drafts")],
+    ["sendIntents", fetchJson(apiPaths.sendIntents)],
+    ["gateResults", fetchJson("/gate-results")],
+    ["outreachRecords", fetchJson("/outreach-records")],
+    ["sentMessages", fetchJson("/sent-messages")],
+  ];
+  if (options.includeOnboarding !== false) {
+    requests.push(
+      ["onboardingStatus", fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/status`).catch(() => null)],
+      ["onboardingArtifacts", fetchJson(`/onboarding/chat/${encodeURIComponent(state.onboarding.runId)}/artifacts`).catch(() => null)],
+    );
+  }
+  if (state.campaign.runId) {
+    requests.push([
+      "campaignStatus",
+      fetchJson(`/campaigns/company-research/${encodeURIComponent(state.campaign.runId)}/status`).catch(() => null),
+    ]);
+  }
+  const entries = await Promise.all(requests.map(async ([key, promise]) => [key, await promise]));
+  return Object.fromEntries(entries);
+}
+
+async function renderTodayWorkspace() {
+  workspaceLoading("Today");
+  try {
+    const data = await loadWorkspaceData();
+    state.emailDelivery = data.emailDelivery;
+    state.onboarding.profile = data.profile;
+    state.onboarding.sessionState = data.onboardingStatus;
+    state.onboarding.artifacts = data.onboardingArtifacts?.artifacts || [];
+    state.campaign.status = data.campaignStatus;
+    renderSummary(data.summary);
+    renderWorkspaceBody(todayWorkspaceMarkup(data));
+    bindWorkspaceActions();
+    elements.apiState.textContent = deliveryStateLabel(data.emailDelivery);
+    elements.apiState.className = deliveryStateClass(data.emailDelivery);
+    elements.detailJson.textContent = JSON.stringify(todayDetail(data), null, 2);
+  } catch (error) {
+    elements.apiState.textContent = "Workspace load failed";
+    elements.apiState.className = "state-pill error";
+    renderError(error);
+  }
+}
+
+function todayWorkspaceMarkup(data) {
+  const pendingActions = buildPendingActions(data);
+  const activeWork = buildActiveWork(data);
+  const recentOutreach = [...(data.sentMessages || []), ...(data.outreachRecords || [])].slice(0, 5);
+  return `
+    <div class="assistant-workspace today-workspace">
+      <section class="workspace-hero">
+        <div>
+          <span class="profile-kicker">Today</span>
+          <h3>${escapeHtml(todayHeadline(data))}</h3>
+          <p>${escapeHtml(todaySubline(data, pendingActions))}</p>
+        </div>
+        <div class="workspace-status-strip">
+          ${statusMetric("Needs you", pendingActions.length, "warn")}
+          ${statusMetric("Companies", data.summary?.companies || 0, "")}
+          ${statusMetric("Contacted", data.summary?.outreach_records || 0, "ok")}
+          ${statusMetric("Sent", data.summary?.sent_messages || 0, "ok")}
+        </div>
+      </section>
+      <div class="workspace-columns">
+        <section class="workflow-panel action-queue-panel">
+          <div class="workflow-panel-header">
+            <div>
+              <span class="profile-kicker">Review queue</span>
+              <h3>Decisions waiting for you</h3>
+            </div>
+            <button class="action-button" type="button" data-workspace-link="outreach">Open queue</button>
+          </div>
+          ${pendingActions.length ? pendingActions.map(actionCard).join("") : emptyWorkspaceState("Nothing needs confirmation right now.", "Agents can keep researching and drafting while this stays clear.")}
+        </section>
+        <section class="workflow-panel activity-panel">
+          <div class="workflow-panel-header">
+            <div>
+              <span class="profile-kicker">Agent work</span>
+              <h3>What is happening</h3>
+            </div>
+          </div>
+          ${activeWork.length ? activeWork.map(activityCard).join("") : emptyWorkspaceState("No active agent run loaded.", "Start profile setup or launch company research from the Profile area.")}
+        </section>
+      </div>
+      <section class="workflow-panel">
+        <div class="workflow-panel-header">
+          <div>
+            <span class="profile-kicker">Recent outcomes</span>
+            <h3>Who has been contacted</h3>
+          </div>
+          <button class="action-button" type="button" data-workspace-link="outreach">View outreach</button>
+        </div>
+        ${recentOutreach.length ? recentOutreach.map(outcomeCard).join("") : emptyWorkspaceState("No contacted history yet.", "Confirmed outreach will appear here with the company and recipient.")}
+      </section>
+    </div>
+  `;
+}
+
+function todayHeadline(data) {
+  if (!data.profile?.has_approved_profile) return "Set up your profile before agents start outreach.";
+  const pending = buildPendingActions(data).length;
+  if (pending) return `${pending} item${pending === 1 ? "" : "s"} need your decision.`;
+  if (data.campaignStatus && !isCompanyResearchTerminal(data.campaignStatus)) return "Company research is running.";
+  return "Your outreach workspace is up to date.";
+}
+
+function todaySubline(data, pendingActions) {
+  if (!data.profile?.has_approved_profile) return "Chat with the profile agent, upload source documents, then approve the generated profile context.";
+  if (pendingActions.length) return "Review prepared actions, edit through the agent when something looks off, or confirm when the backend gate is clear.";
+  return "Use Opportunities to inspect leads and Outreach to confirm prepared messages.";
+}
+
+function buildPendingActions(data) {
+  const actions = [];
+  for (const intent of data.sendIntents || []) {
+    const gate = intent.latest_gate_result || latestGateForIntent(intent.intent_id, data.gateResults || []);
+    if (gate?.status === "passed_evaluate_only" || gate?.status === "reserved_for_send") {
+      actions.push({
+        type: "confirm",
+        title: intent.subject || "Prepared outreach",
+        subtitle: `${intent.normalized_recipient_email || intent.raw_recipient_email || "recipient"} · ${intent.external_company_id || "company"}`,
+        status: gate.status,
+        detail: "Backend gate passed. Review the draft and confirm when ready.",
+        action: `<button class="action-button primary compact" type="button" data-send-intent="${escapeHtml(intent.intent_id)}">Confirm</button>`,
+      });
+    } else if (gate?.status === "blocked" || gate?.status === "needs_review") {
+      actions.push({
+        type: "fix",
+        intentId: intent.intent_id,
+        title: intent.subject || intent.intent_id,
+        subtitle: intent.external_company_id || intent.normalized_recipient_email || "outreach",
+        status: gate.status,
+        detail: remediationSummary(gate),
+        remediation: remediationList(gate),
+        action: `
+          <button class="action-button compact" type="button" data-remediation-toggle="${escapeHtml(intent.intent_id)}">Show fix details</button>
+          ${intent.external_email_draft_id ? `<button class="action-button compact" type="button" data-advanced-link="drafts">Open draft</button>` : ""}
+        `,
+      });
+    }
+  }
+  const candidateCount = data.profile?.candidate_user_profiles?.length || 0;
+  if (candidateCount) {
+    actions.unshift({
+      type: "profile",
+      title: "Review profile updates",
+      subtitle: `${candidateCount} candidate profile snapshot${candidateCount === 1 ? "" : "s"}`,
+      status: "candidate",
+      detail: "Generated profile files are ready to validate and approve.",
+      action: `<button class="action-button compact" type="button" data-workspace-link="profile">Open profile</button>`,
+    });
+  }
+  return actions.slice(0, 8);
+}
+
+function confirmableIntentIds(data) {
+  return (data.sendIntents || [])
+    .filter((intent) => {
+      const gate = intent.latest_gate_result || latestGateForIntent(intent.intent_id, data.gateResults || []);
+      return gate?.status === "passed_evaluate_only" || gate?.status === "reserved_for_send";
+    })
+    .map((intent) => intent.intent_id)
+    .filter(Boolean);
+}
+
+function blockedIntentIds(data) {
+  return (data.sendIntents || [])
+    .filter((intent) => {
+      const gate = intent.latest_gate_result || latestGateForIntent(intent.intent_id, data.gateResults || []);
+      return gate?.status === "blocked" || gate?.status === "needs_review";
+    })
+    .map((intent) => intent.intent_id)
+    .filter(Boolean);
+}
+
+function buildActiveWork(data) {
+  const items = [];
+  if (data.onboardingStatus) {
+    items.push({
+      title: "Profile agent",
+      status: data.onboardingStatus.status,
+      detail: `${data.onboardingStatus.entries?.length || 0} transcript entries`,
+      action: "Profile",
+    });
+  }
+  if (data.campaignStatus) {
+    const counts = data.campaignStatus.artifact_counts || {};
+    items.push({
+      title: "Company research",
+      status: data.campaignStatus.status,
+      detail: `${counts.companies || 0} companies · ${counts.contacts || 0} contacts · ${counts.fit_evaluations || 0} evaluations`,
+      action: "Opportunities",
+    });
+  }
+  return items;
+}
+
+function todayDetail(data) {
+  return {
+    profile_ready: Boolean(data.profile?.has_approved_profile),
+    pending_actions: buildPendingActions(data).length,
+    delivery_mode: data.emailDelivery?.mode,
+    summary: data.summary,
+  };
+}
+
+async function renderOpportunitiesWorkspace() {
+  workspaceLoading("Opportunities");
+  try {
+    const data = await loadWorkspaceData({ includeOnboarding: false });
+    state.emailDelivery = data.emailDelivery;
+    renderSummary(data.summary);
+    state.rows = data.companies || [];
+    renderWorkspaceBody(opportunitiesWorkspaceMarkup(data));
+    bindWorkspaceActions();
+    elements.apiState.textContent = "Opportunities loaded";
+    elements.apiState.className = "state-pill ok";
+    elements.detailJson.textContent = JSON.stringify(opportunityCounts(data.companies || []), null, 2);
+  } catch (error) {
+    elements.apiState.textContent = "Opportunity load failed";
+    elements.apiState.className = "state-pill error";
+    renderError(error);
+  }
+}
+
+function opportunitiesWorkspaceMarkup(data) {
+  const groups = groupOpportunities(data.companies || []);
+  return `
+    <div class="assistant-workspace">
+      <section class="workspace-hero">
+        <div>
+          <span class="profile-kicker">Opportunities</span>
+          <h3>Companies move through agent-managed stages.</h3>
+          <p>Use this page to see where each company stands and start drafting for good leads.</p>
+        </div>
+        <div class="workspace-status-strip">
+          ${statusMetric("Ready", groups.ready.length, "ok")}
+          ${statusMetric("Needs contact", groups.needsContact.length, "warn")}
+          ${statusMetric("Blocked", groups.blocked.length, "danger")}
+        </div>
+      </section>
+      <div class="pipeline-grid">
+        ${opportunityColumn("Ready to draft", groups.ready, "ok")}
+        ${opportunityColumn("Needs contact", groups.needsContact, "warn")}
+        ${opportunityColumn("Drafted or queued", groups.drafted, "")}
+        ${opportunityColumn("Blocked or contacted", [...groups.blocked, ...groups.contacted], "danger")}
+      </div>
+      <section class="workflow-panel">
+        <div class="workflow-panel-header">
+          <div>
+            <span class="profile-kicker">Batch work</span>
+            <h3>Draft applications</h3>
+          </div>
+          <div class="workspace-actions">
+            <button class="action-button" type="button" data-advanced-link="companies">Open records</button>
+            <button class="action-button primary" type="button" data-draft-all-missing>Draft all missing</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function groupOpportunities(companies) {
+  const groups = { ready: [], needsContact: [], drafted: [], blocked: [], contacted: [] };
+  for (const company of companies) {
+    if (company.has_been_contacted) groups.contacted.push(company);
+    else if (hasItems(company.policy_conflicts) || company.send_gate_status === "blocked") groups.blocked.push(company);
+    else if (company.has_application_draft || company.has_send_intent) groups.drafted.push(company);
+    else if (company.application_draft_block_reason === "missing_contact" || company.contact_count === 0) groups.needsContact.push(company);
+    else groups.ready.push(company);
+  }
+  return groups;
+}
+
+function opportunityCounts(companies) {
+  const groups = groupOpportunities(companies);
+  return Object.fromEntries(Object.entries(groups).map(([key, value]) => [key, value.length]));
+}
+
+function opportunityColumn(title, rows, tone) {
+  return `
+    <section class="workflow-panel pipeline-column ${tone}">
+      <div class="workflow-panel-header">
+        <div>
+          <span class="profile-kicker">${rows.length} ${rows.length === 1 ? "company" : "companies"}</span>
+          <h3>${escapeHtml(title)}</h3>
+        </div>
+      </div>
+      <div class="pipeline-list">
+        ${rows.length ? rows.slice(0, 12).map(opportunityCard).join("") : emptyWorkspaceState("Nothing here.", "Companies will appear as agents produce or update records.")}
+      </div>
+    </section>
+  `;
+}
+
+function opportunityCard(row) {
+  return `
+    <article class="workspace-card">
+      <div>
+        <strong>${escapeHtml(row.name || row.company_id)}</strong>
+        <p>${escapeHtml(row.normalized_domain || row.company_policy_key || "No domain")}</p>
+      </div>
+      <div class="workspace-card-meta">
+        ${confidence(row.confidence)}
+        ${companyOutreachState(row)}
+      </div>
+      <div class="workspace-card-actions">
+        ${applicationDraftButton(row)}
+        <button class="action-button compact" type="button" data-advanced-link="companies">Details</button>
+      </div>
+    </article>
+  `;
+}
+
+async function renderOutreachWorkspace() {
+  workspaceLoading("Outreach");
+  try {
+    const data = await loadWorkspaceData({ includeOnboarding: false });
+    state.emailDelivery = data.emailDelivery;
+    state.rows = data.sendIntents || [];
+    state.workspaceDraftIds = (data.drafts || []).filter((draft) => !draft.queued_send_intent_id).map((draft) => draft.draft_id).filter(Boolean);
+    state.workspaceIntentIds = confirmableIntentIds(data);
+    state.workspaceBlockedIntentIds = blockedIntentIds(data);
+    renderSummary(data.summary);
+    renderWorkspaceBody(outreachWorkspaceMarkup(data));
+    bindWorkspaceActions();
+    elements.apiState.textContent = deliveryStateLabel(data.emailDelivery);
+    elements.apiState.className = deliveryStateClass(data.emailDelivery);
+    elements.detailJson.textContent = JSON.stringify({
+      delivery: data.emailDelivery,
+      send_intents: data.sendIntents?.length || 0,
+      sent_messages: data.sentMessages?.length || 0,
+      contacted: data.outreachRecords?.length || 0,
+    }, null, 2);
+  } catch (error) {
+    elements.apiState.textContent = "Outreach load failed";
+    elements.apiState.className = "state-pill error";
+    renderError(error);
+  }
+}
+
+function outreachWorkspaceMarkup(data) {
+  const pendingActions = buildPendingActions(data);
+  const confirmableCount = confirmableIntentIds(data).length;
+  const blockedCount = blockedIntentIds(data).length;
+  const drafts = data.drafts || [];
+  const unqueuedDrafts = drafts.filter((draft) => !draft.queued_send_intent_id);
+  const history = [...(data.sentMessages || []), ...(data.outreachRecords || [])].slice(0, 12);
+  return `
+    <div class="assistant-workspace">
+      <section class="workspace-hero">
+        <div>
+          <span class="profile-kicker">Outreach</span>
+          <h3>Prepared messages are ready for gate checks and confirmation.</h3>
+          <p>Recheck blocked drafts after agents update evidence or policy, then confirm the messages that pass.</p>
+        </div>
+        <div class="workspace-status-strip">
+          ${statusMetric("To confirm", pendingActions.filter((item) => item.type === "confirm").length, "warn")}
+          ${statusMetric("Needs fix", pendingActions.filter((item) => item.type === "fix").length, "danger")}
+          ${statusMetric("Unqueued drafts", unqueuedDrafts.length, "")}
+        </div>
+      </section>
+      <div class="workspace-columns">
+        <section class="workflow-panel action-queue-panel">
+          <div class="workflow-panel-header">
+            <div>
+              <span class="profile-kicker">Review queue</span>
+              <h3>Prepared actions</h3>
+            </div>
+            <div class="workspace-actions">
+              <button class="action-button" type="button" data-recheck-blocked${blockedCount ? "" : " disabled"}>${blockedCount ? "Recheck blocked drafts" : "No blocked drafts"}</button>
+              <button class="action-button primary" type="button" data-confirm-all-shown${confirmableCount ? "" : " disabled"}>${confirmableCount ? "Confirm all shown" : "No confirmable emails"}</button>
+            </div>
+          </div>
+          ${pendingActions.length ? pendingActions.map(actionCard).join("") : emptyWorkspaceState("No prepared action needs you.", "New draft confirmations and remediation tasks will appear here.")}
+        </section>
+        <section class="workflow-panel">
+          <div class="workflow-panel-header">
+            <div>
+              <span class="profile-kicker">Drafts</span>
+              <h3>Ready to queue</h3>
+            </div>
+            <button class="action-button" type="button" data-queue-all-drafts>Queue all drafts</button>
+          </div>
+          ${unqueuedDrafts.length ? unqueuedDrafts.slice(0, 8).map(draftActionCard).join("") : emptyWorkspaceState("No unqueued drafts.", "Application drafts will appear here after agents create them.")}
+        </section>
+      </div>
+      <section class="workflow-panel">
+        <div class="workflow-panel-header">
+          <div>
+            <span class="profile-kicker">Generated drafts</span>
+            <h3>Email drafts and CV attachments</h3>
+          </div>
+          <button class="action-button" type="button" data-advanced-link="drafts">Open all draft records</button>
+        </div>
+        ${drafts.length ? drafts.slice(0, 16).map(generatedDraftCard).join("") : emptyWorkspaceState("No generated email or CV drafts yet.", "When application agents write email drafts and CV PDFs, they will appear here.")}
+      </section>
+      <section class="workflow-panel">
+        <div class="workflow-panel-header">
+          <div>
+            <span class="profile-kicker">History</span>
+            <h3>Contacted and sent ledger</h3>
+          </div>
+          <button class="action-button" type="button" data-advanced-link="history">Open records</button>
+        </div>
+        ${history.length ? history.map(outcomeCard).join("") : emptyWorkspaceState("No outreach history yet.", "Backend-created outreach records will appear here.")}
+      </section>
+    </div>
+  `;
+}
+
+function generatedDraftCard(draft) {
+  const queued = draft.queued_send_intent_id
+    ? tag(`queued: ${draft.queued_gate_status || "pending gate"}`, draft.queued_gate_status === "blocked" ? "danger" : "ok")
+    : tag("not queued", "warn");
+  return `
+    <article class="workspace-card draft-card">
+      <div>
+        <strong>${escapeHtml(draft.subject || draft.draft_id)}</strong>
+        <p>${escapeHtml(draft.external_company_id || "company")} · ${escapeHtml(draft.external_contact_id || "contact")}</p>
+      </div>
+      <div class="workspace-card-meta">
+        ${confidence(draft.confidence)}
+        ${queued}
+        ${tags(draft.review_flags, "warn")}
+      </div>
+      <div class="draft-preview">${escapeHtml(shortText(draft.body_text || "", 320))}</div>
+      <div class="workspace-card-actions">
+        ${attachmentLinks(draft)}
+        ${draft.queued_send_intent_id
+          ? `<button class="action-button compact" type="button" disabled>${escapeHtml(draft.queued_gate_status ? `Queued: ${draft.queued_gate_status}` : "Queued")}</button>`
+          : queueDraftButton(draft.draft_id)}
+      </div>
+    </article>
+  `;
+}
+
+function draftActionCard(draft) {
+  return `
+    <article class="workspace-card">
+      <div>
+        <strong>${escapeHtml(draft.subject || draft.draft_id)}</strong>
+        <p>${escapeHtml(draft.external_company_id || "company")} · ${escapeHtml(draft.external_contact_id || "contact")}</p>
+      </div>
+      <div class="workspace-card-meta">${confidence(draft.confidence)}${tags(draft.review_flags, "warn")}</div>
+      <div class="workspace-card-actions">
+        ${attachmentLinks(draft)}
+        ${queueDraftButton(draft.draft_id)}
+      </div>
+    </article>
+  `;
+}
+
+async function renderAdvancedWorkspace() {
+  const section = currentDataSection();
+  renderFilters(section);
+  renderAdvancedTabs();
+  renderTableLoading(section);
+  elements.tableTitle.textContent = section.title;
+  elements.tableSubtitle.textContent = section.subtitle;
+  try {
+    const [summary, emailDelivery, rows] = await Promise.all([
+      fetchJson("/dashboard/summary"),
+      fetchJson("/email-delivery/settings"),
+      loadRows(section),
+    ]);
+    state.emailDelivery = emailDelivery;
+    renderSummary(summary);
+    state.rows = rows;
+    state.selectedIndex = rows.length ? 0 : null;
+    renderTable(section, rows);
+    renderDetail();
+    elements.apiState.textContent = deliveryStateLabel(emailDelivery);
+    elements.apiState.className = deliveryStateClass(emailDelivery);
+  } catch (error) {
+    elements.apiState.textContent = "Advanced load failed";
+    elements.apiState.className = "state-pill error";
+    renderError(error);
+  }
+}
+
+function renderAdvancedTabs() {
+  const tabs = advancedSections.map((section) => `
+    <button class="advanced-tab ${section.id === state.activeAdvancedSection ? "active" : ""}" type="button" data-advanced-tab="${escapeHtml(section.id)}">
+      ${escapeHtml(section.label)}
+    </button>
+  `).join("");
+  elements.filtersPanel.hidden = false;
+  elements.filtersPanel.insertAdjacentHTML("afterbegin", `<div class="advanced-tabs">${tabs}</div>`);
+  document.querySelectorAll("[data-advanced-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      captureFilterValues(currentDataSection());
+      state.activeAdvancedSection = button.dataset.advancedTab;
+      state.selectedIndex = null;
+      refresh();
+    });
+  });
+}
+
+function bindWorkspaceActions() {
+  bindTableActions();
+  document.querySelectorAll("[data-workspace-link]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const sectionId = button.dataset.workspaceLink;
+      if (!sections.some((section) => section.id === sectionId)) return;
+      state.activeSection = sectionId;
+      state.selectedIndex = null;
+      renderNav();
+      refresh();
+    });
+  });
+  document.querySelectorAll("[data-advanced-link]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const advancedId = button.dataset.advancedLink;
+      if (advancedSections.some((section) => section.id === advancedId)) {
+        state.activeAdvancedSection = advancedId;
+      }
+      state.activeSection = "advanced";
+      renderNav();
+      refresh();
+    });
+  });
+  document.querySelectorAll("[data-remediation-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const intentId = button.dataset.remediationToggle || "";
+      const panel = document.querySelector(`[data-remediation-details="${cssEscape(intentId)}"]`);
+      if (!panel) return;
+      const nextHidden = !panel.hidden;
+      panel.hidden = nextHidden;
+      button.textContent = nextHidden ? "Show fix details" : "Hide fix details";
+    });
+  });
+  document.querySelectorAll("[data-draft-all-missing]").forEach((button) => {
+    button.addEventListener("click", () => applicationDraftBatchAllMissing());
+  });
+  document.querySelectorAll("[data-queue-all-drafts]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!state.workspaceDraftIds.length) {
+        elements.apiState.textContent = "No unqueued drafts";
+        elements.apiState.className = "state-pill warn";
+        return;
+      }
+      await queueDraftsForSend(state.workspaceDraftIds);
+    });
+  });
+  document.querySelectorAll("[data-recheck-blocked]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!state.workspaceBlockedIntentIds.length) {
+        elements.apiState.textContent = "No blocked drafts to recheck";
+        elements.apiState.className = "state-pill warn";
+        return;
+      }
+      await recheckBlockedIntents(state.workspaceBlockedIntentIds);
+    });
+  });
+  document.querySelectorAll("[data-confirm-all-shown]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!state.workspaceIntentIds.length) {
+        elements.apiState.textContent = "No prepared outreach";
+        elements.apiState.className = "state-pill warn";
+        return;
+      }
+      await sendIntentBatch(state.workspaceIntentIds);
+    });
+  });
+}
+
+async function recheckBlockedIntents(intentIds) {
+  elements.apiState.textContent = `Rechecking ${intentIds.length} blocked draft${intentIds.length === 1 ? "" : "s"}`;
+  elements.apiState.className = "state-pill";
+  try {
+    const results = [];
+    for (const intentId of intentIds) {
+      results.push(await fetchJson(`/gate/evaluations/${encodeURIComponent(intentId)}`, { method: "POST" }));
+    }
+    const passed = results.filter((result) => result.status === "passed_evaluate_only").length;
+    const blocked = results.filter((result) => result.status === "blocked" || result.status === "needs_review").length;
+    elements.apiState.textContent = `Rechecked ${results.length}: ${passed} confirmable, ${blocked} still blocked`;
+    elements.apiState.className = blocked ? "state-pill warn" : "state-pill ok";
+    elements.detailSubtitle.textContent = "Gate recheck result";
+    elements.detailJson.textContent = JSON.stringify(results, null, 2);
+    await refresh();
+  } catch (error) {
+    elements.apiState.textContent = "Gate recheck failed";
+    elements.apiState.className = "state-pill error";
+    elements.detailSubtitle.textContent = "Gate recheck error";
+    elements.detailJson.textContent = error.stack || error.message;
+  }
+}
+
+function statusMetric(label, value, tone) {
+  return `<div class="status-metric ${tone || ""}"><span>${escapeHtml(label)}</span><strong>${Number(value || 0)}</strong></div>`;
+}
+
+function actionCard(action) {
+  const remediation = action.type === "fix" && Array.isArray(action.remediation)
+    ? `
+      <div class="remediation-details" data-remediation-details="${escapeHtml(action.intentId || "")}" hidden>
+        <strong>What needs to be fixed</strong>
+        <ul>
+          ${action.remediation.map((item) => `
+            <li>
+              <span>${escapeHtml([item.code, item.field].filter(Boolean).join(" · "))}</span>
+              ${escapeHtml(item.message)}
+            </li>
+          `).join("")}
+        </ul>
+        <p>Use the draft/profile agent to repair the missing claims, low confidence, review flags, or contact evidence, then re-run the gate.</p>
+      </div>
+    `
+    : "";
+  return `
+    <article class="workspace-card action-card ${escapeHtml(action.type)}">
+      <div>
+        <strong>${escapeHtml(action.title)}</strong>
+        <p>${escapeHtml(action.subtitle)}</p>
+      </div>
+      <div class="workspace-card-meta">
+        ${statusTag(action.status)}
+        <span>${escapeHtml(action.detail)}</span>
+      </div>
+      <div class="workspace-card-actions">${action.action}</div>
+      ${remediation}
+    </article>
+  `;
+}
+
+function activityCard(item) {
+  return `
+    <article class="workspace-card">
+      <div>
+        <strong>${escapeHtml(item.title)}</strong>
+        <p>${escapeHtml(item.detail)}</p>
+      </div>
+      <div class="workspace-card-meta">${statusTag(item.status)}</div>
+    </article>
+  `;
+}
+
+function outcomeCard(item) {
+  const recipient = item.normalized_recipient_email || item.recipient_email || item.raw_recipient_email || item.external_intent_id || "recipient";
+  const subject = item.subject || item.outreach_record_id || item.sent_message_id || "outreach record";
+  const company = item.external_company_id || item.company_policy_key || item.company_id || "company";
+  return `
+    <article class="workspace-card outcome-card">
+      <div>
+        <strong>${escapeHtml(subject)}</strong>
+        <p>${escapeHtml(recipient)} · ${escapeHtml(company)}</p>
+      </div>
+      <div class="workspace-card-meta">
+        ${statusTag(item.status || "recorded")}
+        <span>${escapeHtml(item.provider || item.channel || "")}</span>
+      </div>
+    </article>
+  `;
+}
+
+function emptyWorkspaceState(title, body) {
+  return `<div class="empty-workspace"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(body)}</p></div>`;
+}
+
+function latestGateForIntent(intentId, gateResults) {
+  return gateResults.find((gate) => gate.external_intent_id === intentId || gate.intent_id === intentId) || null;
+}
+
+function reasonSummary(reasons) {
+  if (!Array.isArray(reasons) || !reasons.length) return "Backend gate needs attention.";
+  return reasons.map((reason) => reason.code || reason.message || reason).slice(0, 3).join(", ");
+}
+
+function cssEscape(value) {
+  if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
+function remediationSummary(gate) {
+  const reasons = Array.isArray(gate?.reasons) ? gate.reasons : [];
+  if (!reasons.length) return "The backend gate did not provide a specific reason.";
+  return reasons
+    .map((reason) => reason.message || reason.code || String(reason))
+    .slice(0, 2)
+    .join(" ");
+}
+
+function remediationList(gate) {
+  const reasons = Array.isArray(gate?.reasons) ? gate.reasons : [];
+  if (!reasons.length) {
+    return [{ code: "unknown", message: "No gate reason was recorded. Open Advanced for the raw gate result." }];
+  }
+  return reasons.map((reason) => ({
+    code: reason.code || "gate_reason",
+    field: reason.field || "",
+    message: reason.message || reason.code || String(reason),
+  }));
 }
 
 async function renderProfileShell() {
@@ -1761,7 +2555,7 @@ function renderTable(section, rows) {
 }
 
 async function renderDetail() {
-  const section = currentSection();
+  const section = currentDataSection();
   const row = state.selectedIndex === null ? null : state.rows[state.selectedIndex];
   if (!row) {
     elements.detailSubtitle.textContent = "Select a row to inspect raw fields";
@@ -1885,7 +2679,7 @@ function applicationDraftBlockLabel(reason) {
 }
 
 function sendIntentButton(intentId) {
-  return `<button class="action-button compact" type="button" data-send-intent="${escapeHtml(intentId)}">Send</button>`;
+  return `<button class="action-button compact" type="button" data-send-intent="${escapeHtml(intentId)}">Confirm</button>`;
 }
 
 function queueDraftButton(draftId) {
@@ -2209,6 +3003,12 @@ async function applicationDraftBatchLaunch(payload) {
 
 function text(value, className = "") {
   return `<span class="${escapeHtml(className)}">${escapeHtml(value ?? "None")}</span>`;
+}
+
+function shortText(value, maxLength = 180) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trim()}...`;
 }
 
 function statusTag(value) {

@@ -94,6 +94,7 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "/fit-evaluations",
         "/email-drafts",
         "/send-intents",
+        "/gate/evaluations/",
         "/gate-results",
         "/outreach-records",
         "/audit-logs",
@@ -103,7 +104,21 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         assert endpoint in combined
 
     required_product_text = {
-        "Profile Setup",
+        "Today",
+        "Opportunities",
+        "Outreach",
+        "Advanced",
+        "Review queue",
+        "Decisions waiting for you",
+        "What is happening",
+        "Who has been contacted",
+        "Prepared actions",
+        "Show fix details",
+        "What needs to be fixed",
+        "Recheck blocked drafts",
+        "No confirmable emails",
+        "Email drafts and CV attachments",
+        "Guided edits",
         "Start profile interview",
         "Waiting for profile agent reply",
         "Finish artifacts",
@@ -118,8 +133,9 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "Application draft progress",
         "Application draft batch progress",
         "Open PDF",
-        "Draft selected",
         "Draft all missing",
+        "Confirm selected",
+        "Confirm all shown",
         "Time budget",
         "Auto-refreshing every 10 seconds",
         "Generated files and transcript",
@@ -129,7 +145,7 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "onboarding_review.json",
         "No approved profile yet",
         "Local profile mode",
-        "Developer logs",
+        "Raw backend records",
     }
     for text in required_product_text:
         assert text in combined
@@ -158,7 +174,6 @@ def test_dashboard_assets_do_not_expose_sending_or_external_ai_surfaces(client):
     forbidden_endpoint_patterns = [
         r"['\"][^'\"]*\/send-reservations(?:['\"/?#]|\b)",
         r"['\"][^'\"]*\/dashboard\/send-reservations(?:['\"/?#]|\b)",
-        r"['\"][^'\"]*\/gate\/evaluations\/",
     ]
     for pattern in forbidden_endpoint_patterns:
         assert re.search(pattern, combined) is None

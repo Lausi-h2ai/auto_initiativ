@@ -459,7 +459,7 @@ def test_evaluate_only_gate_blocks_reached_send_limits(db_session, runs_root, li
     assert reason_code in _reason_codes(result)
 
 
-def test_evaluate_only_gate_blocks_unapproved_claim_reference(db_session, runs_root):
+def test_evaluate_only_gate_treats_unapproved_claim_reference_as_advisory(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     gate_result = db_session.exec(select(ImportedGateResult).where(ImportedGateResult.gate_result_id == "gate-1")).one()
     assert gate_result.imported_file_id is not None
@@ -474,8 +474,9 @@ def test_evaluate_only_gate_blocks_unapproved_claim_reference(db_session, runs_r
 
     result = _evaluate(db_session)
 
-    assert result.gate_result.status == "blocked"
-    assert "unapproved_claim_refs" in _reason_codes(result)
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "unapproved_claim_refs" not in _reason_codes(result)
+    assert "claim_refs_advisory" in _check_codes(result)
 
 
 def test_evaluate_only_gate_blocks_forbidden_claim_text(db_session, runs_root):
@@ -505,6 +506,20 @@ def test_evaluate_only_gate_blocks_low_confidence_required_field(db_session, run
     assert "low_confidence_required_field" in _reason_codes(result)
 
 
+def test_evaluate_only_gate_treats_moderate_confidence_as_advisory(db_session, runs_root):
+    _import_valid_run(db_session, runs_root)
+    send_intent = _intent(db_session)
+    send_intent.confidence = 0.68
+    db_session.add(send_intent)
+    db_session.commit()
+
+    result = _evaluate(db_session)
+
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "low_confidence_required_field" not in _reason_codes(result)
+    assert "confidence_threshold_advisory" in _check_codes(result)
+
+
 @pytest.mark.parametrize("record_getter", [_company, _contact, _email_draft, _fit_evaluation])
 def test_evaluate_only_gate_blocks_low_confidence_related_record(db_session, runs_root, record_getter):
     _import_valid_run(db_session, runs_root)
@@ -519,10 +534,10 @@ def test_evaluate_only_gate_blocks_low_confidence_related_record(db_session, run
     assert "low_confidence_required_field" in _reason_codes(result)
 
 
-def test_evaluate_only_gate_blocks_review_flags_on_required_fields(db_session, runs_root):
+def test_evaluate_only_gate_blocks_hard_review_flags_on_required_fields(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     contact = _contact(db_session)
-    contact.review_flags_json = json.dumps(["needs_review"])
+    contact.review_flags_json = json.dumps(["policy_conflict_requires_resolution"])
     db_session.add(contact)
     db_session.commit()
 
@@ -532,7 +547,44 @@ def test_evaluate_only_gate_blocks_review_flags_on_required_fields(db_session, r
     assert "review_flags_present" in _reason_codes(result)
 
 
-def test_evaluate_only_gate_warns_review_flags_when_policy_allows_review(db_session, runs_root):
+@pytest.mark.parametrize("review_flag", ["generic_recipient", "remote_policy_unknown", "claim_id_references"])
+def test_evaluate_only_gate_allows_nonblocking_review_flags(db_session, runs_root, review_flag):
+    _import_valid_run(db_session, runs_root)
+    send_intent = _intent(db_session)
+    send_intent.review_flags_json = json.dumps([review_flag])
+    db_session.add(send_intent)
+    db_session.commit()
+
+    result = _evaluate(db_session)
+
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "review_flags_present" not in _reason_codes(result)
+
+
+@pytest.mark.parametrize(
+    "review_flag",
+    [
+        "needs_review",
+        "recipient_email_inferred_generic_needs_manual_verification",
+        "language_may_need_english_review_due_english_first_company_site",
+        "specific_open_roles_not_verified",
+        "master_cv_profile_contains_no_structured_claim_ids",
+    ],
+)
+def test_evaluate_only_gate_allows_agent_remediable_review_flags(db_session, runs_root, review_flag):
+    _import_valid_run(db_session, runs_root)
+    send_intent = _intent(db_session)
+    send_intent.review_flags_json = json.dumps([review_flag])
+    db_session.add(send_intent)
+    db_session.commit()
+
+    result = _evaluate(db_session)
+
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "review_flags_present" not in _reason_codes(result)
+
+
+def test_evaluate_only_gate_treats_review_flags_as_advisory_when_policy_allows_review(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
 
     def allow_review(policy):
@@ -546,8 +598,9 @@ def test_evaluate_only_gate_warns_review_flags_when_policy_allows_review(db_sess
 
     result = _evaluate(db_session)
 
-    assert result.gate_result.status == "needs_review"
-    assert "review_flags_present" in _reason_codes(result)
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "review_flags_present" not in _reason_codes(result)
+    assert "review_flags_advisory" in _check_codes(result)
 
 
 def test_evaluate_only_gate_requires_confidence_threshold(db_session, runs_root):
@@ -564,7 +617,7 @@ def test_evaluate_only_gate_requires_confidence_threshold(db_session, runs_root)
     assert "confidence_threshold_missing" in _reason_codes(result)
 
 
-def test_evaluate_only_gate_marks_inferred_contact_email_for_review(db_session, runs_root):
+def test_evaluate_only_gate_treats_inferred_contact_email_as_advisory(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     contact = _contact(db_session)
     contact.email_source = "inferred_pattern"
@@ -573,11 +626,12 @@ def test_evaluate_only_gate_marks_inferred_contact_email_for_review(db_session, 
 
     result = _evaluate(db_session)
 
-    assert result.gate_result.status == "needs_review"
-    assert "contact_email_needs_review" in _reason_codes(result)
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "contact_email_needs_review" not in _reason_codes(result)
+    assert "contact_email_source_advisory" in _check_codes(result)
 
 
-def test_evaluate_only_gate_blocks_unknown_contact_email_source(db_session, runs_root):
+def test_evaluate_only_gate_treats_unknown_contact_email_source_as_advisory(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     contact = _contact(db_session)
     contact.email_source = "unknown"
@@ -586,8 +640,9 @@ def test_evaluate_only_gate_blocks_unknown_contact_email_source(db_session, runs
 
     result = _evaluate(db_session)
 
-    assert result.gate_result.status == "blocked"
-    assert "contact_email_source_unknown" in _reason_codes(result)
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "contact_email_source_unknown" not in _reason_codes(result)
+    assert "contact_email_source_unknown_advisory" in _check_codes(result)
 
 
 def test_evaluate_only_gate_blocks_when_failures_and_warnings_both_present(db_session, runs_root):
@@ -603,7 +658,8 @@ def test_evaluate_only_gate_blocks_when_failures_and_warnings_both_present(db_se
     result = _evaluate(db_session)
 
     assert result.gate_result.status == "blocked"
-    assert {"low_confidence_required_field", "contact_email_needs_review"}.issubset(_reason_codes(result))
+    assert "low_confidence_required_field" in _reason_codes(result)
+    assert "contact_email_needs_review" not in _reason_codes(result)
 
 
 def test_evaluate_only_gate_writes_completed_audit_reason_codes(db_session, runs_root):

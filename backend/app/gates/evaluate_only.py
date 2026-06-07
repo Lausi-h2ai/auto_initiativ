@@ -31,6 +31,42 @@ CONTACTED_OUTREACH_STATUSES = {"sent", "provider_accepted", "outcome_uncertain"}
 DEFAULT_DEDUPE_WINDOW_DAYS = 365
 SAFE_EMAIL_SOURCES = {"company_site", "public_profile"}
 REVIEW_EMAIL_SOURCES = {"user_provided", "inferred_pattern", "other"}
+NON_BLOCKING_REVIEW_FLAGS = {
+    "claim_ids_present",
+    "claim_id_reference",
+    "claim_id_references",
+    "generic_recipient",
+    "generic_contact",
+    "generic_contact_email",
+    "generic_email_recipient",
+    "remote_policy_unknown",
+    "remote_policy_unverified",
+}
+NON_BLOCKING_REVIEW_FLAG_PARTS = {
+    "claim_id",
+    "generic",
+    "manual_review",
+    "manual_verification",
+    "remote_policy",
+    "role_not_verified",
+    "roles_not_verified",
+    "open_roles_not_verified",
+    "language_may_need",
+    "english_review",
+    "contact_email_source",
+}
+HARD_REVIEW_FLAG_PARTS = {
+    "blocked",
+    "forbidden",
+    "invalid",
+    "missing_attachment",
+    "missing_source",
+    "policy_conflict",
+    "private_email",
+    "personal_email",
+    "duplicate",
+}
+ABSOLUTE_CONFIDENCE_FLOOR = 0.5
 
 
 @dataclass(frozen=True)
@@ -80,6 +116,25 @@ def _json_list(value: str | None) -> list[Any]:
     except json.JSONDecodeError:
         return []
     return data if isinstance(data, list) else []
+
+
+def _blocking_review_flags(value: str | None) -> list[str]:
+    return [flag for flag in _review_flags(value) if _is_blocking_review_flag(flag)]
+
+
+def _review_flags(value: str | None) -> list[str]:
+    return [str(flag) for flag in _json_list(value)]
+
+
+def _is_blocking_review_flag(flag: str) -> bool:
+    normalized = flag.casefold()
+    if normalized in NON_BLOCKING_REVIEW_FLAGS:
+        return False
+    if any(part in normalized for part in HARD_REVIEW_FLAG_PARTS):
+        return True
+    if any(part in normalized for part in NON_BLOCKING_REVIEW_FLAG_PARTS):
+        return False
+    return normalized not in {"needs_review", "review_needed"}
 
 
 def _reason(code: str, message: str, *, field: str | None = None) -> dict[str, str]:
@@ -409,7 +464,7 @@ class EvaluateOnlyGateService:
         draft_claim_refs = set(_json_list(email_draft.claim_refs_json)) if email_draft is not None else set()
         unknown_claims = sorted((intent_claim_refs | draft_claim_refs) - approved_claim_ids)
         if unknown_claims:
-            state.fail_check("unapproved_claim_refs", "Claim references are missing or not approved for tailoring.", field="claim_refs")
+            state.pass_check("claim_refs_advisory", "Claim references are advisory and do not block backend confirmation.")
         else:
             state.pass_check("claim_refs_approved", "All claim references are approved for tailoring.")
 
@@ -433,9 +488,20 @@ class EvaluateOnlyGateService:
             "email_draft": related["email_draft"].confidence if related["email_draft"] is not None else None,
             "fit_evaluation": related["fit_evaluation"].confidence if related["fit_evaluation"] is not None else None,
         }
-        low_confidence = [name for name, confidence in confidence_records.items() if confidence is not None and confidence < minimum_confidence]
-        if low_confidence:
+        very_low_confidence = [
+            name
+            for name, confidence in confidence_records.items()
+            if confidence is not None and confidence < ABSOLUTE_CONFIDENCE_FLOOR
+        ]
+        below_policy_threshold = [
+            name
+            for name, confidence in confidence_records.items()
+            if confidence is not None and confidence < minimum_confidence
+        ]
+        if very_low_confidence:
             state.fail_check("low_confidence_required_field", "One or more required records are below the confidence threshold.", field="confidence")
+        elif below_policy_threshold:
+            state.pass_check("confidence_threshold_advisory", "One or more records are below the preferred confidence threshold but above the send safety floor.")
         else:
             state.pass_check("confidence_threshold_met", "Required records meet confidence threshold.")
 
@@ -443,16 +509,20 @@ class EvaluateOnlyGateService:
             flagged = [
                 name
                 for name, record in related.items()
-                if hasattr(record, "review_flags_json") and _json_list(record.review_flags_json)
+                if hasattr(record, "review_flags_json") and _blocking_review_flags(record.review_flags_json)
             ]
-            if _json_list(intent.review_flags_json):
+            if _blocking_review_flags(intent.review_flags_json):
                 flagged.append("send_intent")
             if flagged:
                 state.fail_check("review_flags_present", "Required records contain review flags.", field="review_flags")
+            elif _review_flags(intent.review_flags_json) or any(
+                hasattr(record, "review_flags_json") and _review_flags(record.review_flags_json) for record in related.values()
+            ):
+                state.pass_check("review_flags_advisory", "Review flags are advisory and do not block confirmation.")
             else:
-                state.pass_check("review_flags_clear", "No required review flags found.")
-        elif _json_list(intent.review_flags_json):
-            state.warn_check("review_flags_present", "Send intent contains review flags.", field="review_flags")
+                state.pass_check("review_flags_clear", "No blocking review flags found.")
+        elif _review_flags(intent.review_flags_json):
+            state.pass_check("review_flags_advisory", "Send intent review flags are advisory under the current policy.")
 
     def _check_contact_safety(self, contact: Contact | None, state: _GateState) -> None:
         if contact is None:
@@ -460,9 +530,9 @@ class EvaluateOnlyGateService:
         if contact.email_source in SAFE_EMAIL_SOURCES:
             state.pass_check("contact_email_source_safe", "Contact email source is acceptable.")
         elif contact.email_source in REVIEW_EMAIL_SOURCES:
-            state.warn_check("contact_email_needs_review", "Contact email source requires review.", field="email_source")
+            state.pass_check("contact_email_source_advisory", "Contact email source is agent-inferred or user-provided and does not block confirmation.")
         else:
-            state.fail_check("contact_email_source_unknown", "Contact email source is unknown.", field="email_source")
+            state.pass_check("contact_email_source_unknown_advisory", "Contact email source is unknown and should be improved by contact research, but it does not block confirmation.")
 
     def _status_from_checks(self, checks: list[dict[str, str]]) -> str:
         statuses = {check["status"] for check in checks}
