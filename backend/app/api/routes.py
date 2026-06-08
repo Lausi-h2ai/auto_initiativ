@@ -2243,7 +2243,11 @@ def list_outbox_drafts(session: Session = Depends(get_session)) -> list[OutboxDr
 
 @router.get("/outbox/sent", response_model=list[OutboxSentResponse])
 def list_outbox_sent(session: Session = Depends(get_session)) -> list[OutboxSentResponse]:
-    messages = session.exec(select(SentMessage).order_by(SentMessage.created_at.desc(), SentMessage.sent_message_id)).all()
+    messages = session.exec(
+        select(SentMessage)
+        .where(SentMessage.status == "provider_accepted")
+        .order_by(SentMessage.created_at.desc(), SentMessage.sent_message_id)
+    ).all()
     return [_outbox_sent_response(message, session) for message in messages]
 
 

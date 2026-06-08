@@ -174,7 +174,7 @@ def test_known_unsent_provider_failure_does_not_create_blocking_outreach(db_sess
     assert reservation.status == "failed_known_unsent"
 
 
-def test_gmail_pre_send_failure_does_not_create_blocking_outreach(db_session, runs_root):
+def test_gmail_pre_send_failure_does_not_create_blocking_outreach(client, db_session, runs_root):
     _import_approved_run(db_session, runs_root)
 
     result = SendBatchService(db_session, adapter=_GmailPreSendFailureAdapter(), sending_enabled=True).approve_and_send(
@@ -192,6 +192,7 @@ def test_gmail_pre_send_failure_does_not_create_blocking_outreach(db_session, ru
     assert intent.status == "send_failed_known_unsent"
     reservation = db_session.exec(select(SendReservation)).one()
     assert reservation.status == "failed_known_unsent"
+    assert client.get("/outbox/sent").json() == []
 
 
 def test_gmail_provider_rejection_does_not_create_blocking_outreach(db_session, runs_root):
