@@ -23,7 +23,14 @@ from backend.app.db.models import (
     SentMessage,
     utc_now,
 )
-from backend.app.email_delivery.adapters import EmailAdapter, EmailDeliveryResult, EmailMessage, GmailEmailAdapter
+from backend.app.email_delivery.adapters import (
+    EmailAdapter,
+    EmailDeliveryResult,
+    EmailMessage,
+    GmailEmailAdapter,
+    GmailPreSendError,
+    GmailProviderRejectedBeforeAcceptError,
+)
 from backend.app.gates.reserve_for_send import ReserveForSendGateService
 
 
@@ -199,7 +206,7 @@ class SendBatchService:
 
         try:
             delivery = self._adapter().send(self._message_from_approval(approval))
-        except KnownUnsentEmailError as exc:
+        except (KnownUnsentEmailError, GmailPreSendError, GmailProviderRejectedBeforeAcceptError) as exc:
             self._set_intent_status(intent, "send_failed_known_unsent")
             reservation.status = "failed_known_unsent"
             self.session.add(reservation)

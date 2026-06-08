@@ -44,6 +44,14 @@ class EmailAdapter(Protocol):
         """
 
 
+class GmailPreSendError(RuntimeError):
+    """Raised when Gmail setup/auth fails before the send API call is made."""
+
+
+class GmailProviderRejectedBeforeAcceptError(RuntimeError):
+    """Raised when Gmail rejects the send request without accepting a message."""
+
+
 class FakeDryRunEmailAdapter:
     provider = "fake_dry_run"
 
@@ -73,7 +81,15 @@ class GmailEmailAdapter:
     def send(self, message: EmailMessage) -> EmailDeliveryResult:
         service = self._service()
         payload = {"raw": _message_to_gmail_raw(message)}
-        response = service.users().messages().send(userId=self.settings.gmail_user_id, body=payload).execute()
+        try:
+            response = service.users().messages().send(userId=self.settings.gmail_user_id, body=payload).execute()
+        except Exception as exc:
+            status = getattr(getattr(exc, "resp", None), "status", None)
+            if isinstance(status, str) and status.isdigit():
+                status = int(status)
+            if isinstance(status, int) and 400 <= status < 500:
+                raise GmailProviderRejectedBeforeAcceptError(f"Gmail rejected before accepting message: {exc}") from exc
+            raise
         return EmailDeliveryResult(
             provider=self.provider,
             status="provider_accepted",
@@ -87,27 +103,35 @@ class GmailEmailAdapter:
 
     def _service(self) -> Any:
         if self.settings.gmail_oauth_client_secrets_path is None or self.settings.gmail_oauth_token_path is None:
-            raise RuntimeError("Gmail OAuth paths are not configured.")
+            raise GmailPreSendError("Gmail OAuth paths are not configured.")
 
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from googleapiclient.discovery import build
+        try:
+            from google.auth.transport.requests import Request
+            from google.oauth2.credentials import Credentials
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            from googleapiclient.discovery import build
 
-        token_path = self.settings.gmail_oauth_token_path
-        scopes = self.settings.gmail_oauth_scopes
-        credentials = None
-        if token_path.exists():
-            credentials = Credentials.from_authorized_user_file(str(token_path), scopes)
-        if credentials is None or not credentials.valid:
-            if credentials is not None and credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(str(self.settings.gmail_oauth_client_secrets_path), scopes)
-                credentials = flow.run_local_server(port=0)
-            token_path.parent.mkdir(parents=True, exist_ok=True)
-            token_path.write_text(credentials.to_json(), encoding="utf-8")
-        return build("gmail", "v1", credentials=credentials)
+            token_path = self.settings.gmail_oauth_token_path
+            scopes = self.settings.gmail_oauth_scopes
+            credentials = None
+            if token_path.exists():
+                credentials = Credentials.from_authorized_user_file(str(token_path), scopes)
+            if credentials is None or not credentials.valid:
+                if credentials is not None and credentials.expired and credentials.refresh_token:
+                    try:
+                        credentials.refresh(Request())
+                    except Exception:
+                        credentials = None
+                if credentials is None or not credentials.valid:
+                    flow = InstalledAppFlow.from_client_secrets_file(str(self.settings.gmail_oauth_client_secrets_path), scopes)
+                    credentials = flow.run_local_server(port=0)
+                token_path.parent.mkdir(parents=True, exist_ok=True)
+                token_path.write_text(credentials.to_json(), encoding="utf-8")
+            return build("gmail", "v1", credentials=credentials)
+        except GmailPreSendError:
+            raise
+        except Exception as exc:
+            raise GmailPreSendError(f"Gmail setup/auth failed before send: {exc}") from exc
 
 
 def _message_to_gmail_raw(message: EmailMessage) -> str:

@@ -7,7 +7,12 @@ from sqlmodel import select
 
 from backend.app.db.models import AuditLog, OutreachRecord, SendApprovalSnapshot, SendIntent, SendReservation, SentMessage, utc_now
 from backend.app.core.config import Settings
-from backend.app.email_delivery.adapters import EmailDeliveryResult, FakeDryRunEmailAdapter
+from backend.app.email_delivery.adapters import (
+    EmailDeliveryResult,
+    FakeDryRunEmailAdapter,
+    GmailPreSendError,
+    GmailProviderRejectedBeforeAcceptError,
+)
 from backend.app.email_delivery.batch_send import KnownUnsentEmailError, SendBatchService
 from backend.app.gates.evaluate_only import EvaluateOnlyGateService
 from backend.app.imports.import_service import RunImportService
@@ -69,6 +74,20 @@ class _UncertainAdapter(FakeDryRunEmailAdapter):
 
     def send(self, message):
         raise RuntimeError("connection dropped after dispatch")
+
+
+class _GmailPreSendFailureAdapter(FakeDryRunEmailAdapter):
+    provider = "gmail"
+
+    def send(self, message):
+        raise GmailPreSendError("Gmail setup/auth failed before send: invalid_grant")
+
+
+class _GmailProviderRejectedAdapter(FakeDryRunEmailAdapter):
+    provider = "gmail"
+
+    def send(self, message):
+        raise GmailProviderRejectedBeforeAcceptError("Gmail rejected before accepting message: accessNotConfigured")
 
 
 def test_send_batch_freezes_payload_and_records_sent_ledger(db_session, runs_root):
@@ -151,6 +170,46 @@ def test_known_unsent_provider_failure_does_not_create_blocking_outreach(db_sess
     assert db_session.exec(select(OutreachRecord)).all() == []
     sent_message = db_session.exec(select(SentMessage)).one()
     assert sent_message.status == "provider_rejected_known_unsent"
+    reservation = db_session.exec(select(SendReservation)).one()
+    assert reservation.status == "failed_known_unsent"
+
+
+def test_gmail_pre_send_failure_does_not_create_blocking_outreach(db_session, runs_root):
+    _import_approved_run(db_session, runs_root)
+
+    result = SendBatchService(db_session, adapter=_GmailPreSendFailureAdapter(), sending_enabled=True).approve_and_send(
+        ["intent-1"], "local-user"
+    )
+    db_session.commit()
+
+    assert result.items[0].status == "send_failed_known_unsent"
+    assert result.items[0].detail == "Gmail setup/auth failed before send: invalid_grant"
+    assert db_session.exec(select(OutreachRecord)).all() == []
+    sent_message = db_session.exec(select(SentMessage)).one()
+    assert sent_message.status == "provider_rejected_known_unsent"
+    assert sent_message.network_performed is False
+    intent = db_session.exec(select(SendIntent).where(SendIntent.intent_id == "intent-1")).one()
+    assert intent.status == "send_failed_known_unsent"
+    reservation = db_session.exec(select(SendReservation)).one()
+    assert reservation.status == "failed_known_unsent"
+
+
+def test_gmail_provider_rejection_does_not_create_blocking_outreach(db_session, runs_root):
+    _import_approved_run(db_session, runs_root)
+
+    result = SendBatchService(db_session, adapter=_GmailProviderRejectedAdapter(), sending_enabled=True).approve_and_send(
+        ["intent-1"], "local-user"
+    )
+    db_session.commit()
+
+    assert result.items[0].status == "send_failed_known_unsent"
+    assert result.items[0].detail == "Gmail rejected before accepting message: accessNotConfigured"
+    assert db_session.exec(select(OutreachRecord)).all() == []
+    sent_message = db_session.exec(select(SentMessage)).one()
+    assert sent_message.status == "provider_rejected_known_unsent"
+    assert sent_message.network_performed is False
+    intent = db_session.exec(select(SendIntent).where(SendIntent.intent_id == "intent-1")).one()
+    assert intent.status == "send_failed_known_unsent"
     reservation = db_session.exec(select(SendReservation)).one()
     assert reservation.status == "failed_known_unsent"
 
