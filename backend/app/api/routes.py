@@ -54,12 +54,14 @@ from backend.app.db.models import (
     SendApprovalSnapshot,
     Run,
     SendIntent,
+    SendReservation,
     SentMessage,
     UserProfileSnapshot,
     ValidationResult,
 )
 from backend.app.email_delivery import OutreachResolutionError, OutreachResolutionService, SendBatchService
 from backend.app.db.session import get_session
+from backend.app.db.normalization import normalize_recipient_email
 from backend.app.gates.evaluate_only import EvaluateOnlyGateService
 from backend.app.imports.file_classifier import classify_filename
 from backend.app.imports.import_service import (
@@ -115,6 +117,11 @@ from backend.app.schemas.api import (
     OnboardingPromotionRequest,
     OnboardingPromotionResponse,
     OnboardingSnapshotResponse,
+    OutboxAttachmentLink,
+    OutboxDraftResponse,
+    OutboxSendAllRequest,
+    OutboxSendAllResponse,
+    OutboxSentResponse,
     ProfileSnapshotSummaryResponse,
     ProfileSummaryResponse,
     QueueDraftForSendRequest,
@@ -681,6 +688,239 @@ def _outreach_record_response(record: OutreachRecord) -> OutreachRecordResponse:
     )
 
 
+OUTBOX_CONTACTED_STATUSES = {"sent", "provider_accepted", "outcome_uncertain", "contacted"}
+OUTBOX_ACTIVE_RESERVATION_STATUSES = {"active", "reserved", "attempting_provider_send", "outcome_uncertain"}
+
+
+def _company_for_draft(session: Session, draft: EmailDraft) -> Company | None:
+    return session.get(Company, draft.company_id) if draft.company_id is not None else None
+
+
+def _contact_for_draft(session: Session, draft: EmailDraft) -> Contact | None:
+    return session.get(Contact, draft.contact_id) if draft.contact_id is not None else None
+
+
+def _intent_for_draft(session: Session, draft: EmailDraft) -> SendIntent | None:
+    return session.exec(select(SendIntent).where(SendIntent.external_email_draft_id == draft.draft_id)).first()
+
+
+def _outbox_email_for_contact(contact: Contact | None) -> tuple[str | None, str | None]:
+    email = (contact.raw_email if contact is not None else "") or ""
+    if not email.strip():
+        return None, "missing_email"
+    try:
+        return normalize_recipient_email(email), None
+    except ValueError:
+        return email.strip(), "invalid_email"
+
+
+def _outbox_cv_link(draft: EmailDraft) -> OutboxAttachmentLink | None:
+    attachments = _json_loads(draft.attachments_json, [])
+    if not isinstance(attachments, list):
+        return None
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        attachment_id = attachment.get("attachment_id")
+        path = str(attachment.get("path") or "")
+        kind = attachment.get("kind")
+        if not attachment_id:
+            continue
+        if kind == "cv" or path.lower().endswith(".pdf"):
+            return OutboxAttachmentLink(
+                attachment_id=str(attachment_id),
+                label="Open PDF",
+                url=f"/application-drafts/{draft.draft_id}/attachments/{attachment_id}",
+                kind=str(kind) if kind is not None else None,
+            )
+    return None
+
+
+def _outbox_attachment_exists(session: Session, draft: EmailDraft, link: OutboxAttachmentLink | None) -> bool:
+    if link is None:
+        return False
+    imported_file = session.get(ImportedFile, draft.imported_file_id) if draft.imported_file_id is not None else None
+    if imported_file is None:
+        return False
+    run = session.exec(select(Run).where(Run.run_id == imported_file.run_id)).first()
+    output_root = Path(run.output_path).resolve() if run is not None else Path(imported_file.path).resolve().parent
+    attachments = _json_loads(draft.attachments_json, [])
+    if not isinstance(attachments, list):
+        return False
+    attachment = next(
+        (item for item in attachments if isinstance(item, dict) and item.get("attachment_id") == link.attachment_id),
+        None,
+    )
+    if attachment is None:
+        return False
+    path_value = attachment.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        return False
+    relative_path = Path(path_value.replace("\\", "/"))
+    if relative_path.is_absolute():
+        return False
+    if relative_path.parts and relative_path.parts[0] == "output":
+        relative_path = Path(*relative_path.parts[1:])
+    return (output_root / relative_path).resolve().is_file()
+
+
+def _outbox_has_contacted_record(
+    session: Session,
+    *,
+    company: Company | None,
+    normalized_email: str | None,
+) -> bool:
+    if normalized_email:
+        recipient_record = session.exec(
+            select(OutreachRecord).where(
+                OutreachRecord.normalized_recipient_email == normalized_email,
+                OutreachRecord.dedupe_recipient == True,  # noqa: E712
+                OutreachRecord.status.in_(OUTBOX_CONTACTED_STATUSES),
+            )
+        ).first()
+        if recipient_record is not None:
+            return True
+    if company is not None:
+        company_record = session.exec(
+            select(OutreachRecord).where(
+                OutreachRecord.company_policy_key == company.company_policy_key,
+                OutreachRecord.dedupe_company == True,  # noqa: E712
+                OutreachRecord.status.in_(OUTBOX_CONTACTED_STATUSES),
+            )
+        ).first()
+        if company_record is not None:
+            return True
+    return False
+
+
+def _outbox_has_active_reservation(
+    session: Session,
+    *,
+    company: Company | None,
+    normalized_email: str | None,
+) -> bool:
+    if normalized_email:
+        recipient_reservation = session.exec(
+            select(SendReservation).where(
+                SendReservation.normalized_recipient_email == normalized_email,
+                SendReservation.dedupe_recipient == True,  # noqa: E712
+                SendReservation.status.in_(OUTBOX_ACTIVE_RESERVATION_STATUSES),
+            )
+        ).first()
+        if recipient_reservation is not None:
+            return True
+    if company is not None:
+        company_reservation = session.exec(
+            select(SendReservation).where(
+                SendReservation.company_policy_key == company.company_policy_key,
+                SendReservation.dedupe_company == True,  # noqa: E712
+                SendReservation.status.in_(OUTBOX_ACTIVE_RESERVATION_STATUSES),
+            )
+        ).first()
+        if company_reservation is not None:
+            return True
+    return False
+
+
+def _outbox_draft_status(
+    session: Session,
+    *,
+    draft: EmailDraft,
+    company: Company | None,
+    contact: Contact | None,
+    normalized_email: str | None,
+    email_error: str | None,
+    cv: OutboxAttachmentLink | None,
+    intent: SendIntent | None,
+) -> tuple[str, str, str | None]:
+    if intent is not None and intent.status == "sent":
+        return "sent", "Sent", None
+    if email_error == "missing_email":
+        return "blocked", "Missing email", "missing_email"
+    if email_error == "invalid_email":
+        return "blocked", "Invalid email", "invalid_email"
+    if not draft.body_text.strip():
+        return "blocked", "Missing body", "missing_body"
+    if cv is None or not _outbox_attachment_exists(session, draft, cv):
+        return "blocked", "Missing CV", "missing_cv"
+    if _outbox_has_contacted_record(session, company=company, normalized_email=normalized_email) or _outbox_has_active_reservation(
+        session,
+        company=company,
+        normalized_email=normalized_email,
+    ):
+        return "blocked", "Already contacted", "already_contacted"
+    return "ready", "Ready", None
+
+
+def _outbox_draft_response(draft: EmailDraft, session: Session) -> OutboxDraftResponse:
+    company = _company_for_draft(session, draft)
+    contact = _contact_for_draft(session, draft)
+    intent = _intent_for_draft(session, draft)
+    email, email_error = _outbox_email_for_contact(contact)
+    cv = _outbox_cv_link(draft)
+    status, label, blocker = _outbox_draft_status(
+        session,
+        draft=draft,
+        company=company,
+        contact=contact,
+        normalized_email=email if email_error is None else None,
+        email_error=email_error,
+        cv=cv,
+        intent=intent,
+    )
+    return OutboxDraftResponse(
+        draft_id=draft.draft_id,
+        intent_id=intent.intent_id if intent is not None else None,
+        company_id=draft.external_company_id,
+        company_name=company.name if company is not None else draft.external_company_id,
+        email_address=email,
+        drafted_at=draft.created_at,
+        status=status,
+        status_label=label,
+        blocker_code=blocker,
+        subject=draft.subject,
+        body_text=draft.body_text,
+        email_url=f"/email-drafts/{draft.draft_id}",
+        cv=cv,
+    )
+
+
+def _outbox_sent_response(message: SentMessage, session: Session) -> OutboxSentResponse:
+    approval = session.get(SendApprovalSnapshot, message.approval_snapshot_id) if message.approval_snapshot_id is not None else None
+    intent = session.get(SendIntent, message.send_intent_id) if message.send_intent_id is not None else None
+    company = session.get(Company, intent.company_id) if intent is not None and intent.company_id is not None else None
+    attachments = _json_loads(approval.attachments_json, []) if approval is not None else []
+    cv = None
+    if intent is not None and intent.external_email_draft_id:
+        for attachment in attachments if isinstance(attachments, list) else []:
+            if not isinstance(attachment, dict):
+                continue
+            attachment_id = attachment.get("attachment_id")
+            path = str(attachment.get("path") or "")
+            kind = attachment.get("kind")
+            if attachment_id and (kind == "cv" or path.lower().endswith(".pdf")):
+                cv = OutboxAttachmentLink(
+                    attachment_id=str(attachment_id),
+                    label="CV PDF",
+                    url=f"/application-drafts/{intent.external_email_draft_id}/attachments/{attachment_id}",
+                    kind=str(kind) if kind is not None else None,
+                )
+                break
+    return OutboxSentResponse(
+        sent_message_id=message.sent_message_id,
+        company_id=intent.external_company_id if intent is not None else None,
+        company_name=company.name if company is not None else (intent.external_company_id if intent is not None else message.company_policy_key),
+        email_address=message.normalized_recipient_email,
+        sent_at=message.accepted_at or message.created_at,
+        status=message.status,
+        subject=approval.subject if approval is not None else None,
+        body_text=approval.body_text if approval is not None else None,
+        email_url=f"/sent-messages/{message.sent_message_id}",
+        cv=cv,
+        provider_url=_provider_url(message),
+    )
+
+
 def _onboarding_snapshot_responses(session: Session, run_id: str) -> list[OnboardingSnapshotResponse]:
     imported_file_ids = _imported_file_ids_for_run(session, run_id)
     if not imported_file_ids:
@@ -1242,7 +1482,7 @@ def _prepare_application_draft_response(
         expected_attachment_files=[f"attachments/{brief.html_filename}", f"attachments/{brief.pdf_filename}"],
         next_action=(
             "Launch the application draft agent to write a tailored CV PDF and email_draft.json, then import the draft "
-            "for manual review."
+            "for backend-controlled evaluation."
         ),
     )
 
@@ -1995,6 +2235,73 @@ def list_email_drafts(
     ]
 
 
+@router.get("/outbox/drafts", response_model=list[OutboxDraftResponse])
+def list_outbox_drafts(session: Session = Depends(get_session)) -> list[OutboxDraftResponse]:
+    drafts = session.exec(select(EmailDraft).order_by(EmailDraft.created_at.desc(), EmailDraft.draft_id)).all()
+    return [_outbox_draft_response(draft, session) for draft in drafts]
+
+
+@router.get("/outbox/sent", response_model=list[OutboxSentResponse])
+def list_outbox_sent(session: Session = Depends(get_session)) -> list[OutboxSentResponse]:
+    messages = session.exec(select(SentMessage).order_by(SentMessage.created_at.desc(), SentMessage.sent_message_id)).all()
+    return [_outbox_sent_response(message, session) for message in messages]
+
+
+def _send_batch_response(result: Any) -> SendBatchResponse:
+    return SendBatchResponse(
+        batch_id=result.batch_id,
+        status=result.status,
+        requested_count=result.requested_count,
+        sent_count=result.sent_count,
+        blocked_count=result.blocked_count,
+        items=[
+            SendBatchItemResponse(
+                intent_id=item.intent_id,
+                status=item.status,
+                approval_id=item.approval_id,
+                gate_result_id=item.gate_result_id,
+                reservation_id=item.reservation_id,
+                sent_message_id=item.sent_message_id,
+                outreach_record_id=item.outreach_record_id,
+                reason_codes=item.reason_codes,
+                detail=item.detail,
+            )
+            for item in result.items
+        ],
+    )
+
+
+@router.post("/outbox/send-all", response_model=OutboxSendAllResponse)
+def outbox_send_all(
+    request: OutboxSendAllRequest,
+    session: Session = Depends(get_session),
+) -> OutboxSendAllResponse:
+    drafts = session.exec(select(EmailDraft).order_by(EmailDraft.created_at.desc(), EmailDraft.draft_id)).all()
+    ready_rows = [row for row in (_outbox_draft_response(draft, session) for draft in drafts) if row.status == "ready"]
+    intent_ids: list[str] = []
+    queue_failed_count = 0
+    for row in ready_rows:
+        try:
+            result = DraftSendIntentQueueService(session).queue_draft(row.draft_id, reviewer_id=request.reviewer_id)
+        except DraftQueueError:
+            queue_failed_count += 1
+            continue
+        intent_ids.append(result.send_intent.intent_id)
+    batch_response = None
+    if intent_ids:
+        batch_response = _send_batch_response(SendBatchService(session=session).approve_and_send(intent_ids, request.reviewer_id))
+    session.commit()
+    refreshed_drafts = session.exec(select(EmailDraft).order_by(EmailDraft.created_at.desc(), EmailDraft.draft_id)).all()
+    rows = [_outbox_draft_response(draft, session) for draft in refreshed_drafts]
+    return OutboxSendAllResponse(
+        requested_count=len(ready_rows),
+        sent_count=batch_response.sent_count if batch_response is not None else 0,
+        blocked_count=(batch_response.blocked_count if batch_response is not None else 0) + queue_failed_count,
+        batch=batch_response,
+        drafts=rows,
+    )
+
+
 @router.get("/email-drafts/{draft_id}", response_model=EmailDraftResponse)
 def get_email_draft(draft_id: str, session: Session = Depends(get_session)) -> EmailDraftResponse:
     draft = session.exec(select(EmailDraft).where(EmailDraft.draft_id == draft_id)).first()
@@ -2245,27 +2552,7 @@ def get_sent_message(sent_message_id: str, session: Session = Depends(get_sessio
 def send_batch(request: SendBatchRequest, session: Session = Depends(get_session)) -> SendBatchResponse:
     result = SendBatchService(session=session).approve_and_send(request.intent_ids, request.reviewer_id)
     session.commit()
-    return SendBatchResponse(
-        batch_id=result.batch_id,
-        status=result.status,
-        requested_count=result.requested_count,
-        sent_count=result.sent_count,
-        blocked_count=result.blocked_count,
-        items=[
-            SendBatchItemResponse(
-                intent_id=item.intent_id,
-                status=item.status,
-                approval_id=item.approval_id,
-                gate_result_id=item.gate_result_id,
-                reservation_id=item.reservation_id,
-                sent_message_id=item.sent_message_id,
-                outreach_record_id=item.outreach_record_id,
-                reason_codes=item.reason_codes,
-                detail=item.detail,
-            )
-            for item in result.items
-        ],
-    )
+    return _send_batch_response(result)
 
 
 @router.post("/outreach-records/{outreach_record_id}/resolve", response_model=OutreachResolutionResponse)

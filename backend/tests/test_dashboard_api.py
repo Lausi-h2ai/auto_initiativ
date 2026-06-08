@@ -8,6 +8,7 @@ from backend.app.db import session as db_session_module
 from backend.app.db.models import (
     Company,
     Contact,
+    EmailDraft,
     FitEvaluation,
     ImportedGateResult,
     OutreachRecord,
@@ -847,6 +848,101 @@ def test_email_drafts_list_detail_and_filters(client, runs_root):
     _assert_single_match(client, "/email-drafts", {"has_review_flags": False}, "draft_id", "draft-1")
     _assert_no_match(client, "/email-drafts", {"contact_id": "missing-contact"})
     _assert_no_match(client, "/email-drafts", {"has_review_flags": True})
+
+
+def test_outbox_drafts_returns_simple_completed_draft_rows(client, runs_root):
+    output = copy_valid_run(runs_root, "outbox-drafts")
+    attachments = output / "attachments"
+    attachments.mkdir(exist_ok=True)
+    (attachments / "cv.pdf").write_bytes(b"%PDF-1.4\nfake cv\n")
+    response = client.post("/runs/outbox-drafts/import")
+    assert response.status_code == 200
+
+    rows = _items(client.get("/outbox/drafts"))
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["company_name"] == "Example Robotics"
+    assert row["email_address"] == "alex.hiring@example.com"
+    assert row["status"] == "ready"
+    assert row["status_label"] == "Ready"
+    assert row["email_url"] == "/email-drafts/draft-1"
+    assert row["cv"]["url"] == "/application-drafts/draft-1/attachments/attachment-1"
+    assert "review_flags" not in row
+    assert "claim_refs" not in row
+
+
+def test_outbox_drafts_uses_only_narrow_blocker_labels(client, runs_root):
+    output = copy_valid_run(runs_root, "outbox-blockers")
+    attachments = output / "attachments"
+    attachments.mkdir(exist_ok=True)
+    (attachments / "cv.pdf").write_bytes(b"%PDF-1.4\nfake cv\n")
+    response = client.post("/runs/outbox-blockers/import")
+    assert response.status_code == 200
+    with Session(db_session_module.engine) as session:
+        draft = session.exec(select(EmailDraft)).one()
+        contact = session.exec(select(Contact)).one()
+        contact.raw_email = ""
+        session.add(contact)
+        session.commit()
+
+    rows = _items(client.get("/outbox/drafts"))
+
+    assert rows[0]["status"] == "blocked"
+    assert rows[0]["status_label"] == "Missing email"
+    assert rows[0]["blocker_code"] == "missing_email"
+
+
+def test_outbox_send_all_queues_ready_drafts_through_backend_send_flow(client, db_session, runs_root):
+    output = copy_valid_run(runs_root, "outbox-send-all")
+    attachments = output / "attachments"
+    attachments.mkdir(exist_ok=True)
+    (attachments / "cv.pdf").write_bytes(b"%PDF-1.4\nfake cv\n")
+    response = client.post("/runs/outbox-send-all/import")
+    assert response.status_code == 200
+    promoted = OnboardingPromotionService(db_session).promote_run_snapshots(
+        "outbox-send-all",
+        SnapshotPromotionRequest(
+            reviewer_id="test-reviewer",
+            confirm_user_profile=True,
+            confirm_master_cv_profile=True,
+            confirm_policy=True,
+        ),
+    )
+    assert promoted.status == "approved"
+    for gate_result in db_session.exec(select(ImportedGateResult)).all():
+        db_session.delete(gate_result)
+    for send_intent in db_session.exec(select(SendIntent)).all():
+        db_session.delete(send_intent)
+    db_session.commit()
+
+    result = client.post("/outbox/send-all", json={"reviewer_id": "local-user"})
+
+    assert result.status_code == 200
+    body = result.json()
+    assert body["requested_count"] == 1
+    assert body["sent_count"] == 0
+    assert body["blocked_count"] == 1
+    assert body["batch"]["items"][0]["status"] == "send_disabled"
+    assert body["drafts"][0]["status"] == "ready"
+
+
+def test_outbox_send_all_blocks_already_contacted_company(client, db_session, runs_root):
+    output = copy_valid_run(runs_root, "outbox-dedupe")
+    attachments = output / "attachments"
+    attachments.mkdir(exist_ok=True)
+    (attachments / "cv.pdf").write_bytes(b"%PDF-1.4\nfake cv\n")
+    response = client.post("/runs/outbox-dedupe/import")
+    assert response.status_code == 200
+    _add_outreach_record()
+
+    rows = _items(client.get("/outbox/drafts"))
+    result = client.post("/outbox/send-all", json={"reviewer_id": "local-user"})
+
+    assert rows[0]["status_label"] == "Already contacted"
+    assert result.status_code == 200
+    assert result.json()["requested_count"] == 0
+    assert result.json()["sent_count"] == 0
 
 
 def test_send_intents_list_detail_and_filters(client, runs_root):

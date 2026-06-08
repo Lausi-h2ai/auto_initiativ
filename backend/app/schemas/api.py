@@ -639,6 +639,55 @@ class SentMessageResponse(BaseModel):
     accepted_at: datetime | None = None
 
 
+class OutboxAttachmentLink(BaseModel):
+    attachment_id: str
+    label: str
+    url: str
+    kind: str | None = None
+
+
+class OutboxDraftResponse(BaseModel):
+    draft_id: str
+    intent_id: str | None = None
+    company_id: str
+    company_name: str
+    email_address: str | None = None
+    drafted_at: datetime
+    status: str
+    status_label: str
+    blocker_code: str | None = None
+    subject: str
+    body_text: str
+    email_url: str
+    cv: OutboxAttachmentLink | None = None
+
+
+class OutboxSentResponse(BaseModel):
+    sent_message_id: str
+    company_id: str | None = None
+    company_name: str
+    email_address: str
+    sent_at: datetime
+    status: str
+    subject: str | None = None
+    body_text: str | None = None
+    email_url: str
+    cv: OutboxAttachmentLink | None = None
+    provider_url: str | None = None
+
+
+class OutboxSendAllRequest(BaseModel):
+    reviewer_id: str = Field(default="local-user", min_length=1, max_length=120)
+
+
+class OutboxSendAllResponse(BaseModel):
+    requested_count: int
+    sent_count: int
+    blocked_count: int
+    batch: SendBatchResponse | None = None
+    drafts: list[OutboxDraftResponse]
+
+
 class OutreachResolutionRequest(BaseModel):
     resolution: str = Field(pattern="^(mark_sent|mark_not_sent|keep_blocked|void_record)$")
     reviewer_id: str = Field(min_length=1, max_length=120)

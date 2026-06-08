@@ -299,6 +299,7 @@ const state = {
   workspaceDraftIds: [],
   workspaceIntentIds: [],
   workspaceBlockedIntentIds: [],
+  activeOutboxTab: "drafted",
   selectedIndex: null,
   controllers: new Map(),
   filters: {},
@@ -953,12 +954,15 @@ function opportunityCard(row) {
 async function renderOutreachWorkspace() {
   workspaceLoading("Outreach");
   try {
-    const data = await loadWorkspaceData({ includeOnboarding: false });
+    const [summary, emailDelivery, drafts, sent] = await Promise.all([
+      fetchJson("/dashboard/summary"),
+      fetchJson("/email-delivery/settings"),
+      fetchJson("/outbox/drafts"),
+      fetchJson("/outbox/sent"),
+    ]);
+    const data = { summary, emailDelivery, drafts, sent };
     state.emailDelivery = data.emailDelivery;
-    state.rows = data.sendIntents || [];
-    state.workspaceDraftIds = (data.drafts || []).filter((draft) => !draft.queued_send_intent_id).map((draft) => draft.draft_id).filter(Boolean);
-    state.workspaceIntentIds = confirmableIntentIds(data);
-    state.workspaceBlockedIntentIds = blockedIntentIds(data);
+    state.rows = state.activeOutboxTab === "sent" ? data.sent : data.drafts;
     renderSummary(data.summary);
     renderWorkspaceBody(outreachWorkspaceMarkup(data));
     bindWorkspaceActions();
@@ -966,9 +970,9 @@ async function renderOutreachWorkspace() {
     elements.apiState.className = deliveryStateClass(data.emailDelivery);
     elements.detailJson.textContent = JSON.stringify({
       delivery: data.emailDelivery,
-      send_intents: data.sendIntents?.length || 0,
-      sent_messages: data.sentMessages?.length || 0,
-      contacted: data.outreachRecords?.length || 0,
+      drafted: data.drafts.length,
+      ready: data.drafts.filter((row) => row.status === "ready").length,
+      sent: data.sent.length,
     }, null, 2);
   } catch (error) {
     elements.apiState.textContent = "Outreach load failed";
@@ -978,73 +982,106 @@ async function renderOutreachWorkspace() {
 }
 
 function outreachWorkspaceMarkup(data) {
-  const pendingActions = buildPendingActions(data);
-  const confirmableCount = confirmableIntentIds(data).length;
-  const blockedCount = blockedIntentIds(data).length;
   const drafts = data.drafts || [];
-  const unqueuedDrafts = drafts.filter((draft) => !draft.queued_send_intent_id);
-  const history = [...(data.sentMessages || []), ...(data.outreachRecords || [])].slice(0, 12);
+  const sent = data.sent || [];
+  const readyCount = drafts.filter((row) => row.status === "ready").length;
+  const blockedCount = drafts.filter((row) => row.status === "blocked").length;
+  const shownRows = state.activeOutboxTab === "sent" ? sent : drafts;
   return `
     <div class="assistant-workspace">
       <section class="workspace-hero">
         <div>
           <span class="profile-kicker">Outreach</span>
-          <h3>Prepared messages are ready for gate checks and confirmation.</h3>
-          <p>Recheck blocked drafts after agents update evidence or policy, then confirm the messages that pass.</p>
+          <h3>Drafted emails and sent history.</h3>
+          <p>Send completed email and CV drafts, and keep contacted companies out of future sends.</p>
         </div>
         <div class="workspace-status-strip">
-          ${statusMetric("To confirm", pendingActions.filter((item) => item.type === "confirm").length, "warn")}
-          ${statusMetric("Needs fix", pendingActions.filter((item) => item.type === "fix").length, "danger")}
-          ${statusMetric("Unqueued drafts", unqueuedDrafts.length, "")}
+          ${statusMetric("Ready", readyCount, "ok")}
+          ${statusMetric("Blocked", blockedCount, "warn")}
+          ${statusMetric("Sent", sent.length, "ok")}
         </div>
-      </section>
-      <div class="workspace-columns">
-        <section class="workflow-panel action-queue-panel">
-          <div class="workflow-panel-header">
-            <div>
-              <span class="profile-kicker">Review queue</span>
-              <h3>Prepared actions</h3>
-            </div>
-            <div class="workspace-actions">
-              <button class="action-button" type="button" data-recheck-blocked${blockedCount ? "" : " disabled"}>${blockedCount ? "Recheck blocked drafts" : "No blocked drafts"}</button>
-              <button class="action-button primary" type="button" data-confirm-all-shown${confirmableCount ? "" : " disabled"}>${confirmableCount ? "Confirm all shown" : "No confirmable emails"}</button>
-            </div>
-          </div>
-          ${pendingActions.length ? pendingActions.map(actionCard).join("") : emptyWorkspaceState("No prepared action needs you.", "New draft confirmations and remediation tasks will appear here.")}
-        </section>
-        <section class="workflow-panel">
-          <div class="workflow-panel-header">
-            <div>
-              <span class="profile-kicker">Drafts</span>
-              <h3>Ready to queue</h3>
-            </div>
-            <button class="action-button" type="button" data-queue-all-drafts>Queue all drafts</button>
-          </div>
-          ${unqueuedDrafts.length ? unqueuedDrafts.slice(0, 8).map(draftActionCard).join("") : emptyWorkspaceState("No unqueued drafts.", "Application drafts will appear here after agents create them.")}
-        </section>
-      </div>
-      <section class="workflow-panel">
-        <div class="workflow-panel-header">
-          <div>
-            <span class="profile-kicker">Generated drafts</span>
-            <h3>Email drafts and CV attachments</h3>
-          </div>
-          <button class="action-button" type="button" data-advanced-link="drafts">Open all draft records</button>
-        </div>
-        ${drafts.length ? drafts.slice(0, 16).map(generatedDraftCard).join("") : emptyWorkspaceState("No generated email or CV drafts yet.", "When application agents write email drafts and CV PDFs, they will appear here.")}
       </section>
       <section class="workflow-panel">
         <div class="workflow-panel-header">
           <div>
-            <span class="profile-kicker">History</span>
-            <h3>Contacted and sent ledger</h3>
+            <span class="profile-kicker">${state.activeOutboxTab === "sent" ? "Sent" : "Drafted"}</span>
+            <h3>${state.activeOutboxTab === "sent" ? "Companies already contacted" : "Completed email and CV drafts"}</h3>
           </div>
-          <button class="action-button" type="button" data-advanced-link="history">Open records</button>
+          <div class="workspace-actions">
+            <button class="advanced-tab ${state.activeOutboxTab === "drafted" ? "active" : ""}" type="button" data-outbox-tab="drafted">Drafted</button>
+            <button class="advanced-tab ${state.activeOutboxTab === "sent" ? "active" : ""}" type="button" data-outbox-tab="sent">Sent</button>
+            ${state.activeOutboxTab === "drafted"
+              ? `<button class="action-button primary" type="button" data-outbox-send-all${readyCount ? "" : " disabled"}>${readyCount ? `Send all (${readyCount})` : "Nothing ready to send"}</button>`
+              : ""}
+          </div>
         </div>
-        ${history.length ? history.map(outcomeCard).join("") : emptyWorkspaceState("No outreach history yet.", "Backend-created outreach records will appear here.")}
+        ${shownRows.length ? outboxTableMarkup(shownRows, state.activeOutboxTab) : emptyWorkspaceState(
+          state.activeOutboxTab === "sent" ? "No sent emails yet." : "No completed drafts yet.",
+          state.activeOutboxTab === "sent" ? "Sent emails will appear here after the backend accepts or records them." : "Completed email and CV drafts will appear here when the drafting agent finishes.",
+        )}
       </section>
     </div>
   `;
+}
+
+function outboxTableMarkup(rows, tab) {
+  const isSent = tab === "sent";
+  return `
+    <table class="artifact-table outbox-table">
+      <thead>
+        <tr>
+          <th>Company</th>
+          <th>Email address</th>
+          <th>${isSent ? "Sent date" : "Drafted date"}</th>
+          <th>Status</th>
+          <th>Email text</th>
+          <th>CV</th>
+          ${isSent ? "<th>Provider</th>" : ""}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => isSent ? outboxSentRow(row) : outboxDraftRow(row)).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function outboxDraftRow(row) {
+  return `
+    <tr>
+      <td>${mainCell(row.company_name || row.company_id, row.company_id)}</td>
+      <td>${text(row.email_address || "Missing")}</td>
+      <td>${dateTime(row.drafted_at)}</td>
+      <td>${outboxStatus(row)}</td>
+      <td><button class="action-button compact" type="button" data-outbox-email="${escapeHtml(row.draft_id)}">Open email</button></td>
+      <td>${outboxCvLink(row.cv)}</td>
+    </tr>
+  `;
+}
+
+function outboxSentRow(row) {
+  return `
+    <tr>
+      <td>${mainCell(row.company_name || row.company_id || row.company_policy_key, row.company_id || "")}</td>
+      <td>${text(row.email_address)}</td>
+      <td>${dateTime(row.sent_at)}</td>
+      <td>${statusTag(row.status)}</td>
+      <td><button class="action-button compact" type="button" data-outbox-email="${escapeHtml(row.sent_message_id)}">Open email</button></td>
+      <td>${outboxCvLink(row.cv)}</td>
+      <td>${row.provider_url ? `<a class="action-button compact" href="${escapeHtml(row.provider_url)}" target="_blank" rel="noreferrer">Open</a>` : text("None", "muted")}</td>
+    </tr>
+  `;
+}
+
+function outboxStatus(row) {
+  if (row.status === "ready") return tag(row.status_label || "Ready", "ok");
+  if (row.status === "sent") return tag(row.status_label || "Sent", "ok");
+  return tag(row.status_label || "Blocked", "warn");
+}
+
+function outboxCvLink(cv) {
+  if (!cv || !cv.url) return text("Missing", "muted");
+  return `<a class="action-button compact" href="${escapeHtml(cv.url)}" target="_blank" rel="noopener">${escapeHtml(cv.label || "Open PDF")}</a>`;
 }
 
 function generatedDraftCard(draft) {
@@ -1201,6 +1238,59 @@ function bindWorkspaceActions() {
       await sendIntentBatch(state.workspaceIntentIds);
     });
   });
+  document.querySelectorAll("[data-outbox-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeOutboxTab = button.dataset.outboxTab || "drafted";
+      refresh();
+    });
+  });
+  document.querySelectorAll("[data-outbox-send-all]").forEach((button) => {
+    button.addEventListener("click", () => outboxSendAll());
+  });
+  document.querySelectorAll("[data-outbox-email]").forEach((button) => {
+    button.addEventListener("click", () => showOutboxEmail(button.dataset.outboxEmail || ""));
+  });
+}
+
+function showOutboxEmail(id) {
+  const row = state.rows.find((item) => item.draft_id === id || item.sent_message_id === id);
+  if (!row) return;
+  elements.detailSubtitle.textContent = row.subject || "Email text";
+  elements.detailJson.textContent = row.body_text || "No email body recorded.";
+}
+
+async function outboxSendAll() {
+  const readyCount = state.rows.filter((row) => row.status === "ready").length;
+  if (!readyCount) {
+    elements.apiState.textContent = "Nothing ready to send";
+    elements.apiState.className = "state-pill warn";
+    return;
+  }
+  const delivery = state.emailDelivery || (await fetchJson("/email-delivery/settings"));
+  state.emailDelivery = delivery;
+  const ok = window.confirm(`Send ${readyCount} ready email${readyCount === 1 ? "" : "s"}?\n\n${deliveryConfirmText(delivery)}`);
+  if (!ok) return;
+  elements.apiState.textContent = "Sending ready drafts";
+  elements.apiState.className = "state-pill";
+  try {
+    const reviewerId = localStorage.getItem("sendReviewerId") || "local-user";
+    localStorage.setItem("sendReviewerId", reviewerId);
+    const result = await fetchJson("/outbox/send-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewer_id: reviewerId }),
+    });
+    elements.apiState.textContent = `Send all complete: ${result.sent_count} sent, ${result.blocked_count} blocked`;
+    elements.apiState.className = result.blocked_count ? "state-pill warn" : "state-pill ok";
+    elements.detailSubtitle.textContent = "Send all result";
+    elements.detailJson.textContent = JSON.stringify(result.batch || result, null, 2);
+    await refresh();
+  } catch (error) {
+    elements.apiState.textContent = "Send all failed";
+    elements.apiState.className = "state-pill error";
+    elements.detailSubtitle.textContent = "Send all error";
+    elements.detailJson.textContent = error.stack || error.message;
+  }
 }
 
 async function recheckBlockedIntents(intentIds) {

@@ -131,6 +131,15 @@ def test_sent_messages_endpoint_exposes_frozen_payload_and_provider_link(client,
     assert detail.status_code == 200
     assert detail.json()["attachments"][0]["attachment_id"] == "attachment-1"
 
+    outbox = client.get("/outbox/sent")
+    assert outbox.status_code == 200
+    outbox_body = outbox.json()
+    assert len(outbox_body) == 1
+    assert outbox_body[0]["company_name"] == "Example Robotics"
+    assert outbox_body[0]["email_address"] == "alex.hiring@example.com"
+    assert outbox_body[0]["body_text"].startswith("Hello")
+    assert outbox_body[0]["cv"]["url"] == "/application-drafts/draft-1/attachments/attachment-1"
+
 
 def test_known_unsent_provider_failure_does_not_create_blocking_outreach(db_session, runs_root):
     _import_approved_run(db_session, runs_root)
