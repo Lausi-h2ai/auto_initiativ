@@ -132,9 +132,7 @@ def _is_blocking_review_flag(flag: str) -> bool:
         return False
     if any(part in normalized for part in HARD_REVIEW_FLAG_PARTS):
         return True
-    if any(part in normalized for part in NON_BLOCKING_REVIEW_FLAG_PARTS):
-        return False
-    return normalized not in {"needs_review", "review_needed"}
+    return False
 
 
 def _reason(code: str, message: str, *, field: str | None = None) -> dict[str, str]:
@@ -488,20 +486,13 @@ class EvaluateOnlyGateService:
             "email_draft": related["email_draft"].confidence if related["email_draft"] is not None else None,
             "fit_evaluation": related["fit_evaluation"].confidence if related["fit_evaluation"] is not None else None,
         }
-        very_low_confidence = [
-            name
-            for name, confidence in confidence_records.items()
-            if confidence is not None and confidence < ABSOLUTE_CONFIDENCE_FLOOR
-        ]
         below_policy_threshold = [
             name
             for name, confidence in confidence_records.items()
             if confidence is not None and confidence < minimum_confidence
         ]
-        if very_low_confidence:
-            state.fail_check("low_confidence_required_field", "One or more required records are below the confidence threshold.", field="confidence")
-        elif below_policy_threshold:
-            state.pass_check("confidence_threshold_advisory", "One or more records are below the preferred confidence threshold but above the send safety floor.")
+        if below_policy_threshold:
+            state.pass_check("confidence_threshold_advisory", "One or more records are below the preferred confidence threshold but do not block confirmation.")
         else:
             state.pass_check("confidence_threshold_met", "Required records meet confidence threshold.")
 

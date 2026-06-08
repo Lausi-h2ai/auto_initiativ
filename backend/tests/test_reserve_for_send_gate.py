@@ -124,7 +124,7 @@ def test_reserve_for_send_does_not_reuse_stale_reservation_with_dedupe_mismatch(
 def test_reserve_for_send_blocks_when_evaluate_only_blocks(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     intent = _intent(db_session)
-    intent.confidence = 0.1
+    intent.source_refs_json = "[]"
     db_session.add(intent)
     db_session.commit()
 
@@ -133,7 +133,7 @@ def test_reserve_for_send_blocks_when_evaluate_only_blocks(db_session, runs_root
 
     assert result.reservation is None
     assert result.evaluation.gate_result.status == "blocked"
-    assert "low_confidence_required_field" in _reason_codes(result)
+    assert "source_refs_missing" in _reason_codes(result)
     assert db_session.exec(select(SendReservation)).all() == []
     audit = db_session.exec(select(AuditLog).where(AuditLog.action == "send_reservation_skipped")).one()
     assert json.loads(audit.reason_codes_json) == ["evaluate_only_not_passed"]

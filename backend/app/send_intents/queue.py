@@ -191,9 +191,9 @@ class DraftSendIntentQueueService:
     def _refresh_existing_intent(self, intent: SendIntent, draft: EmailDraft) -> None:
         company = self.session.get(Company, draft.company_id) if draft.company_id is not None else None
         contact = self.session.get(Contact, draft.contact_id) if draft.contact_id is not None else None
-        user_profile = self.session.get(UserProfileSnapshot, intent.user_profile_snapshot_id) if intent.user_profile_snapshot_id else None
-        master_cv = self.session.get(MasterCvProfileSnapshot, intent.master_cv_profile_snapshot_id) if intent.master_cv_profile_snapshot_id else None
-        policy = self.session.get(PolicySnapshot, intent.policy_snapshot_id) if intent.policy_snapshot_id else None
+        user_profile = self._latest_approved(UserProfileSnapshot)
+        master_cv = self._latest_approved(MasterCvProfileSnapshot)
+        policy = self._latest_approved(PolicySnapshot)
         if company is None or contact is None or user_profile is None or master_cv is None or policy is None:
             return
         payload = self._payload(
@@ -205,9 +205,28 @@ class DraftSendIntentQueueService:
             master_cv=master_cv,
             policy=policy,
         )
+        intent.company_id = company.id
+        intent.contact_id = contact.id
+        intent.raw_recipient_email = payload["recipient_email"]
+        intent.normalized_recipient_email = normalize_recipient_email(payload["recipient_email"])
+        intent.recipient_name = payload.get("recipient_name")
+        intent.company_domain = payload.get("company_domain")
+        intent.subject = draft.subject
+        intent.body_text = draft.body_text
         intent.raw_json = _json_dumps(payload)
         intent.attachments_json = _json_dumps(payload["attachments"])
+        intent.source_refs_json = draft.source_refs_json
+        intent.claim_refs_json = draft.claim_refs_json
+        intent.policy_snapshot_id = policy.id
+        intent.external_policy_id = policy.policy_id
+        intent.user_profile_snapshot_id = user_profile.id
+        intent.external_profile_id = user_profile.profile_id
+        intent.master_cv_profile_snapshot_id = master_cv.id
+        intent.external_master_cv_profile_id = master_cv.profile_id
         intent.body_html = draft.body_html
+        intent.confidence = draft.confidence
+        intent.review_flags_json = draft.review_flags_json
+        intent.status = "queued_for_send"
         intent.updated_at = utc_now()
         self.session.add(intent)
         self.session.flush()

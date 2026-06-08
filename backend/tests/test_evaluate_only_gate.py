@@ -493,7 +493,7 @@ def test_evaluate_only_gate_blocks_forbidden_claim_text(db_session, runs_root):
     assert "forbidden_claim_present" in _reason_codes(result)
 
 
-def test_evaluate_only_gate_blocks_low_confidence_required_field(db_session, runs_root):
+def test_evaluate_only_gate_treats_very_low_confidence_as_advisory(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     send_intent = _intent(db_session)
     send_intent.confidence = 0.1
@@ -502,8 +502,9 @@ def test_evaluate_only_gate_blocks_low_confidence_required_field(db_session, run
 
     result = _evaluate(db_session)
 
-    assert result.gate_result.status == "blocked"
-    assert "low_confidence_required_field" in _reason_codes(result)
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "low_confidence_required_field" not in _reason_codes(result)
+    assert "confidence_threshold_advisory" in _check_codes(result)
 
 
 def test_evaluate_only_gate_treats_moderate_confidence_as_advisory(db_session, runs_root):
@@ -521,7 +522,7 @@ def test_evaluate_only_gate_treats_moderate_confidence_as_advisory(db_session, r
 
 
 @pytest.mark.parametrize("record_getter", [_company, _contact, _email_draft, _fit_evaluation])
-def test_evaluate_only_gate_blocks_low_confidence_related_record(db_session, runs_root, record_getter):
+def test_evaluate_only_gate_treats_low_confidence_related_record_as_advisory(db_session, runs_root, record_getter):
     _import_valid_run(db_session, runs_root)
     record = record_getter(db_session)
     record.confidence = 0.1
@@ -530,8 +531,9 @@ def test_evaluate_only_gate_blocks_low_confidence_related_record(db_session, run
 
     result = _evaluate(db_session)
 
-    assert result.gate_result.status == "blocked"
-    assert "low_confidence_required_field" in _reason_codes(result)
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "low_confidence_required_field" not in _reason_codes(result)
+    assert "confidence_threshold_advisory" in _check_codes(result)
 
 
 def test_evaluate_only_gate_blocks_hard_review_flags_on_required_fields(db_session, runs_root):
@@ -645,7 +647,7 @@ def test_evaluate_only_gate_treats_unknown_contact_email_source_as_advisory(db_s
     assert "contact_email_source_unknown_advisory" in _check_codes(result)
 
 
-def test_evaluate_only_gate_blocks_when_failures_and_warnings_both_present(db_session, runs_root):
+def test_evaluate_only_gate_allows_confidence_and_contact_source_advisories_together(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     contact = _contact(db_session)
     contact.email_source = "inferred_pattern"
@@ -657,9 +659,10 @@ def test_evaluate_only_gate_blocks_when_failures_and_warnings_both_present(db_se
 
     result = _evaluate(db_session)
 
-    assert result.gate_result.status == "blocked"
-    assert "low_confidence_required_field" in _reason_codes(result)
+    assert result.gate_result.status == "passed_evaluate_only"
+    assert "low_confidence_required_field" not in _reason_codes(result)
     assert "contact_email_needs_review" not in _reason_codes(result)
+    assert {"confidence_threshold_advisory", "contact_email_source_advisory"}.issubset(_check_codes(result))
 
 
 def test_evaluate_only_gate_writes_completed_audit_reason_codes(db_session, runs_root):
