@@ -568,6 +568,12 @@ def test_evaluate_only_gate_allows_nonblocking_review_flags(db_session, runs_roo
     [
         "needs_review",
         "recipient_email_inferred_generic_needs_manual_verification",
+        "recipient_email_inferred_needs_manual_review",
+        "fit_evaluation_needs_review",
+        "remote_policy_unconfirmed",
+        "domain_experience_uncertain",
+        "company_site_blocked_by_cloudflare_for_page_verification",
+        "generic_email_inferred_not_verified",
         "language_may_need_english_review_due_english_first_company_site",
         "specific_open_roles_not_verified",
         "master_cv_profile_contains_no_structured_claim_ids",

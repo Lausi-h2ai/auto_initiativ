@@ -85,6 +85,27 @@ def test_reserve_for_send_is_idempotent_for_same_intent(db_session, runs_root):
     assert "send_reservation_reused" in audit_actions
 
 
+def test_reserve_for_send_reuses_known_unsent_reservation_for_retry(db_session, runs_root):
+    _import_valid_run(db_session, runs_root)
+    first = ReserveForSendGateService(db_session).reserve("intent-1")
+    assert first.reservation is not None
+    first.reservation.status = "failed_known_unsent"
+    db_session.add(first.reservation)
+    db_session.commit()
+
+    second = ReserveForSendGateService(db_session).reserve("intent-1")
+    db_session.commit()
+
+    assert second.reservation is not None
+    assert second.reservation.reservation_id == first.reservation.reservation_id
+    assert second.reservation.status == "reserved"
+    assert second.evaluation.gate_result.status == "reserved_for_send"
+    reservations = db_session.exec(select(SendReservation)).all()
+    assert len(reservations) == 1
+    audit_actions = [audit.action for audit in db_session.exec(select(AuditLog)).all()]
+    assert "send_reservation_reused" in audit_actions
+
+
 def test_reserve_for_send_does_not_reuse_stale_reservation_with_company_mismatch(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     first = ReserveForSendGateService(db_session).reserve("intent-1")

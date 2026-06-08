@@ -12,6 +12,7 @@ from backend.app.gates.evaluate_only import GateEvaluation, EvaluateOnlyGateServ
 
 
 ACTIVE_RESERVATION_STATUSES = {"active", "reserved", "attempting_provider_send", "outcome_uncertain"}
+RETRYABLE_RESERVATION_STATUSES = {"failed_known_unsent"}
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,16 @@ class ReserveForSendGateService:
             dedupe_company=dedupe_company,
         )
         if existing is not None:
+            existing.status = "reserved"
+            existing.notes_json = _json_dumps(
+                {
+                    **_json_loads(existing.notes_json, {}),
+                    "mode": "reserve_for_send",
+                    "gate_result_id": evaluation.gate_result.gate_result_id,
+                    "reused_after_known_unsent": True,
+                }
+            )
+            self.session.add(existing)
             self._mark_reserved(evaluation, existing)
             self._audit_reservation_created(evaluation.gate_result, existing, reused=True)
             return ReservationGateResult(evaluation=evaluation, reservation=existing)
@@ -137,7 +148,7 @@ class ReserveForSendGateService:
             and reservation.company_id == company.id
             and reservation.company_policy_key == company.company_policy_key
             and reservation.policy_snapshot_id == intent.policy_snapshot_id
-            and reservation.status in ACTIVE_RESERVATION_STATUSES
+            and reservation.status in ACTIVE_RESERVATION_STATUSES | RETRYABLE_RESERVATION_STATUSES
             and reservation.dedupe_recipient == dedupe_recipient
             and reservation.dedupe_company == dedupe_company
         ):

@@ -54,6 +54,8 @@ NON_BLOCKING_REVIEW_FLAG_PARTS = {
     "language_may_need",
     "english_review",
     "contact_email_source",
+    "blocked_by_cloudflare",
+    "not_verified",
 }
 HARD_REVIEW_FLAG_PARTS = {
     "blocked",
@@ -129,6 +131,8 @@ def _review_flags(value: str | None) -> list[str]:
 def _is_blocking_review_flag(flag: str) -> bool:
     normalized = flag.casefold()
     if normalized in NON_BLOCKING_REVIEW_FLAGS:
+        return False
+    if any(part in normalized for part in NON_BLOCKING_REVIEW_FLAG_PARTS):
         return False
     if any(part in normalized for part in HARD_REVIEW_FLAG_PARTS):
         return True
