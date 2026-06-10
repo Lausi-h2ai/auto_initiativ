@@ -823,10 +823,13 @@ function buildActiveWork(data) {
   }
   if (data.campaignStatus) {
     const counts = data.campaignStatus.artifact_counts || {};
+    const researchState = data.campaignStatus.state || {};
+    const target = researchState.target_company_count;
+    const progress = target ? `${counts.companies || 0}/${target} companies` : `${counts.companies || 0} companies`;
     items.push({
       title: "Company research",
       status: data.campaignStatus.status,
-      detail: `${counts.companies || 0} companies · ${counts.contacts || 0} contacts · ${counts.fit_evaluations || 0} evaluations`,
+      detail: `${progress} / ${counts.contacts || 0} contacts / ${counts.fit_evaluations || 0} evaluations`,
       action: "Opportunities",
     });
   }
@@ -1615,8 +1618,12 @@ function renderCompanyResearchPanel() {
   const runId = result?.run_id || status?.run_id || state.campaign.runId || "";
   const counts = status?.artifact_counts || {};
   const importState = status?.import_state || {};
+  const researchState = status?.state || {};
   const outputPath = result?.output_path || importState.output_path || "";
   const updatedAt = status?.state?.updated_at || "";
+  const targetCompanies = researchState.target_company_count || 30;
+  const elapsedSeconds = researchState.elapsed_seconds;
+  const continuationCount = researchState.continuation_count || 0;
   const pollLabel = runId && status && !isCompanyResearchTerminal(status) ? "Auto-refreshing every 10 seconds" : "";
   return `
     <section class="workflow-panel company-research-panel">
@@ -1644,6 +1651,10 @@ function renderCompanyResearchPanel() {
           <span>Time budget</span>
           <input id="companyResearchTimeBudget" type="number" min="1" max="240" step="1" value="30">
         </label>
+        <label class="filter-field">
+          <span>Target companies</span>
+          <input id="companyResearchTargetCompanies" type="number" min="1" max="100" step="1" value="${escapeHtml(String(targetCompanies))}">
+        </label>
         <label class="filter-field campaign-notes">
           <span>Notes</span>
           <input id="companyResearchNotes" type="text" placeholder="Optional constraints or preferences">
@@ -1657,9 +1668,11 @@ function renderCompanyResearchPanel() {
           ${status ? `
             <div class="campaign-status-grid">
               <span>${statusTag(status.status)}</span>
-              <span>${escapeHtml(String(counts.companies || 0))} companies</span>
+              <span>${escapeHtml(String(counts.companies || 0))}/${escapeHtml(String(targetCompanies))} companies</span>
               <span>${escapeHtml(String(counts.contacts || 0))} contacts</span>
               <span>${escapeHtml(String(counts.fit_evaluations || 0))} fit evaluations</span>
+              <span>${escapeHtml(String(continuationCount))} continuations</span>
+              <span>${elapsedSeconds == null ? "elapsed unknown" : `${escapeHtml(String(Math.round(Number(elapsedSeconds))))}s elapsed`}</span>
               <span>${escapeHtml(importState.run_status || "not imported")}</span>
               <span>${escapeHtml(String(status.validation?.passed || 0))} valid files</span>
             </div>
@@ -2034,6 +2047,7 @@ async function companyResearchLaunch() {
   const runId = document.querySelector("#companyResearchRunId")?.value?.trim() || null;
   const roleFocus = document.querySelector("#companyResearchRoleFocus")?.value?.trim() || "Profile-aligned roles";
   const timeBudget = Number.parseInt(document.querySelector("#companyResearchTimeBudget")?.value || "30", 10);
+  const targetCompanies = Number.parseInt(document.querySelector("#companyResearchTargetCompanies")?.value || "30", 10);
   const notes = document.querySelector("#companyResearchNotes")?.value?.trim() || null;
   setOnboardingStatus("Launching company research run...");
   try {
@@ -2044,6 +2058,7 @@ async function companyResearchLaunch() {
         run_id: runId,
         role_focus: roleFocus,
         time_budget_minutes: Number.isFinite(timeBudget) ? timeBudget : 30,
+        max_companies: Number.isFinite(targetCompanies) ? targetCompanies : 30,
         notes,
       }),
     });

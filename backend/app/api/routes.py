@@ -1278,6 +1278,7 @@ def prepare_company_research_campaign(
         role_focus=request.role_focus,
         locations=target_locations,
         time_budget_minutes=request.time_budget_minutes,
+        max_companies=request.max_companies,
         notes=request.notes,
     )
     existing_companies = _known_company_summaries(session, user_profile)
@@ -1304,6 +1305,7 @@ def prepare_company_research_campaign(
                 "master_cv_snapshot_id": master_cv.id,
                 "policy_snapshot_id": policy.id,
                 "existing_company_count": len(existing_companies),
+                "target_company_count": request.max_companies,
             },
         )
     )

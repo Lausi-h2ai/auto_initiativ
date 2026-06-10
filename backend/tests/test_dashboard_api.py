@@ -330,6 +330,7 @@ def test_company_research_campaign_prepare_and_imports_company_fit(client, db_se
             "run_id": "campaign-one",
             "role_focus": "Backend platform roles",
             "time_budget_minutes": 15,
+            "max_companies": 24,
         },
     )
 
@@ -343,7 +344,7 @@ def test_company_research_campaign_prepare_and_imports_company_fit(client, db_se
     existing_companies = json.loads((runs_root / "campaign-one" / "input" / "existing_companies.json").read_text(encoding="utf-8"))
     assert campaign["time_budget_minutes"] == 15
     assert campaign["locations"] == ["Berlin"]
-    assert "max_companies" not in campaign
+    assert campaign["max_companies"] == 24
     assert existing_companies["companies"][0]["company_id"] == existing_company.company_id
     assert existing_companies["companies"][0]["name"] == "Application Robotics"
     assert existing_companies["companies"][0]["domain"] == "application.example"

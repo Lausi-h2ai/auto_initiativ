@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 STATE_FILENAME = "company_research_state.json"
 EVENTS_FILENAME = "company_research_events.jsonl"
 MAX_LOG_EVENTS = 100
+DEFAULT_TARGET_COMPANY_COUNT = 30
+MAX_CONTINUATION_PROMPTS = 24
+MIN_CONTINUATION_TIMEOUT_SECONDS = 15
+MIN_PROMPT_TIMEOUT_SECONDS = 1
 
 _RESEARCH_CLIENTS: dict[str, PiRpcClientProtocol] = {}
 _RESEARCH_THREADS: dict[str, threading.Thread] = {}
@@ -42,6 +47,30 @@ def _utc_now() -> str:
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _find_event_value(value: Any, keys: set[str]) -> Any:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in keys:
+                return item
+            nested = _find_event_value(item, keys)
+            if nested is not None:
+                return nested
+    if isinstance(value, list):
+        for item in value:
+            nested = _find_event_value(item, keys)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _latest_stop_reason(events: list[dict[str, Any]]) -> str | None:
+    for event in reversed(events):
+        reason = _find_event_value(event, {"stopReason", "stop_reason", "reason"})
+        if reason:
+            return str(reason)
+    return None
 
 
 def safe_research_env(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -156,10 +185,76 @@ class CompanyResearchRuntime:
     def _run_agent(self, run_id: str) -> None:
         try:
             client = self._client(run_id)
+            prompt_timeout = self._prompt_timeout_seconds(run_id)
+            target_company_count = self._target_company_count(run_id)
+            started_monotonic = time.monotonic()
+            continuation_count = 0
             prompt = self._prompt(run_id)
-            result = client.prompt(prompt, timeout_seconds=self._prompt_timeout_seconds(run_id))
-            for event in result.events:
-                self._append_event(run_id, event)
+            self._write_state(
+                run_id,
+                "running",
+                prompt_timeout_seconds=prompt_timeout,
+                target_company_count=target_company_count,
+                continuation_count=continuation_count,
+                elapsed_seconds=0,
+            )
+            while True:
+                remaining_timeout = self._remaining_prompt_timeout(
+                    started_monotonic,
+                    prompt_timeout,
+                )
+                result = client.prompt(prompt, timeout_seconds=remaining_timeout)
+                for event in result.events:
+                    self._append_event(run_id, event)
+                counts = self._artifact_counts(run_id)
+                elapsed_seconds = round(time.monotonic() - started_monotonic, 3)
+                stop_reason = _latest_stop_reason(result.events)
+                self._write_state(
+                    run_id,
+                    "running",
+                    last_reply=result.text,
+                    last_stop_reason=stop_reason,
+                    last_company_count=counts["companies"],
+                    artifact_counts=counts,
+                    elapsed_seconds=elapsed_seconds,
+                    continuation_count=continuation_count,
+                )
+                if not self._should_continue_research(
+                    counts=counts,
+                    target_company_count=target_company_count,
+                    elapsed_seconds=elapsed_seconds,
+                    prompt_timeout_seconds=prompt_timeout,
+                    continuation_count=continuation_count,
+                ):
+                    break
+                continuation_count += 1
+                prompt = self._continuation_prompt(
+                    run_id,
+                    counts=counts,
+                    target_company_count=target_company_count,
+                    elapsed_seconds=elapsed_seconds,
+                    remaining_seconds=max(prompt_timeout - elapsed_seconds, 0),
+                    last_reply=result.text,
+                )
+                self._append_event(
+                    run_id,
+                    {
+                        "type": "company_research_continuation_requested",
+                        "company_count": counts["companies"],
+                        "target_company_count": target_company_count,
+                        "continuation_count": continuation_count,
+                        "elapsed_seconds": elapsed_seconds,
+                    },
+                )
+                self._write_state(
+                    run_id,
+                    "continuing",
+                    continuation_count=continuation_count,
+                    last_company_count=counts["companies"],
+                    elapsed_seconds=elapsed_seconds,
+                )
+            final_counts = self._artifact_counts(run_id)
+            elapsed_seconds = round(time.monotonic() - started_monotonic, 3)
             self._write_state(run_id, "importing", last_reply=result.text, importing_at=_utc_now())
             self._mark_run(run_id, "research_importing", action="company_research_agent_completed", result_status="completed")
             with Session(db_session_module.engine) as session:
@@ -173,6 +268,11 @@ class CompanyResearchRuntime:
                     imported_at=_utc_now(),
                     import_status=import_result.run.status,
                     validation_results=len(import_result.validation_results),
+                    artifact_counts=final_counts,
+                    last_company_count=final_counts["companies"],
+                    target_company_count=target_company_count,
+                    elapsed_seconds=elapsed_seconds,
+                    continuation_count=continuation_count,
                 )
         except Exception as exc:
             self._write_state(run_id, "failed", last_error=str(exc), failed_at=_utc_now(), error_type=type(exc).__name__)
@@ -243,17 +343,78 @@ class CompanyResearchRuntime:
 
     def _prompt_timeout_seconds(self, run_id: str) -> float:
         configured_timeout = self.settings.pi_rpc_research_timeout_seconds
-        campaign_path = self._run_root(run_id) / "input" / "campaign.json"
-        if not campaign_path.exists():
-            return configured_timeout
-        try:
-            campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return configured_timeout
+        campaign = self._campaign(run_id)
         budget = campaign.get("time_budget_minutes") if isinstance(campaign, dict) else None
         if not isinstance(budget, int | float) or budget <= 0:
             return configured_timeout
         return min(configured_timeout, float(budget) * 60 + 60)
+
+    def _campaign(self, run_id: str) -> dict[str, Any]:
+        campaign_path = self._run_root(run_id) / "input" / "campaign.json"
+        if not campaign_path.exists():
+            return {}
+        try:
+            campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        return campaign if isinstance(campaign, dict) else {}
+
+    def _target_company_count(self, run_id: str) -> int:
+        campaign = self._campaign(run_id)
+        raw_target = campaign.get("max_companies")
+        if isinstance(raw_target, int | float) and raw_target > 0:
+            return min(int(raw_target), 100)
+        return DEFAULT_TARGET_COMPANY_COUNT
+
+    def _remaining_prompt_timeout(self, started_monotonic: float, prompt_timeout_seconds: float) -> float:
+        elapsed = time.monotonic() - started_monotonic
+        remaining = prompt_timeout_seconds - elapsed
+        return max(remaining, MIN_PROMPT_TIMEOUT_SECONDS)
+
+    def _should_continue_research(
+        self,
+        *,
+        counts: dict[str, int],
+        target_company_count: int,
+        elapsed_seconds: float,
+        prompt_timeout_seconds: float,
+        continuation_count: int,
+    ) -> bool:
+        if counts["companies"] >= target_company_count:
+            return False
+        if elapsed_seconds >= prompt_timeout_seconds:
+            return False
+        if continuation_count >= MAX_CONTINUATION_PROMPTS:
+            return False
+        if prompt_timeout_seconds - elapsed_seconds < MIN_CONTINUATION_TIMEOUT_SECONDS:
+            return False
+        return True
+
+    def _continuation_prompt(
+        self,
+        run_id: str,
+        *,
+        counts: dict[str, int],
+        target_company_count: int,
+        elapsed_seconds: float,
+        remaining_seconds: float,
+        last_reply: str,
+    ) -> str:
+        return (
+            "Continue the prepared company research task. The previous reply stopped before the backend target was met.\n\n"
+            f"Run ID: {run_id}\n"
+            f"Current artifacts: {counts['companies']} companies, {counts['contacts']} contacts, "
+            f"{counts['fit_evaluations']} fit evaluations.\n"
+            f"Target company count: {target_company_count}.\n"
+            f"Elapsed seconds: {round(elapsed_seconds, 1)}. Approximate remaining seconds: {round(remaining_seconds, 1)}.\n\n"
+            "Do not import or send anything. Keep writing only company, contact, and fit evaluation JSON artifacts under ../output.\n"
+            "Treat companies already present in ../input/existing_companies.json and ../output/companies as duplicates to avoid.\n"
+            "If a public professional contact email is not found quickly, still write the company and fit evaluation and omit the contact file.\n"
+            "Broaden discovery sources before stopping: relevant company directories, local startup ecosystems, funding/news pages, "
+            "product-category searches, careers pages, and employer lists. Continue until the target count is reached or time expires.\n\n"
+            "Previous final reply, for context only:\n"
+            f"{last_reply[-4000:]}"
+        )
 
     def _command(self, run_id: str) -> list[str]:
         provider = self.settings.pi_rpc_research_provider or self.settings.pi_rpc_provider

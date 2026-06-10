@@ -228,7 +228,7 @@ class CompanyResearchCampaignRequest(BaseModel):
     role_focus: str = Field(default="Profile-aligned roles", min_length=1, max_length=240)
     locations: list[str] = Field(default_factory=list)
     time_budget_minutes: int = Field(default=30, ge=1, le=240)
-    max_companies: int | None = Field(default=None, ge=1, le=100)
+    max_companies: int = Field(default=30, ge=1, le=100)
     notes: str | None = Field(default=None, max_length=2000)
 
 

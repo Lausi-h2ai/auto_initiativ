@@ -135,6 +135,7 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "Open PDF",
         "Draft all missing",
         "Time budget",
+        "Target companies",
         "Auto-refreshing every 10 seconds",
         "Generated files and transcript",
         "user_profile.json",
@@ -150,7 +151,6 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
 
     assert "Start Onboarding" not in combined
     assert 'label: "Onboarding"' not in combined
-    assert "Max companies" not in combined
     assert "companyResearchLocations" not in combined
 
 

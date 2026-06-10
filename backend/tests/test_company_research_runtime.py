@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import backend.app.agents.company_research_runtime as company_research_runtime
 from backend.app.agents.company_research_runtime import CompanyResearchRuntime, contain_path, safe_research_env
 from backend.app.core.config import Settings
 
@@ -33,7 +34,7 @@ def test_company_research_runtime_builds_restricted_pi_command(tmp_path: Path):
     assert "--session-dir" in command
     assert command[command.index("--provider") + 1] == "openai-codex"
     assert command[command.index("--model") + 1] == "gpt-5.5"
-    assert command[command.index("--thinking") + 1] == "low"
+    assert command[command.index("--thinking") + 1] == "medium"
 
 
 def test_safe_research_env_filters_secrets_and_sets_runtime_context(monkeypatch):
@@ -101,7 +102,7 @@ def test_company_research_runtime_closes_client_after_prompt_failure(tmp_path: P
     runtime._run_agent("run-1")
 
     assert client.closed is True
-    assert client.timeout_seconds == 34
+    assert client.timeout_seconds == pytest.approx(34, abs=0.1)
     assert "run-1" not in runtime.clients
     state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))
     assert state["status"] == "failed"
@@ -126,3 +127,82 @@ def test_company_research_runtime_uses_campaign_time_budget_for_prompt_timeout(t
     )
 
     assert runtime._prompt_timeout_seconds("run-1") == 180
+
+
+def test_company_research_runtime_continues_until_target_company_count(tmp_path: Path, monkeypatch):
+    class PromptResult:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.events = [{"type": "agent_end", "stopReason": "stop"}]
+
+    class ContinuingClient:
+        def __init__(self, output_root: Path) -> None:
+            self.output_root = output_root
+            self.prompts: list[str] = []
+            self.closed = False
+
+        def prompt(self, message: str, *, timeout_seconds: float):
+            self.prompts.append(message)
+            company_index = len(self.prompts)
+            company_path = self.output_root / "companies" / f"company-{company_index}.json"
+            company_path.write_text("{}", encoding="utf-8")
+            return PromptResult(f"completed batch {company_index}")
+
+        def command(self, payload, *, timeout_seconds: float):
+            return {}
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeSession:
+        def __init__(self, engine) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeRun:
+        status = "imported"
+
+    class FakeImportResult:
+        run = FakeRun()
+        validation_results = []
+
+    class FakeImportService:
+        def __init__(self, *, session, settings) -> None:
+            pass
+
+        def import_run(self, run_id: str, *, run_type: str):
+            return FakeImportResult()
+
+    run_root = tmp_path / "run-1"
+    output_root = run_root / "output"
+    (run_root / "input").mkdir(parents=True)
+    (output_root / "companies").mkdir(parents=True)
+    (output_root / "contacts").mkdir()
+    (output_root / "fit_evaluations").mkdir()
+    (run_root / "task.md").write_text("# Task", encoding="utf-8")
+    (run_root / "instructions.md").write_text("# Instructions", encoding="utf-8")
+    (run_root / "input" / "campaign.json").write_text(
+        json.dumps({"time_budget_minutes": 2, "max_companies": 2}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(company_research_runtime, "Session", FakeSession)
+    monkeypatch.setattr(company_research_runtime, "RunImportService", FakeImportService)
+    client = ContinuingClient(output_root)
+    runtime = CompanyResearchRuntime(settings=_settings(tmp_path), clients={"run-1": client})
+    runtime._mark_run = lambda *args, **kwargs: None
+
+    runtime._run_agent("run-1")
+
+    assert len(client.prompts) == 2
+    assert "Continue the prepared company research task" in client.prompts[1]
+    assert client.closed is True
+    state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "imported"
+    assert state["last_company_count"] == 2
+    assert state["target_company_count"] == 2
+    assert state["continuation_count"] == 1

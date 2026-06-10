@@ -11,6 +11,7 @@ class CompanyResearchCampaign:
     role_focus: str
     locations: list[str]
     time_budget_minutes: int
+    max_companies: int
     notes: str | None = None
 
 
@@ -52,11 +53,13 @@ def build_company_research_task(campaign: CompanyResearchCampaign) -> str:
         "role_focus": campaign.role_focus,
         "locations": campaign.locations,
         "time_budget_minutes": campaign.time_budget_minutes,
+        "max_companies": campaign.max_companies,
         "notes": campaign.notes or "",
     }
+    target_text = f"{campaign.max_companies} company candidates"
     return (
         "# Company Research Campaign\n\n"
-        f"Research company candidates for about {campaign.time_budget_minutes} minutes and evaluate each fit.\n\n"
+        f"Research up to {target_text} within about {campaign.time_budget_minutes} minutes and evaluate each fit.\n\n"
         "Campaign brief:\n\n"
         f"```json\n{json.dumps(brief, indent=2, sort_keys=True)}\n```\n\n"
         "Use `../input/user_profile.json`, `../input/master_cv_profile.json`, and `../input/policy.json` as approved context.\n"
@@ -74,7 +77,9 @@ def build_company_research_task(campaign: CompanyResearchCampaign) -> str:
         "- Each fit evaluation must reference the same `company_id`, the approved profile ID, and the approved policy ID.\n"
         "- Use the approved user profile and campaign brief for target locations; do not require currently open job listings before recording an interesting company.\n"
         "- Remote policy is descriptive metadata, not a hard requirement when the profile allows hybrid or onsite. Do not add a risk just because remote policy is unverified.\n"
-        "- Keep researching until the time budget is spent or useful leads are exhausted.\n"
+        f"- Keep researching until either {target_text} have been written or the time budget is exhausted. Do not stop after a small first batch.\n"
+        "- If obvious leads run thin, broaden discovery sources and search angles before stopping: company directories, startup ecosystems, funding/news pages, product categories, hiring pages, and local employer lists.\n"
+        "- Build a candidate backlog first, then write company and fit files for the strongest new non-duplicate companies. Contact files are optional when no public professional email is found.\n"
         "- Every reason and risk must cite source refs.\n"
         "- If evidence is weak, keep the record reviewable instead of overstating confidence.\n"
         "- Do not write drafts, send intents, gate results, Gmail data, SMTP output, or outreach instructions.\n"
@@ -99,6 +104,7 @@ def build_company_research_inputs(
                 "role_focus": campaign.role_focus,
                 "locations": campaign.locations,
                 "time_budget_minutes": campaign.time_budget_minutes,
+                "max_companies": campaign.max_companies,
                 "notes": campaign.notes or "",
             },
             indent=2,
