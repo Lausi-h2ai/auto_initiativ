@@ -122,6 +122,15 @@ function truncateOutput(value: string, limit: number): { text: string; truncated
   };
 }
 
+function dropNullOptionalStrings(value: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  for (const key of keys) {
+    if (value[key] === null) {
+      delete value[key];
+    }
+  }
+  return value;
+}
+
 function runShell(command: string, cwd: string, timeoutMs: number): Promise<Record<string, unknown>> {
   return new Promise((resolvePromise, reject) => {
     let stdout = "";
@@ -323,7 +332,7 @@ export default function applicationDraft(pi: ExtensionAPI) {
       json: Type.String({ description: "Complete contact_candidate JSON document as a string." }),
     }),
     async execute(_toolCallId, params) {
-      const parsed = JSON.parse(params.json);
+      const parsed = dropNullOptionalStrings(JSON.parse(params.json), ["name", "role_title", "profile_url"]);
       const outputRoot = workspacePath("../output");
       const outputPath = resolve(outputRoot, "contact_candidate.json");
       assertChildPath(outputRoot, outputPath);
@@ -342,7 +351,7 @@ export default function applicationDraft(pi: ExtensionAPI) {
       json: Type.String({ description: "Complete email_draft JSON document as a string." }),
     }),
     async execute(_toolCallId, params) {
-      const parsed = JSON.parse(params.json);
+      const parsed = dropNullOptionalStrings(JSON.parse(params.json), ["body_html", "tone"]);
       const outputRoot = workspacePath("../output");
       const outputPath = resolve(outputRoot, "email_draft.json");
       assertChildPath(outputRoot, outputPath);
