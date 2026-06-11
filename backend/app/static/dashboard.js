@@ -2030,7 +2030,7 @@ function bindOnboardingControls() {
       const target = button.dataset.sectionLink;
       const runFilter = button.dataset.runFilter;
       if (runFilter) {
-        state.filters[target] = { ...(state.filters[target] || {}), run_id: runFilter };
+        state.filters[target] = { run_id: runFilter };
       }
       state.activeSection = target;
       refresh();

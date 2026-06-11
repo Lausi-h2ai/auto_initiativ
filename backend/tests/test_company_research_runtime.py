@@ -206,3 +206,58 @@ def test_company_research_runtime_continues_until_target_company_count(tmp_path:
     assert state["last_company_count"] == 2
     assert state["target_company_count"] == 2
     assert state["continuation_count"] == 1
+
+
+def test_company_research_runtime_imports_existing_artifacts_without_prompting(tmp_path: Path, monkeypatch):
+    class FakeSession:
+        def __init__(self, engine) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeRun:
+        status = "imported"
+
+    class FakeImportResult:
+        run = FakeRun()
+        validation_results = []
+
+    class FakeImportService:
+        def __init__(self, *, session, settings) -> None:
+            pass
+
+        def import_run(self, run_id: str, *, run_type: str):
+            return FakeImportResult()
+
+    run_root = tmp_path / "run-1"
+    output_root = run_root / "output"
+    (run_root / "input").mkdir(parents=True)
+    (output_root / "companies").mkdir(parents=True)
+    (output_root / "contacts").mkdir()
+    (output_root / "fit_evaluations").mkdir()
+    (run_root / "input" / "campaign.json").write_text(
+        json.dumps({"time_budget_minutes": 2, "max_companies": 2}),
+        encoding="utf-8",
+    )
+    for index in range(2):
+        (output_root / "companies" / f"company-{index}.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(company_research_runtime, "Session", FakeSession)
+    monkeypatch.setattr(company_research_runtime, "RunImportService", FakeImportService)
+    runtime = CompanyResearchRuntime(
+        settings=_settings(tmp_path),
+        clients={},
+        client_factory=lambda command, cwd, env: (_ for _ in ()).throw(AssertionError("client should not start")),
+    )
+    runtime._mark_run = lambda *args, **kwargs: None
+
+    runtime._run_agent("run-1")
+
+    state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "imported"
+    assert state["last_company_count"] == 2
+    assert state["target_company_count"] == 2
+    assert state["last_reply"].startswith("Skipped company research prompt")

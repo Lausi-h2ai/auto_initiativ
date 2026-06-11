@@ -184,78 +184,104 @@ class CompanyResearchRuntime:
 
     def _run_agent(self, run_id: str) -> None:
         try:
-            client = self._client(run_id)
             prompt_timeout = self._prompt_timeout_seconds(run_id)
             target_company_count = self._target_company_count(run_id)
             started_monotonic = time.monotonic()
             continuation_count = 0
-            prompt = self._prompt(run_id)
+            final_reply = ""
+            initial_counts = self._artifact_counts(run_id)
             self._write_state(
                 run_id,
                 "running",
                 prompt_timeout_seconds=prompt_timeout,
                 target_company_count=target_company_count,
                 continuation_count=continuation_count,
+                last_company_count=initial_counts["companies"],
+                artifact_counts=initial_counts,
                 elapsed_seconds=0,
             )
-            while True:
-                remaining_timeout = self._remaining_prompt_timeout(
-                    started_monotonic,
-                    prompt_timeout,
-                )
-                result = client.prompt(prompt, timeout_seconds=remaining_timeout)
-                for event in result.events:
-                    self._append_event(run_id, event)
-                counts = self._artifact_counts(run_id)
-                elapsed_seconds = round(time.monotonic() - started_monotonic, 3)
-                stop_reason = _latest_stop_reason(result.events)
-                self._write_state(
-                    run_id,
-                    "running",
-                    last_reply=result.text,
-                    last_stop_reason=stop_reason,
-                    last_company_count=counts["companies"],
-                    artifact_counts=counts,
-                    elapsed_seconds=elapsed_seconds,
-                    continuation_count=continuation_count,
-                )
-                if not self._should_continue_research(
-                    counts=counts,
-                    target_company_count=target_company_count,
-                    elapsed_seconds=elapsed_seconds,
-                    prompt_timeout_seconds=prompt_timeout,
-                    continuation_count=continuation_count,
-                ):
-                    break
-                continuation_count += 1
-                prompt = self._continuation_prompt(
-                    run_id,
-                    counts=counts,
-                    target_company_count=target_company_count,
-                    elapsed_seconds=elapsed_seconds,
-                    remaining_seconds=max(prompt_timeout - elapsed_seconds, 0),
-                    last_reply=result.text,
+            if self._should_continue_research(
+                counts=initial_counts,
+                target_company_count=target_company_count,
+                elapsed_seconds=0,
+                prompt_timeout_seconds=prompt_timeout,
+                continuation_count=continuation_count,
+            ):
+                client = self._client(run_id)
+                prompt = self._prompt(run_id)
+                while True:
+                    remaining_timeout = self._remaining_prompt_timeout(
+                        started_monotonic,
+                        prompt_timeout,
+                    )
+                    result = client.prompt(prompt, timeout_seconds=remaining_timeout)
+                    final_reply = result.text
+                    for event in result.events:
+                        self._append_event(run_id, event)
+                    counts = self._artifact_counts(run_id)
+                    elapsed_seconds = round(time.monotonic() - started_monotonic, 3)
+                    stop_reason = _latest_stop_reason(result.events)
+                    self._write_state(
+                        run_id,
+                        "running",
+                        last_reply=final_reply,
+                        last_stop_reason=stop_reason,
+                        last_company_count=counts["companies"],
+                        artifact_counts=counts,
+                        elapsed_seconds=elapsed_seconds,
+                        continuation_count=continuation_count,
+                    )
+                    if not self._should_continue_research(
+                        counts=counts,
+                        target_company_count=target_company_count,
+                        elapsed_seconds=elapsed_seconds,
+                        prompt_timeout_seconds=prompt_timeout,
+                        continuation_count=continuation_count,
+                    ):
+                        break
+                    continuation_count += 1
+                    prompt = self._continuation_prompt(
+                        run_id,
+                        counts=counts,
+                        target_company_count=target_company_count,
+                        elapsed_seconds=elapsed_seconds,
+                        remaining_seconds=max(prompt_timeout - elapsed_seconds, 0),
+                        last_reply=final_reply,
+                    )
+                    self._append_event(
+                        run_id,
+                        {
+                            "type": "company_research_continuation_requested",
+                            "company_count": counts["companies"],
+                            "target_company_count": target_company_count,
+                            "continuation_count": continuation_count,
+                            "elapsed_seconds": elapsed_seconds,
+                        },
+                    )
+                    self._write_state(
+                        run_id,
+                        "continuing",
+                        continuation_count=continuation_count,
+                        last_company_count=counts["companies"],
+                        elapsed_seconds=elapsed_seconds,
+                    )
+            else:
+                final_reply = (
+                    f"Skipped company research prompt because {initial_counts['companies']} existing company "
+                    f"artifacts already meet target {target_company_count}."
                 )
                 self._append_event(
                     run_id,
                     {
-                        "type": "company_research_continuation_requested",
-                        "company_count": counts["companies"],
+                        "type": "company_research_target_already_met",
+                        "company_count": initial_counts["companies"],
                         "target_company_count": target_company_count,
-                        "continuation_count": continuation_count,
-                        "elapsed_seconds": elapsed_seconds,
+                        "elapsed_seconds": 0,
                     },
-                )
-                self._write_state(
-                    run_id,
-                    "continuing",
-                    continuation_count=continuation_count,
-                    last_company_count=counts["companies"],
-                    elapsed_seconds=elapsed_seconds,
                 )
             final_counts = self._artifact_counts(run_id)
             elapsed_seconds = round(time.monotonic() - started_monotonic, 3)
-            self._write_state(run_id, "importing", last_reply=result.text, importing_at=_utc_now())
+            self._write_state(run_id, "importing", last_reply=final_reply, importing_at=_utc_now())
             self._mark_run(run_id, "research_importing", action="company_research_agent_completed", result_status="completed")
             with Session(db_session_module.engine) as session:
                 import_result = RunImportService(session=session, settings=self.settings).import_run(

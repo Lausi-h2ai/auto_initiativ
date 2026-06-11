@@ -152,6 +152,7 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
     assert "Start Onboarding" not in combined
     assert 'label: "Onboarding"' not in combined
     assert "companyResearchLocations" not in combined
+    assert "state.filters[target] = { run_id: runFilter };" in combined
 
 
 def test_dashboard_assets_do_not_expose_sending_or_external_ai_surfaces(client):
