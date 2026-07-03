@@ -120,19 +120,24 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         "Applications",
         "Advanced/Admin",
         "Personal recruiter",
-        "Recruiter journey",
-        "Recommended next action",
+        "Next best step",
         "Needs your attention",
-        "Current work",
-        "Recent accomplishments",
+        "Completed recently",
         "Your career profile is ready",
         "Recruiter conversation",
         "Structured profile",
         "Resume source material",
         "Approve meaningful changes",
-        "Find and review companies",
-        "Brief your recruiter",
-        "Company matches",
+        "Where should your recruiter look?",
+        "What kind of work should we prioritize?",
+        "What kinds of companies should stand out?",
+        "How broad should this search be?",
+        "Review the recruiter brief.",
+        "Start company search",
+        "Searching for companies",
+        "Save company",
+        "Not for me",
+        "View all companies",
         "Company detail",
         "Why it matches",
         "Concerns and uncertainties",
@@ -163,6 +168,47 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
     assert "Opportunities" not in combined
     assert "Today" not in combined
     assert "Local profile mode" not in combined
+
+
+def test_dashboard_guided_research_slice_uses_concept_b_language(client):
+    _, assets = _dashboard_assets(client)
+    combined = "\n".join(assets.values())
+
+    expected = {
+        "guidedFlowShell",
+        "choiceGroup",
+        "reviewSummary",
+        "primaryActionBar",
+        "backgroundActivityMarkup",
+        "inlineError",
+        "companies/brief",
+        "companies/progress",
+        "companies/review",
+        "companies/list",
+        "Research brief",
+        "You can leave this page. The search will continue in the background.",
+        "This cannot contact companies or approve applications.",
+    }
+    for text in expected:
+        assert text in combined
+
+    assert "--color-canvas: #f6f8fb" in combined
+    assert "--color-brand: #087c7c" in combined
+    assert "#f7f4ee" not in combined
+    assert "#fffdf9" not in combined
+
+
+def test_dashboard_guided_slice_does_not_add_email_delivery_controls(client):
+    _, assets = _dashboard_assets(client)
+    combined = "\n".join(assets.values())
+
+    guided_region_start = combined.index("function renderResearchBrief")
+    guided_region_end = combined.index("function renderApplications")
+    guided_region = combined[guided_region_start:guided_region_end]
+
+    assert "/send-batches" not in guided_region
+    assert "/outbox/send-all" not in guided_region
+    assert "send email" not in guided_region.lower()
 
 
 def test_dashboard_assets_do_not_expose_sending_or_external_ai_surfaces(client):

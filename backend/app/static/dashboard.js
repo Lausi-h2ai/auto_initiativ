@@ -80,10 +80,15 @@ const advancedSections = [
 ];
 
 const state = {
-  route: routeFromHash(),
+  route: routeFromHash().route,
+  routeDetail: routeFromHash().detail,
   data: null,
   loading: false,
   selectedCompanyId: null,
+  guidedCompanyReviewId: null,
+  researchDraft: null,
+  researchStep: Number.parseInt(localStorage.getItem("guidedResearchStep") || "0", 10) || 0,
+  launchInFlight: false,
   selectedDraftId: null,
   activeApplicationTab: "review",
   activeCompanyStage: "all",
@@ -97,6 +102,24 @@ const state = {
   companyResearchPoll: null,
   applicationDraftPoll: null,
   lastApplicationRunId: localStorage.getItem("applicationDraftRunId") || "",
+};
+
+const RESEARCH_DRAFT_KEY = "guidedResearchBriefDraft";
+const RESEARCH_BRIEF_KEY = "guidedResearchLastBrief";
+const COMPANY_DECISIONS_KEY = "guidedCompanyDecisions";
+
+const guidedResearchSteps = [
+  { id: "location", label: "Location", question: "Where should your recruiter look?" },
+  { id: "roles", label: "Role direction", question: "What kind of work should we prioritize?" },
+  { id: "preferences", label: "Company preferences", question: "What kinds of companies should stand out?" },
+  { id: "scope", label: "Search scope", question: "How broad should this search be?" },
+  { id: "review", label: "Review brief", question: "Review the recruiter brief." },
+];
+
+const scopePresets = {
+  focused: { label: "Focused", count: 15, minutes: 20, detail: "A tight pass for the strongest nearby matches." },
+  balanced: { label: "Balanced", count: 30, minutes: 30, detail: "A practical search with enough range for comparison." },
+  broad: { label: "Broad", count: 50, minutes: 60, detail: "A wider search when you want more options." },
 };
 
 const elements = {
@@ -136,7 +159,9 @@ function init() {
     });
   });
   window.addEventListener("hashchange", () => {
-    state.route = routeFromHash();
+    const route = routeFromHash();
+    state.route = route.route;
+    state.routeDetail = route.detail;
     renderNav();
     loadAndRender();
   });
@@ -145,12 +170,13 @@ function init() {
 }
 
 function routeFromHash() {
-  const route = (location.hash || "#home").replace("#", "").split("/")[0];
-  return [...primaryRoutes.map((item) => item.id), "advanced", "settings"].includes(route) ? route : "home";
+  const [routeName, detail = ""] = (location.hash || "#home").replace("#", "").split("/");
+  const route = [...primaryRoutes.map((item) => item.id), "advanced", "settings"].includes(routeName) ? routeName : "home";
+  return { route, detail };
 }
 
 function setRoute(route) {
-  location.hash = route;
+  location.hash = route || "home";
 }
 
 function renderNav() {
@@ -261,28 +287,7 @@ function renderError(title, error) {
 }
 
 function renderJourney(data) {
-  const completed = {
-    profile: Boolean(data.profile?.has_approved_profile),
-    discover: data.companies.length > 0 || isResearchActive(data.campaignStatus),
-    prepare: data.outboxDrafts.length > 0 || isApplicationActive(data.applicationStatus),
-    send: data.outboxSent.length > 0 || data.outboxDrafts.some((draft) => draft.status === "ready"),
-  };
-  const routeStage = state.route === "companies" ? "discover" : state.route === "applications" ? "prepare" : "profile";
-  elements.journey.innerHTML = journeyStages
-    .map((stage, index) => {
-      const done = completed[stage.id];
-      const active = stage.id === routeStage || (state.route === "home" && nextStageId(completed) === stage.id);
-      return `
-        <article class="journey-step ${done ? "done" : ""} ${active ? "active" : ""}">
-          <span class="journey-dot">${done ? "✓" : index + 1}</span>
-          <span>
-            <strong>${escapeHtml(stage.label)}</strong>
-            <span>${escapeHtml(stage.description)}</span>
-          </span>
-        </article>
-      `;
-    })
-    .join("");
+  elements.journey.innerHTML = "";
 }
 
 function nextStageId(completed) {
@@ -296,66 +301,43 @@ function renderHome(data) {
   const accomplishments = buildAccomplishments(data);
   const next = nextBestAction(data, attention);
   elements.page.innerHTML = `
-    <section class="hero-band">
-      <div>
-        <span class="eyebrow">${escapeHtml(greeting())}</span>
-        <h1>${escapeHtml(homeHeadline(data))}</h1>
-        <p class="lead">${escapeHtml(homeSubline(data))}</p>
-      </div>
-      <div class="actions">
-        <button class="button primary" type="button" data-route-target="${next.route}">${escapeHtml(next.label)}</button>
-      </div>
-    </section>
-
-    <section class="home-grid">
-      <div class="stack">
-        <article class="next-action">
-          <div class="tight-stack">
-            <span class="eyebrow">Recommended next action</span>
-            <h2>${escapeHtml(next.title)}</h2>
-            <p class="muted">${escapeHtml(next.body)}</p>
-          </div>
-          <div class="actions">
-            <button class="button primary" type="button" data-route-target="${next.route}">${escapeHtml(next.label)}</button>
-            ${next.secondary ? `<button class="button secondary" type="button" data-route-target="${next.secondary.route}">${escapeHtml(next.secondary.label)}</button>` : ""}
-          </div>
-        </article>
-
-        <article class="raised-panel">
-          <div class="panel-header">
-            <div>
-              <h3>Needs your attention</h3>
-              <p class="muted">${attention.length ? "These decisions are waiting for you." : "Nothing requires a decision right now."}</p>
-            </div>
-            <span class="status-chip ${attention.length ? "warning" : "success"}">${attention.length} item${attention.length === 1 ? "" : "s"}</span>
-          </div>
-          <div class="panel-body stack">
-            ${attention.length ? attention.map(attentionItemMarkup).join("") : emptyMarkup("You are clear.", "Your recruiter can continue working without a decision from you.")}
-          </div>
-        </article>
+    <section class="guided-home">
+      <div class="home-intro">
+        <p class="context-line">${escapeHtml(greeting())}</p>
+        <h1>${escapeHtml(next.headline)}</h1>
+        <p class="lead">${escapeHtml(next.supportingText)}</p>
       </div>
 
-      <aside class="stack">
-        <article class="panel">
-          <div class="tight-stack">
-            <span class="eyebrow">Current work</span>
-            <h3>What is happening</h3>
-          </div>
-          <div class="stack" style="margin-top: 18px;">
-            ${activeWork.length ? activeWork.map(activityMarkup).join("") : emptyMarkup("No agent work is running.", "Start research or preparation when you are ready.")}
+      <article class="guided-next-action" aria-labelledby="home-next-action">
+        <div class="tight-stack">
+          <p class="quiet-note">Next best step</p>
+          <h2 id="home-next-action">${escapeHtml(next.title)}</h2>
+          <p>${escapeHtml(next.body)}</p>
+        </div>
+        <div class="form-actions">
+          <button class="primary-action" type="button" data-route-target="${escapeHtml(next.route)}">${escapeHtml(next.label)}</button>
+          ${next.secondary ? `<button class="secondary-action" type="button" data-route-target="${escapeHtml(next.secondary.route)}">${escapeHtml(next.secondary.label)}</button>` : ""}
+        </div>
+      </article>
+
+      ${activeWork.length ? `<section class="background-work" aria-label="Background work">${activeWork.map(backgroundActivityMarkup).join("")}</section>` : ""}
+
+      <section class="home-secondary">
+        <article>
+          <h3>Needs your attention</h3>
+          <div class="stack" style="margin-top: 14px;">
+            ${attention.length ? attention.slice(0, 3).map(attentionItemMarkup).join("") : `<p class="muted">Nothing needs a decision right now.</p>`}
           </div>
         </article>
 
-        <article class="panel">
-          <div class="tight-stack">
-            <span class="eyebrow">Recent accomplishments</span>
-            <h3>Progress so far</h3>
+        <article>
+          <h3>Completed recently</h3>
+          <div class="stack" style="margin-top: 14px;">
+            ${accomplishments.length ? accomplishments.map((item) => `<p class="muted">${escapeHtml(item.label)}</p>`).join("") : `<p class="muted">No completed work is available yet.</p>`}
           </div>
-          <div class="stats-row" style="margin-top: 18px;">
-            ${accomplishments.map((item) => `<div class="stat"><strong>${escapeHtml(item.value)}</strong><span>${escapeHtml(item.label)}</span></div>`).join("")}
-          </div>
+          <button class="text-action" type="button" data-route-target="advanced" style="margin-top: 16px;">View activity history</button>
         </article>
-      </aside>
+      </section>
     </section>
   `;
   bindRouteButtons();
@@ -447,44 +429,46 @@ function renderProfile(data) {
 }
 
 function renderCompanies(data) {
+  state.researchDraft = getResearchDraft(data);
+  if (state.routeDetail === "brief" || (!state.routeDetail && !data.companies.length && !isResearchActive(data.campaignStatus))) {
+    renderResearchBrief(data);
+    return;
+  }
+  if (state.routeDetail === "progress" || (!state.routeDetail && isResearchActive(data.campaignStatus))) {
+    renderResearchProgress(data);
+    return;
+  }
+  if (state.routeDetail === "review" || (!state.routeDetail && data.companies.length)) {
+    renderGuidedCompanyReview(data);
+    return;
+  }
+  if (state.routeDetail === "list") {
+    renderCompanyList(data);
+    return;
+  }
+  renderResearchBrief(data);
+}
+
+function renderCompanyList(data) {
   const filtered = filteredCompanies(data);
-  const selected = selectedCompany(data, filtered);
   elements.page.innerHTML = `
     <section class="page-header">
       <div>
-        <span class="eyebrow">Discover</span>
-        <h2>Find and review companies</h2>
-        <p class="lead">Brief your recruiter, compare matches, and decide which companies deserve a tailored application.</p>
+        <span class="eyebrow">Company discovery</span>
+        <h2>All discovered companies</h2>
+        <p class="lead">A clean list of company matches remains available when you need to compare more than one at a time.</p>
       </div>
       <div class="actions">
-        <button class="button secondary" type="button" data-company-action="research-status">Research status</button>
-        <button class="button primary" type="button" data-company-action="open-research">Start company search</button>
+        <button class="secondary-action" type="button" data-route-target="companies/review">Review one at a time</button>
+        <button class="primary-action" type="button" data-route-target="companies/brief">Start another search</button>
       </div>
     </section>
 
-    <section class="layout-two">
-      <div class="stack">
-        ${researchPanelMarkup(data)}
-        <article class="raised-panel">
-          <div class="panel-header">
-            <div>
-              <h3>Company matches</h3>
-              <p class="muted">${filtered.length} shown from ${data.companies.length} discovered companies.</p>
-            </div>
-            <span class="status-chip info">${data.companies.filter((company) => !company.has_been_contacted).length} active</span>
-          </div>
-          <div class="panel-body">
-            ${companyFiltersMarkup()}
-            <div class="company-list">
-              ${filtered.length ? filtered.map((company) => companyRowMarkup(company, data)).join("") : emptyMarkup("No companies match these filters.", "Try another stage or clear the search.")}
-            </div>
-          </div>
-        </article>
+    <section class="editorial-list-shell">
+      ${companyFiltersMarkup()}
+      <div class="company-list editorial-company-list">
+        ${filtered.length ? filtered.map((company) => companyRowMarkup(company, data)).join("") : emptyMarkup("No companies match these filters.", "Try another stage or clear the search.")}
       </div>
-
-      <aside class="stack">
-        ${selected ? companyDetailMarkup(selected, data) : `<article class="panel">${emptyMarkup("Select a company.", "Company details and next actions will appear here.")}</article>`}
-      </aside>
     </section>
   `;
   bindCompanyActions();
@@ -760,9 +744,6 @@ function bindAdvancedRows() {
 
 function buildAttentionItems(data) {
   const items = [];
-  if (!data.profile?.has_approved_profile) {
-    items.push({ title: "Finish your career profile", body: "The recruiter needs enough confirmed information before company search.", route: "profile", label: "Continue" });
-  }
   if ((data.profile?.candidate_user_profiles || []).length) {
     items.push({ title: "Confirm a profile change", body: "A candidate profile is waiting for review.", route: "profile", label: "Review" });
   }
@@ -778,7 +759,10 @@ function buildAttentionItems(data) {
   if (reviewCompanies.length && !readyDrafts.length) {
     items.push({ title: `Review ${reviewCompanies.length} uncertain match${reviewCompanies.length === 1 ? "" : "es"}`, body: "Some company facts need a closer look before preparation.", route: "companies", label: "Review matches" });
   }
-  return items.slice(0, 6);
+  if (!data.profile?.has_approved_profile) {
+    items.push({ title: "Finish your career profile", body: "The recruiter needs confirmed context before company search.", route: "profile", label: "Continue" });
+  }
+  return items.slice(0, 3);
 }
 
 function buildActiveWork(data) {
@@ -812,26 +796,30 @@ function buildActiveWork(data) {
 }
 
 function buildAccomplishments(data) {
-  return [
-    { value: data.profile?.has_approved_profile ? "Ready" : "Open", label: "career profile" },
-    { value: String(data.companies.length), label: "companies discovered" },
-    { value: String(data.outboxDrafts.length), label: "applications prepared" },
-    { value: String(data.outboxSent.length), label: "applications sent" },
-  ];
+  const items = [];
+  if (data.profile?.has_approved_profile) items.push({ label: "Career profile approved for company research." });
+  if (data.companies.length) items.push({ label: "Company matches are ready to review." });
+  if (data.outboxDrafts.length) items.push({ label: "Application drafts have been prepared for review." });
+  if (data.outboxSent.length) items.push({ label: "Approved outreach history is available." });
+  return items.slice(0, 3);
 }
 
 function nextBestAction(data, attention) {
-  if (!data.profile?.has_approved_profile) {
+  if ((data.profile?.candidate_user_profiles || []).length) {
     return {
+      headline: "Your recruiter needs one profile decision.",
+      supportingText: "Review the candidate profile change before using it for future search and preparation.",
       route: "profile",
-      title: "Finish your profile",
-      body: "Company search and tailoring work best after your career context, constraints, and resume source material are approved.",
-      label: "Continue profile",
+      title: "Review profile changes",
+      body: "A structured profile update is waiting for your confirmation.",
+      label: "Review profile",
     };
   }
   const ready = data.outboxDrafts.filter((draft) => draft.status === "ready").length;
   if (ready) {
     return {
+      headline: `${ready} application${ready === 1 ? " is" : "s are"} ready for review.`,
+      supportingText: "Nothing leaves without your explicit approval and backend safety checks.",
       route: "applications",
       title: `Review ${ready} application${ready === 1 ? "" : "s"} before approval`,
       body: "Nothing leaves without your confirmation. Inspect recipients, subject lines, resumes, and warnings first.",
@@ -842,25 +830,42 @@ function nextBestAction(data, attention) {
   const newMatches = data.companies.filter((company) => !company.has_application_draft && !company.has_been_contacted && !hasItems(company.policy_conflicts)).length;
   if (newMatches) {
     return {
-      route: "companies",
+      headline: "New company matches are ready.",
+      supportingText: "Review one match at a time and decide which companies should move forward.",
+      route: "companies/review",
       title: `Review ${newMatches} new match${newMatches === 1 ? "" : "es"}`,
       body: "Decide which companies should move into application preparation.",
       label: "Review matches",
+      secondary: { route: "companies/list", label: "View all companies" },
     };
   }
-  if (!isResearchActive(data.campaignStatus)) {
+  if (isResearchActive(data.campaignStatus)) {
     return {
-      route: "companies",
-      title: "Brief your recruiter on the next search",
-      body: "Choose location, role focus, industries, exclusions, and search depth before launching discovery.",
-      label: "Start search",
+      headline: "Your recruiter is searching for companies.",
+      supportingText: researchProgressSentence(data),
+      route: "companies/progress",
+      title: "Check company search progress",
+      body: "You can leave the page while research continues. New matches will appear after they are saved.",
+      label: "View progress",
+    };
+  }
+  if (data.profile?.has_approved_profile) {
+    return {
+      headline: "Ready to discover companies.",
+      supportingText: "Brief your recruiter once, then let the search run in the background.",
+      route: "companies/brief",
+      title: "Start company search",
+      body: "Choose location, role direction, company preferences, and search scope through a short guided brief.",
+      label: "Start company search",
     };
   }
   return {
-    route: "home",
-    title: attention.length ? attention[0].title : "Review progress",
-    body: attention.length ? attention[0].body : "Your workspace is up to date.",
-    label: attention.length ? attention[0].label : "Refresh",
+    headline: "Let us build your career profile first.",
+    supportingText: "Company discovery works best after your recruiter has approved roles, locations, constraints, and resume context.",
+    route: "profile",
+    title: "Start your profile",
+    body: "Answer recruiter-style questions and add source material before launching company discovery.",
+    label: "Start profile",
   };
 }
 
@@ -876,7 +881,7 @@ function homeSubline(data) {
   const companyCount = data.companies.length;
   const prepared = data.outboxDrafts.length;
   const sent = data.outboxSent.length;
-  return `${companyCount} companies reviewed · ${prepared} applications prepared · ${sent} sent. No application can be sent without your explicit approval.`;
+  return `${companyCount} companies reviewed - ${prepared} applications prepared - ${sent} sent. No application can be sent without your explicit approval.`;
 }
 
 function greeting() {
@@ -902,7 +907,7 @@ function activityMarkup(item) {
   return `
     <div class="activity-item">
       <div class="activity-row">
-        <span class="activity-dot ${item.kind === "running" ? "running" : ""}">${item.kind === "running" ? "..." : "✓"}</span>
+        <span class="activity-dot ${item.kind === "running" ? "running" : ""}">${item.kind === "running" ? "..." : "OK"}</span>
         <div class="tight-stack">
           <h4>${escapeHtml(item.title)}</h4>
           <p class="muted">${escapeHtml(item.body)}</p>
@@ -912,6 +917,103 @@ function activityMarkup(item) {
         </div>
       </div>
     </div>
+  `;
+}
+
+function backgroundActivityMarkup(item) {
+  return `
+    <article class="background-activity">
+      <span class="pulse-dot" aria-hidden="true"></span>
+      <div>
+        <strong>${escapeHtml(item.title)}</strong>
+        <p>${escapeHtml(item.body)}</p>
+      </div>
+    </article>
+  `;
+}
+
+function guidedFlowShell({ stepIndex, title, explanation, assurance, body, nextPreview = "" }) {
+  const step = guidedResearchSteps[stepIndex] || guidedResearchSteps[0];
+  return `
+    <section class="concept-shell workflow-shell guided-production">
+      <p class="context-line">Research brief - ${stepIndex + 1} of ${guidedResearchSteps.length}</p>
+      <section class="workflow-panel" aria-labelledby="guided-step-title">
+        <div class="workflow-context">
+          <p class="quiet-note">${escapeHtml(step.label)}</p>
+          <h1 id="guided-step-title" tabindex="-1">${escapeHtml(title)}</h1>
+          <p>${escapeHtml(explanation)}</p>
+          ${assurance ? `<p class="assurance">${escapeHtml(assurance)}</p>` : ""}
+        </div>
+        <form class="guided-form" id="researchBriefForm" novalidate>
+          ${body}
+        </form>
+      </section>
+      ${nextPreview ? `<section class="next-preview" aria-live="polite">${nextPreview}</section>` : ""}
+    </section>
+  `;
+}
+
+function primaryActionBar({ back = true, continueLabel = "Continue", submitAction = "continue", disabled = false } = {}) {
+  return `
+    <div class="form-actions primary-action-bar">
+      ${back ? `<button class="secondary-action" type="button" data-brief-back>Back</button>` : ""}
+      <button class="primary-action" type="submit" data-brief-action="${escapeHtml(submitAction)}" ${disabled ? "disabled" : ""}>${escapeHtml(continueLabel)}</button>
+    </div>
+  `;
+}
+
+function inlineError(id) {
+  return `<p class="inline-error" id="${escapeHtml(id)}" hidden></p>`;
+}
+
+function choiceGroup(name, options, selectedValues, { multiple = false } = {}) {
+  const selected = new Set(Array.isArray(selectedValues) ? selectedValues : [selectedValues].filter(Boolean));
+  return `
+    <div class="choice-group">
+      ${options
+        .map((option) => {
+          const checked = selected.has(option.value);
+          const type = multiple ? "checkbox" : "radio";
+          return `
+            <label class="choice-card ${checked ? "selected" : ""}">
+              <input type="${type}" name="${escapeHtml(name)}" value="${escapeHtml(option.value)}" ${checked ? "checked" : ""}>
+              <span>
+                <strong>${escapeHtml(option.label)}</strong>
+                <small>${escapeHtml(option.detail || "")}</small>
+              </span>
+            </label>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function reviewSummary(draft) {
+  return `
+    <article class="review-summary">
+      <p>${escapeHtml(recruiterBriefText(draft))}</p>
+      <div class="review-sections">
+        ${[
+          ["location", "Location", locationSummary(draft)],
+          ["roles", "Role direction", rolesSummary(draft)],
+          ["preferences", "Company preferences", preferencesSummary(draft)],
+          ["scope", "Search scope", scopeSummary(draft)],
+        ]
+          .map(
+            ([stepId, title, body]) => `
+              <div class="review-section">
+                <div>
+                  <h3>${escapeHtml(title)}</h3>
+                  <p>${escapeHtml(body)}</p>
+                </div>
+                <button class="text-action" type="button" data-edit-brief="${escapeHtml(stepId)}">Edit</button>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+    </article>
   `;
 }
 
@@ -980,6 +1082,271 @@ function artifactMarkup(artifact) {
       <span class="status-chip ${tone}">${escapeHtml(humanStatus(artifact.review_state || artifact.status))}</span>
     </div>
   `;
+}
+
+function renderResearchBrief(data) {
+  const draft = getResearchDraft(data);
+  const stepIndex = Math.max(0, Math.min(guidedResearchSteps.length - 1, state.researchStep));
+  if (stepIndex === 0) renderResearchLocationStep(draft);
+  if (stepIndex === 1) renderResearchRoleStep(draft);
+  if (stepIndex === 2) renderResearchPreferenceStep(draft);
+  if (stepIndex === 3) renderResearchScopeStep(draft);
+  if (stepIndex === 4) renderResearchReviewStep(draft);
+  bindResearchBriefActions();
+  focusGuidedHeading();
+}
+
+function renderResearchLocationStep(draft) {
+  elements.page.innerHTML = guidedFlowShell({
+    stepIndex: 0,
+    title: "Where should your recruiter look?",
+    explanation: "Location keeps the search focused on companies where an application could realistically move forward.",
+    assurance: "These choices only affect this search brief. They do not rewrite your main profile.",
+    body: `
+      <fieldset>
+        <legend>Search locations</legend>
+        <label class="field">
+          <span>Locations</span>
+          <input id="briefLocations" value="${escapeHtml(draft.locations.join(", "))}" autocomplete="off" aria-describedby="briefLocationsError">
+          ${inlineError("briefLocationsError")}
+        </label>
+        <div class="field">
+          <span>Work model</span>
+          ${choiceGroup(
+            "remotePreference",
+            [
+              { value: "remote-friendly", label: "Remote-friendly", detail: "Prioritize companies with remote or hybrid flexibility." },
+              { value: "hybrid", label: "Hybrid near target locations", detail: "Good when local presence still matters." },
+              { value: "onsite", label: "Mostly onsite", detail: "Use only when you want a tighter local search." },
+            ],
+            draft.remotePreference,
+          )}
+        </div>
+        <label class="check-row">
+          <input id="briefRelocation" type="checkbox" ${draft.relocationOpen ? "checked" : ""}>
+          <span>Include companies where relocation could make sense.</span>
+        </label>
+      </fieldset>
+      ${primaryActionBar({ back: false })}
+    `,
+    nextPreview: `<strong>Next</strong><span>Choose the work your recruiter should prioritize.</span>`,
+  });
+}
+
+function renderResearchRoleStep(draft) {
+  const suggestedRoles = profileRoleSuggestions();
+  elements.page.innerHTML = guidedFlowShell({
+    stepIndex: 1,
+    title: "What kind of work should we prioritize?",
+    explanation: "A tighter role direction helps the recruiter judge fit instead of collecting loosely related companies.",
+    assurance: "You can add a temporary role here without changing your approved profile.",
+    body: `
+      <fieldset>
+        <legend>Role direction</legend>
+        ${choiceGroup("roles", suggestedRoles.map((role) => ({ value: role, label: role, detail: "Suggested from the approved profile direction." })), draft.roles, { multiple: true })}
+        <label class="field">
+          <span>Optional custom role</span>
+          <input id="briefCustomRole" value="${escapeHtml(draft.customRole || "")}" autocomplete="off" placeholder="e.g. Document Intelligence Engineer" aria-describedby="briefRolesError">
+          ${inlineError("briefRolesError")}
+        </label>
+      </fieldset>
+      ${primaryActionBar()}
+    `,
+    nextPreview: `<strong>Next</strong><span>Tell the recruiter which companies should stand out.</span>`,
+  });
+}
+
+function renderResearchPreferenceStep(draft) {
+  elements.page.innerHTML = guidedFlowShell({
+    stepIndex: 2,
+    title: "What kinds of companies should stand out?",
+    explanation: "Preferences reduce noisy matches and keep the search aligned with the work you actually want.",
+    assurance: "Exclusions are treated as search guidance, then backend policy still controls irreversible decisions later.",
+    body: `
+      <fieldset>
+        <legend>Company preferences</legend>
+        <label class="field">
+          <span>Industries or domains</span>
+          <input id="briefIndustries" value="${escapeHtml(draft.industries.join(", "))}" autocomplete="off" placeholder="Applied AI, document automation, computer vision">
+        </label>
+        <div class="field">
+          <span>Characteristics</span>
+          ${choiceGroup(
+            "characteristics",
+            [
+              { value: "useful products", label: "Useful products", detail: "Companies solving concrete customer problems." },
+              { value: "medium-sized teams", label: "Medium-sized teams", detail: "Enough structure without heavy corporate process." },
+              { value: "strong engineering culture", label: "Strong engineering culture", detail: "Teams that value reliability and craft." },
+            ],
+            draft.characteristics,
+            { multiple: true },
+          )}
+        </div>
+        <label class="field">
+          <span>Exclusions</span>
+          <input id="briefExclusions" value="${escapeHtml(draft.exclusions.join(", "))}" autocomplete="off" placeholder="Defense, gambling, unsupported relocation">
+        </label>
+        <label class="field">
+          <span>Optional instruction</span>
+          <textarea id="briefNotes" rows="4" placeholder="Focus on medium-sized AI companies around Zurich that work on useful, non-defense products.">${escapeHtml(draft.notes || "")}</textarea>
+        </label>
+      </fieldset>
+      ${primaryActionBar()}
+    `,
+    nextPreview: `<strong>Next</strong><span>Choose how broad this search should be.</span>`,
+  });
+}
+
+function renderResearchScopeStep(draft) {
+  elements.page.innerHTML = guidedFlowShell({
+    stepIndex: 3,
+    title: "How broad should this search be?",
+    explanation: "Search scope controls how many companies the recruiter should try to find and how much time to spend.",
+    assurance: "You do not need to understand runtime settings. Pick the amount of exploration you want.",
+    body: `
+      <fieldset>
+        <legend>Scope preset</legend>
+        ${choiceGroup(
+          "scopePreset",
+          Object.entries(scopePresets).map(([value, preset]) => ({ value, label: preset.label, detail: preset.detail })),
+          draft.scopePreset,
+        )}
+        <label class="field">
+          <span>Minimum company target</span>
+          <input id="briefMinCompanies" type="number" min="1" max="100" step="1" value="${escapeHtml(draft.minCompanies)}" aria-describedby="briefScopeError">
+          ${inlineError("briefScopeError")}
+        </label>
+      </fieldset>
+      ${primaryActionBar({ continueLabel: "Review brief" })}
+    `,
+    nextPreview: `<strong>Next</strong><span>Review the final recruiter brief before launch.</span>`,
+  });
+}
+
+function renderResearchReviewStep(draft) {
+  elements.page.innerHTML = guidedFlowShell({
+    stepIndex: 4,
+    title: "Review the recruiter brief.",
+    explanation: "This is what the company-search agent will use. Edit any section before starting.",
+    assurance: "Starting this search does not create applications and cannot contact companies.",
+    body: `
+      ${reviewSummary(draft)}
+      <div id="briefLaunchError" class="inline-error" hidden></div>
+      ${primaryActionBar({ continueLabel: state.launchInFlight ? "Starting your search" : "Start company search", submitAction: "launch", disabled: state.launchInFlight })}
+    `,
+  });
+}
+
+function renderResearchProgress(data) {
+  const status = data.campaignStatus;
+  const active = isResearchActive(status);
+  const counts = status?.artifact_counts || {};
+  const target = status?.state?.target_company_count || getResearchDraft(data).minCompanies || 30;
+  const companiesFound = Number(counts.companies ?? data.companies.length ?? 0);
+  const complete = isResearchComplete(status);
+  elements.page.innerHTML = `
+    <section class="concept-shell progress-shell">
+      <p class="context-line">Company discovery</p>
+      <section class="progress-panel" aria-labelledby="research-progress-title">
+        <div class="workflow-context">
+          <p class="quiet-note">${complete ? "Search complete" : active ? "Searching for companies" : "Research status"}</p>
+          <h1 id="research-progress-title">${escapeHtml(researchProgressTitle(data))}</h1>
+          <p>${escapeHtml(researchProgressSentence(data))}</p>
+          <p class="assurance">You can leave this page. The search will continue in the background.</p>
+        </div>
+        <div class="guided-form progress-card">
+          <div class="progress-count">
+            <strong>${escapeHtml(String(companiesFound))}</strong>
+            <span>of at least ${escapeHtml(String(target))} companies found</span>
+          </div>
+          <p class="muted">${escapeHtml(researchStatusLabel(status))}</p>
+          <div class="form-actions">
+            <button class="secondary-action" type="button" data-company-action="import-research">Import latest findings</button>
+            <button class="primary-action" type="button" data-route-target="companies/review" ${data.companies.length ? "" : "disabled"}>Review first company</button>
+          </div>
+        </div>
+      </section>
+      <details class="activity-details">
+        <summary>Activity details</summary>
+        <ul>
+          ${safeResearchEvents(status).map((event) => `<li>${escapeHtml(event)}</li>`).join("")}
+        </ul>
+      </details>
+    </section>
+  `;
+  bindCompanyActions();
+}
+
+function renderGuidedCompanyReview(data) {
+  const companies = unreviewedCompanies(data);
+  const company = selectedGuidedCompany(data, companies);
+  if (!company) {
+    elements.page.innerHTML = `
+      <section class="concept-shell">
+        <article class="empty-state">
+          <h2>${data.companies.length ? "All current matches have been reviewed." : "No company matches yet."}</h2>
+          <p>${data.companies.length ? "You can view the full list or start another search." : "Start a company search and return here when the first match appears."}</p>
+          <div class="form-actions">
+            <button class="secondary-action" type="button" data-route-target="companies/list" ${data.companies.length ? "" : "disabled"}>View all companies</button>
+            <button class="primary-action" type="button" data-route-target="companies/brief">Start company search</button>
+          </div>
+        </article>
+      </section>
+    `;
+    bindRouteButtons();
+    return;
+  }
+  const fit = latestFit(company, data.fitEvaluations);
+  const reasons = matchReasons(company, fit).slice(0, 2);
+  const concerns = companyConcerns(company, fit).slice(0, 3);
+  elements.page.innerHTML = `
+    <section class="concept-shell company-review-shell">
+      <p class="context-line">Company review - ${Math.max(1, data.companies.length - companies.length + 1)} of ${data.companies.length}</p>
+      <section class="company-review-panel" aria-labelledby="company-review-title">
+        <div class="workflow-context">
+          <p class="quiet-note">${escapeHtml(fitLabel(company.confidence))}</p>
+          <h1 id="company-review-title">${escapeHtml(company.name || company.company_id)}</h1>
+          <p>${escapeHtml(company.description || "The recruiter did not provide a company description yet.")}</p>
+          <p class="muted">${escapeHtml([firstValue(company.locations), domainLabel(company)].filter(Boolean).join(" - ") || "Location or website not verified yet")}</p>
+          <div class="form-actions">
+            ${company.raw?.website_url || company.raw_domain ? `<a class="secondary-action" href="${escapeHtml(company.raw?.website_url || "https://" + company.raw_domain)}" target="_blank" rel="noreferrer">Website</a>` : ""}
+            <button class="text-action" type="button" data-route-target="companies/list">View all companies</button>
+          </div>
+        </div>
+        <article class="guided-form company-review-card">
+          <section>
+            <h3>Why it may fit</h3>
+            <ul class="reason-list">${reasons.length ? reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("") : "<li>Fit evidence has not been written yet.</li>"}</ul>
+          </section>
+          <section>
+            <h3>Concerns or unknowns</h3>
+            <ul class="reason-list">${concerns.length ? concerns.map((risk) => `<li>${escapeHtml(risk)}</li>`).join("") : "<li>No blocker is currently known.</li>"}</ul>
+          </section>
+          <section>
+            <h3>Sources</h3>
+            <div class="source-list">${(company.source_refs || []).length ? company.source_refs.slice(0, 3).map((source) => sourceLinkMarkup(source)).join("") : `<p class="muted">No source links are available yet.</p>`}</div>
+          </section>
+          <label class="field">
+            <span>Optional reason if this is not a fit</span>
+            <select id="rejectReason">
+              <option value="">No reason selected</option>
+              <option>Wrong location</option>
+              <option>Wrong industry</option>
+              <option>Poor role fit</option>
+              <option>Company type</option>
+              <option>Other</option>
+            </select>
+          </label>
+          <div class="form-actions">
+            <button class="primary-action" type="button" data-company-decision="saved" data-company-id="${escapeHtml(company.company_id)}">Save company</button>
+            <button class="secondary-action" type="button" data-company-decision="rejected" data-company-id="${escapeHtml(company.company_id)}">Not for me</button>
+            <button class="text-action" type="button" data-company-select="${escapeHtml(company.company_id)}" data-route-target="companies/list">View full details</button>
+          </div>
+        </article>
+      </section>
+    </section>
+  `;
+  bindCompanyActions();
 }
 
 function researchPanelMarkup(data) {
@@ -1079,25 +1446,21 @@ function companyFiltersMarkup() {
 function companyRowMarkup(company, data) {
   const stage = companyStage(company);
   const fit = latestFit(company, data.fitEvaluations);
-  const reasons = matchReasons(company, fit).slice(0, 2);
+  const reasons = matchReasons(company, fit).slice(0, 1);
   return `
     <article class="company-row">
       <div class="tight-stack">
         <div class="company-title">
-          <span class="company-logo">${escapeHtml(initials(company.name))}</span>
           <div>
             <h3>${escapeHtml(company.name || company.company_id)}</h3>
-            <p class="muted">${escapeHtml([firstValue(company.locations), firstValue(company.industry_tags)].filter(Boolean).join(" · ") || "Location or industry not verified")}</p>
+            <p class="muted">${escapeHtml([firstValue(company.locations), firstValue(company.industry_tags)].filter(Boolean).join(" - ") || "Location or industry not verified")} - ${escapeHtml(stage)}</p>
           </div>
-          <span class="status-chip ${stageTone(stage)}">${escapeHtml(stage)}</span>
-          <span class="status-chip ${fitTone(company.confidence)}">${escapeHtml(fitLabel(company.confidence))}</span>
         </div>
         <p>${escapeHtml(shortText(company.description || "No company summary available.", 190))}</p>
-        <div class="summary-line">${reasons.map((reason) => `<span class="mini-chip info">${escapeHtml(reason)}</span>`).join("")}</div>
+        <p class="muted">${escapeHtml(reasons[0] || fitLabel(company.confidence))}</p>
       </div>
       <div class="actions">
-        <button class="button secondary" type="button" data-company-select="${escapeHtml(company.company_id)}">Inspect</button>
-        <button class="button primary" type="button" data-prepare-company="${escapeHtml(company.company_id)}" ${company.can_draft_application ? "" : "disabled title=\"" + escapeHtml(applicationBlockText(company)) + "\""}>Prepare</button>
+        <button class="primary-action" type="button" data-guided-company="${escapeHtml(company.company_id)}">Review fit</button>
       </div>
     </article>
   `;
@@ -1113,7 +1476,7 @@ function companyDetailMarkup(company, data) {
       <div class="tight-stack">
         <span class="eyebrow">Company detail</span>
         <h2>${escapeHtml(company.name || company.company_id)}</h2>
-        <p class="muted">${escapeHtml([firstValue(company.locations), domainLabel(company)].filter(Boolean).join(" · "))}</p>
+        <p class="muted">${escapeHtml([firstValue(company.locations), domainLabel(company)].filter(Boolean).join(" - "))}</p>
       </div>
       <div class="actions" style="margin-top: 18px;">
         ${company.raw?.website_url || company.raw_domain ? `<a class="button secondary" href="${escapeHtml(company.raw?.website_url || "https://" + company.raw_domain)}" target="_blank" rel="noreferrer">Website</a>` : ""}
@@ -1154,6 +1517,78 @@ function companyDetailMarkup(company, data) {
       </div>
     </article>
   `;
+}
+
+function researchProgressTitle(data) {
+  const draft = getResearchDraft(data);
+  const locations = draft.locations.length ? joinHuman(draft.locations) : "your target locations";
+  const roles = rolesSummary(draft);
+  return `Your recruiter is searching ${locations} for ${roles} companies.`;
+}
+
+function researchProgressSentence(data) {
+  const status = data.campaignStatus;
+  const counts = status?.artifact_counts || {};
+  const target = status?.state?.target_company_count || getResearchDraft(data).minCompanies || 30;
+  const companiesFound = Number(counts.companies ?? data.companies.length ?? 0);
+  if (isResearchComplete(status)) return `${companiesFound} of at least ${target} companies have been found.`;
+  if (isResearchActive(status)) return `${companiesFound} of at least ${target} companies found so far.`;
+  return "No company search is currently running.";
+}
+
+function researchStatusLabel(status) {
+  if (!status) return "Ready to start a search.";
+  if (isResearchComplete(status)) return "Search complete.";
+  if (isResearchActive(status)) {
+    const count = Number(status.artifact_counts?.companies || 0);
+    if (count > 0) return "New matches are appearing.";
+    return "Searching for companies.";
+  }
+  if (status.status === "failed") return "The search needs attention.";
+  return "Starting your search.";
+}
+
+function safeResearchEvents(status) {
+  const events = ["Search started"];
+  const counts = status?.artifact_counts || {};
+  if (counts.companies) events.push("Candidate saved");
+  if (counts.fit_evaluations) events.push("Fit evidence checked");
+  if (isResearchComplete(status)) events.push("Search complete");
+  if (!events.length) events.push("Waiting for activity");
+  return events;
+}
+
+function isResearchComplete(status) {
+  const value = status?.status || status?.import_state?.run_status || "";
+  return ["imported", "completed", "succeeded"].includes(value);
+}
+
+function loadCompanyDecisions() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(COMPANY_DECISIONS_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCompanyDecision(companyId, decision, reason = "") {
+  const decisions = loadCompanyDecisions();
+  decisions[companyId] = { decision, reason, decidedAt: new Date().toISOString() };
+  localStorage.setItem(COMPANY_DECISIONS_KEY, JSON.stringify(decisions));
+}
+
+function unreviewedCompanies(data) {
+  const decisions = loadCompanyDecisions();
+  return data.companies.filter((company) => !decisions[company.company_id] && !company.has_been_contacted);
+}
+
+function selectedGuidedCompany(data, companies) {
+  if (state.guidedCompanyReviewId) {
+    const found = data.companies.find((company) => company.company_id === state.guidedCompanyReviewId);
+    if (found) return found;
+  }
+  return companies[0] || null;
 }
 
 function filteredCompanies(data) {
@@ -1247,7 +1682,7 @@ function sentRowMarkup(row) {
           <span class="status-chip success">${escapeHtml(humanStatus(row.status || "sent"))}</span>
         </div>
         <p>${escapeHtml(row.subject || "No subject")}</p>
-        <p class="muted">${escapeHtml(row.email_address || "Recipient unavailable")} · ${escapeHtml(dateLabel(row.sent_at))}</p>
+        <p class="muted">${escapeHtml(row.email_address || "Recipient unavailable")} - ${escapeHtml(dateLabel(row.sent_at))}</p>
       </div>
       <div class="actions">
         ${row.provider_url ? `<a class="button secondary" href="${escapeHtml(row.provider_url)}" target="_blank" rel="noreferrer">Open provider record</a>` : ""}
@@ -1318,7 +1753,17 @@ function bindCompanyActions() {
   document.querySelectorAll("[data-company-select]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedCompanyId = button.dataset.companySelect;
-      renderCompanies(state.data);
+      if (button.dataset.routeTarget) {
+        setRoute(button.dataset.routeTarget);
+      } else {
+        renderCompanies(state.data);
+      }
+    });
+  });
+  document.querySelectorAll("[data-guided-company]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.guidedCompanyReviewId = button.dataset.guidedCompany;
+      setRoute("companies/review");
     });
   });
   document.querySelectorAll("[data-prepare-company]").forEach((button) => {
@@ -1333,6 +1778,18 @@ function bindCompanyActions() {
       if (action === "open-research") focusResearchForm();
       if (action === "research-status") await showResearchStatus();
       if (action === "import-research") await importResearch();
+    });
+  });
+  document.querySelectorAll("[data-company-decision]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const companyId = button.dataset.companyId;
+      const decision = button.dataset.companyDecision;
+      const reason = document.querySelector("#rejectReason")?.value || "";
+      if (!companyId || !decision) return;
+      saveCompanyDecision(companyId, decision, decision === "rejected" ? reason : "");
+      state.guidedCompanyReviewId = null;
+      showToast(decision === "saved" ? "Company saved." : "Company skipped.");
+      renderGuidedCompanyReview(state.data);
     });
   });
   const form = document.querySelector("#researchForm");
@@ -1440,44 +1897,271 @@ async function uploadOnboardingFile(file) {
   });
 }
 
+function defaultResearchDraft(data) {
+  return {
+    locations: data?.profile?.has_approved_profile ? ["Zurich, Switzerland"] : [],
+    remotePreference: "remote-friendly",
+    relocationOpen: true,
+    roles: ["Machine Learning", "Applied AI", "Document Intelligence"],
+    customRole: "",
+    industries: ["Applied AI", "Document automation"],
+    characteristics: ["useful products", "medium-sized teams"],
+    exclusions: ["Defense"],
+    notes: "",
+    scopePreset: "balanced",
+    minCompanies: 30,
+    timeBudgetMinutes: 30,
+  };
+}
+
+function getResearchDraft(data) {
+  if (state.researchDraft) return state.researchDraft;
+  let stored = null;
+  try {
+    stored = JSON.parse(localStorage.getItem(RESEARCH_DRAFT_KEY) || "null");
+  } catch {
+    stored = null;
+  }
+  state.researchDraft = { ...defaultResearchDraft(data), ...(stored && typeof stored === "object" ? stored : {}) };
+  return state.researchDraft;
+}
+
+function saveResearchDraft(draft) {
+  state.researchDraft = draft;
+  localStorage.setItem(RESEARCH_DRAFT_KEY, JSON.stringify(draft));
+}
+
+function saveCurrentResearchStep() {
+  const draft = { ...getResearchDraft(state.data) };
+  if (state.researchStep === 0) {
+    draft.locations = splitInput(document.querySelector("#briefLocations")?.value);
+    draft.remotePreference = document.querySelector("input[name='remotePreference']:checked")?.value || draft.remotePreference;
+    draft.relocationOpen = Boolean(document.querySelector("#briefRelocation")?.checked);
+  }
+  if (state.researchStep === 1) {
+    draft.roles = [...document.querySelectorAll("input[name='roles']:checked")].map((input) => input.value);
+    draft.customRole = document.querySelector("#briefCustomRole")?.value.trim() || "";
+  }
+  if (state.researchStep === 2) {
+    draft.industries = splitInput(document.querySelector("#briefIndustries")?.value);
+    draft.characteristics = [...document.querySelectorAll("input[name='characteristics']:checked")].map((input) => input.value);
+    draft.exclusions = splitInput(document.querySelector("#briefExclusions")?.value);
+    draft.notes = document.querySelector("#briefNotes")?.value.trim() || "";
+  }
+  if (state.researchStep === 3) {
+    const preset = document.querySelector("input[name='scopePreset']:checked")?.value || draft.scopePreset;
+    const minCompanies = Number.parseInt(document.querySelector("#briefMinCompanies")?.value || "", 10);
+    draft.scopePreset = preset;
+    draft.minCompanies = Number.isFinite(minCompanies) ? minCompanies : draft.minCompanies;
+    draft.timeBudgetMinutes = scopePresets[preset]?.minutes || draft.timeBudgetMinutes;
+  }
+  saveResearchDraft(draft);
+}
+
+function validateResearchStep(stepIndex) {
+  clearInlineErrors();
+  const draft = getResearchDraft(state.data);
+  if (stepIndex === 0 && !draft.locations.length) return showInlineError("briefLocationsError", "Add at least one location.");
+  if (stepIndex === 1 && !draft.roles.length && !draft.customRole) return showInlineError("briefRolesError", "Choose at least one role direction or add a custom role.");
+  if (stepIndex === 3 && (draft.minCompanies < 1 || draft.minCompanies > 100)) return showInlineError("briefScopeError", "Choose a target between 1 and 100 companies.");
+  return true;
+}
+
+function clearInlineErrors() {
+  document.querySelectorAll(".inline-error").forEach((node) => {
+    node.hidden = true;
+    node.textContent = "";
+  });
+}
+
+function showInlineError(id, message) {
+  const target = document.querySelector(`#${id}`);
+  if (target) {
+    target.hidden = false;
+    target.textContent = message;
+    target.scrollIntoView({ block: "nearest" });
+  }
+  return false;
+}
+
+function profileRoleSuggestions() {
+  return ["Machine Learning", "Applied AI", "Document Intelligence", "MLOps"];
+}
+
+function normalizedResearchBrief(draft) {
+  const roles = [...draft.roles, draft.customRole].map((role) => role.trim()).filter(Boolean);
+  const preferenceText = [
+    draft.characteristics.length ? `Prioritize ${joinHuman(draft.characteristics)}.` : "",
+    draft.industries.length ? `Look for ${joinHuman(draft.industries)} companies.` : "",
+    draft.exclusions.length ? `Exclude ${joinHuman(draft.exclusions)}.` : "",
+    draft.notes || "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    role_focus: roles.length ? roles.join(", ") : "Profile-aligned roles",
+    locations: draft.locations,
+    time_budget_minutes: Number(draft.timeBudgetMinutes || scopePresets[draft.scopePreset]?.minutes || 30),
+    max_companies: Number(draft.minCompanies || scopePresets[draft.scopePreset]?.count || 30),
+    notes: preferenceText || null,
+  };
+}
+
+function recruiterBriefText(draft) {
+  return `Search ${locationSummary(draft)} for ${rolesSummary(draft)} work. ${preferencesSummary(draft)} Find at least ${Number(draft.minCompanies || 30)} strong candidates.`;
+}
+
+function locationSummary(draft) {
+  const model = draft.remotePreference === "remote-friendly" ? "remote-friendly companies" : draft.remotePreference === "hybrid" ? "hybrid-friendly companies" : "onsite roles";
+  const relocation = draft.relocationOpen ? " and companies open to relocation" : "";
+  return `${joinHuman(draft.locations.length ? draft.locations : ["your preferred locations"])} and nearby ${model}${relocation}`;
+}
+
+function rolesSummary(draft) {
+  const roles = [...draft.roles, draft.customRole].map((role) => role.trim()).filter(Boolean);
+  return joinHuman(roles.length ? roles : ["profile-aligned"]);
+}
+
+function preferencesSummary(draft) {
+  const parts = [];
+  if (draft.industries.length) parts.push(`Prioritize ${joinHuman(draft.industries)}`);
+  if (draft.characteristics.length) parts.push(joinHuman(draft.characteristics));
+  if (draft.exclusions.length) parts.push(`Exclude ${joinHuman(draft.exclusions)}`);
+  if (draft.notes) parts.push(draft.notes);
+  return parts.length ? `${parts.join(". ")}.` : "Prioritize companies with clear evidence of fit.";
+}
+
+function scopeSummary(draft) {
+  const preset = scopePresets[draft.scopePreset] || scopePresets.balanced;
+  return `${preset.label} search, aiming for at least ${Number(draft.minCompanies || preset.count)} companies.`;
+}
+
+function joinHuman(items) {
+  const values = items.map((item) => String(item || "").trim()).filter(Boolean);
+  if (values.length <= 1) return values[0] || "";
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
+}
+
+function friendlyLaunchError(error) {
+  const message = error?.message || "";
+  if (message.toLowerCase().includes("approved profile")) return "Approve your profile before starting company search.";
+  if (message.toLowerCase().includes("already")) return "A company search is already starting. Refresh progress before launching another one.";
+  return "The search could not be started. Please check the brief and try again.";
+}
+
+function focusGuidedHeading() {
+  window.requestAnimationFrame(() => document.querySelector("#guided-step-title")?.focus());
+}
+
 function focusResearchForm() {
-  document.querySelector("#researchRoles")?.focus();
+  state.researchStep = 0;
+  localStorage.setItem("guidedResearchStep", "0");
+  setRoute("companies/brief");
 }
 
-function updateResearchSummary() {
-  const locations = document.querySelector("#researchLocations")?.value.trim() || "the preferred locations";
-  const roles = document.querySelector("#researchRoles")?.value.trim() || "profile-aligned roles";
-  const count = document.querySelector("#researchCount")?.value || "30";
-  const budget = document.querySelector("#researchBudget")?.selectedOptions?.[0]?.textContent || "standard search";
-  const notes = document.querySelector("#researchNotes")?.value.trim();
-  const summary = `Search for ${roles} near ${locations}, aiming for at least ${count} companies with a ${budget.toLowerCase()}${notes ? `. Note: ${notes}` : "."}`;
-  const target = document.querySelector("#researchSummary");
-  if (target) target.textContent = summary;
+function bindResearchBriefActions() {
+  document.querySelectorAll(".choice-card input").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.type === "radio") {
+        document.querySelectorAll(`input[name="${CSS.escape(input.name)}"]`).forEach((groupInput) => {
+          groupInput.closest(".choice-card")?.classList.toggle("selected", groupInput.checked);
+        });
+      } else {
+        input.closest(".choice-card")?.classList.toggle("selected", input.checked);
+      }
+      saveCurrentResearchStep();
+    });
+  });
+  document.querySelectorAll("#researchBriefForm input, #researchBriefForm textarea").forEach((input) => {
+    input.addEventListener("input", saveCurrentResearchStep);
+  });
+  document.querySelector("[data-brief-back]")?.addEventListener("click", () => {
+    saveCurrentResearchStep();
+    state.researchStep = Math.max(0, state.researchStep - 1);
+    localStorage.setItem("guidedResearchStep", String(state.researchStep));
+    renderResearchBrief(state.data);
+  });
+  document.querySelectorAll("[data-edit-brief]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.researchStep = guidedResearchSteps.findIndex((step) => step.id === button.dataset.editBrief);
+      localStorage.setItem("guidedResearchStep", String(state.researchStep));
+      renderResearchBrief(state.data);
+    });
+  });
+  const form = document.querySelector("#researchBriefForm");
+  form?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.target?.tagName === "TEXTAREA") return;
+    event.preventDefault();
+    form.requestSubmit();
+  });
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    saveCurrentResearchStep();
+    if (!validateResearchStep(state.researchStep)) return;
+    if (state.researchStep < guidedResearchSteps.length - 1) {
+      state.researchStep += 1;
+      localStorage.setItem("guidedResearchStep", String(state.researchStep));
+      renderResearchBrief(state.data);
+      return;
+    }
+    await confirmResearchLaunch();
+  });
 }
 
-async function launchResearch() {
-  const locations = splitInput(document.querySelector("#researchLocations")?.value);
-  const roleFocus = document.querySelector("#researchRoles")?.value.trim() || "Profile-aligned roles";
-  const timeBudget = Number.parseInt(document.querySelector("#researchBudget")?.value || "30", 10);
-  const maxCompanies = Number.parseInt(document.querySelector("#researchCount")?.value || "30", 10);
-  const notes = document.querySelector("#researchNotes")?.value.trim() || null;
-  await actionWithToast("Starting company search", async () => {
+async function confirmResearchLaunch() {
+  const draft = getResearchDraft(state.data);
+  openModal(
+    "Start company search",
+    `
+      <div class="stack">
+        <p>${escapeHtml(recruiterBriefText(draft))}</p>
+        <p class="muted">Your recruiter will search in the background. This cannot contact companies or approve applications.</p>
+        <div class="actions">
+          <button class="secondary-action" type="button" data-modal-cancel>Back</button>
+          <button class="primary-action" type="button" data-confirm-launch>Start company search</button>
+        </div>
+      </div>
+    `,
+  );
+  document.querySelector("[data-modal-cancel]")?.addEventListener("click", closeModal);
+  document.querySelector("[data-confirm-launch]")?.addEventListener("click", async (event) => {
+    await launchResearchFromBrief(event.currentTarget);
+  });
+}
+
+async function launchResearchFromBrief(button) {
+  if (state.launchInFlight) return;
+  state.launchInFlight = true;
+  if (button) button.disabled = true;
+  try {
+    const draft = getResearchDraft(state.data);
+    const payload = normalizedResearchBrief(draft);
     const prepared = await fetchJson(endpoints.companyResearch, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        role_focus: roleFocus,
-        locations,
-        time_budget_minutes: Number.isFinite(timeBudget) ? timeBudget : 30,
-        max_companies: Number.isFinite(maxCompanies) ? maxCompanies : 30,
-        notes,
-      }),
+      body: JSON.stringify(payload),
     });
     await fetchJson(`${endpoints.companyResearch}/${encodeURIComponent(prepared.run_id)}/launch`, { method: "POST" });
     state.campaignRunId = prepared.run_id;
     localStorage.setItem("companyResearchRunId", prepared.run_id);
+    localStorage.setItem(RESEARCH_BRIEF_KEY, JSON.stringify({ ...draft, runId: prepared.run_id, launchedAt: new Date().toISOString() }));
+    closeModal();
+    showToast("Starting your search.");
     startCompanyResearchPolling();
-  });
+    setRoute("companies/progress");
+  } catch (error) {
+    const target = document.querySelector("#briefLaunchError");
+    if (target) {
+      target.hidden = false;
+      target.textContent = friendlyLaunchError(error);
+    } else {
+      showToast(friendlyLaunchError(error));
+    }
+  } finally {
+    state.launchInFlight = false;
+    if (button) button.disabled = false;
+  }
 }
 
 async function showResearchStatus() {
@@ -1527,6 +2211,9 @@ function startCompanyResearchPolling() {
     const status = await safeFetchJson(`${endpoints.companyResearch}/${encodeURIComponent(state.campaignRunId)}/status`);
     if (!status) return;
     state.data.campaignStatus = status;
+    if ((status.artifact_counts?.companies || 0) > 0 || !isResearchActive(status)) {
+      state.data = await loadProductData();
+    }
     if (!isResearchActive(status)) clearInterval(state.companyResearchPoll);
     if (state.route === "home") renderHome(state.data);
     if (state.route === "companies") renderCompanies(state.data);
@@ -1626,7 +2313,7 @@ function openSendConfirmation(intentIds) {
         </div>
         <p>You are approving ${ids.length} application${ids.length === 1 ? "" : "s"} for backend validation, duplicate prevention, reservation, audit logging, and configured delivery.</p>
         <ul class="plain-list">
-          ${ready.map((draft) => `<li>${escapeHtml(draft.company_name)} · ${escapeHtml(draft.email_address || "recipient unknown")} · ${escapeHtml(draft.subject || "No subject")}</li>`).join("")}
+          ${ready.map((draft) => `<li>${escapeHtml(draft.company_name)} - ${escapeHtml(draft.email_address || "recipient unknown")} - ${escapeHtml(draft.subject || "No subject")}</li>`).join("")}
         </ul>
         <p class="muted">${escapeHtml(deliveryModeText(delivery))}</p>
         <div class="actions">

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "playwright:install": "playwright install chromium",
-    "playwright:check": "playwright --version"
+    "playwright:check": "playwright --version",
+    "playwright:guided": "playwright test tests/guided-workflow.spec.js"
   },
   "devDependencies": {
     "@playwright/test": "1.52.0",
