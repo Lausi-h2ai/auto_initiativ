@@ -25,7 +25,10 @@ def create_app() -> FastAPI:
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard() -> FileResponse:
-        return FileResponse(STATIC_DIR / "dashboard.html")
+        return FileResponse(
+            STATIC_DIR / "dashboard.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     return app
 

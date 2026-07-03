@@ -105,6 +105,7 @@ a:hover {
 }
 
 .app-shell {
+  width: 100%;
   min-height: 100vh;
 }
 
@@ -343,7 +344,8 @@ a:hover {
 }
 
 .main-shell {
-  width: min(1280px, calc(100% - 36px));
+  width: calc(100% - 36px);
+  max-width: 1280px;
   margin: 0 auto;
   padding: var(--space-5) 0 var(--space-7);
 }
@@ -1112,7 +1114,7 @@ tbody tr.selected {
 
 @media (max-width: 700px) {
   .main-shell {
-    width: min(100% - 24px, 1280px);
+    width: calc(100% - 24px);
     padding-top: var(--space-4);
   }
 

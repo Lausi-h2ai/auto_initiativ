@@ -56,6 +56,13 @@ def test_dashboard_returns_html_for_actual_app(client):
     assert "/dashboard/summary" in combined
 
 
+def test_dashboard_html_is_not_browser_cached(client):
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+
+
 def test_dashboard_static_js_and_css_are_served(client):
     _, assets = _dashboard_assets(client)
 
