@@ -5,67 +5,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Auto Initiativ</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/dashboard.css">
+    <link rel="stylesheet" href="/static/dashboard.css?v=guided-recruiter-3">
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar" aria-label="Workspace sections">
-        <div class="brand">
-          <span class="brand-mark">AI</span>
-          <div>
-            <h1>Auto Initiativ</h1>
-            <p>Personal recruiter</p>
+      <header class="app-header">
+        <a class="brand" href="#home" aria-label="Auto Initiativ home">
+          <span class="brand-mark" aria-hidden="true">AI</span>
+          <span>
+            <strong>Auto Initiativ</strong>
+            <small>Personal recruiter</small>
+          </span>
+        </a>
+
+        <nav class="primary-nav" id="primaryNav" aria-label="Primary navigation"></nav>
+
+        <div class="header-actions">
+          <span class="environment-chip" id="environmentChip">Checking safety mode</span>
+          <button class="icon-button" id="refreshButton" type="button" aria-label="Refresh">
+            <span aria-hidden="true">Refresh</span>
+          </button>
+          <button class="account-button" id="accountButton" type="button" aria-expanded="false" aria-controls="accountMenu">
+            Laurent
+          </button>
+          <div class="account-menu" id="accountMenu" hidden>
+            <button type="button" data-route="advanced">Advanced/Admin</button>
+            <button type="button" data-route="settings" disabled title="Settings are not editable yet.">Settings</button>
           </div>
         </div>
-        <nav class="nav" id="sectionNav"></nav>
-      </aside>
+      </header>
 
-      <main class="workspace">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Local personal recruiter</p>
-            <h2 id="viewTitle">Today</h2>
-          </div>
-          <div class="topbar-actions">
-            <span class="state-pill" id="apiState">Loading API state</span>
-            <button class="action-button compact" id="refreshButton" type="button">Refresh</button>
-          </div>
-        </header>
-
-        <section class="summary-grid" id="summaryGrid" aria-label="Workspace summary"></section>
-
-        <section class="filters" id="filtersPanel" aria-label="Filters"></section>
-
-        <section class="content-grid">
-          <div class="table-panel">
-            <div class="panel-header">
-              <div>
-                <h3 id="tableTitle">Records</h3>
-                <p id="tableSubtitle">Backend source-of-truth records</p>
-              </div>
-              <span class="count-pill" id="recordCount">0 records</span>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead id="tableHead"></thead>
-                <tbody id="tableBody"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <aside class="detail-panel" aria-label="Selected record detail">
-            <div class="panel-header">
-              <div>
-                <h3>Detail</h3>
-                <p id="detailSubtitle">Select a row to inspect raw fields</p>
-              </div>
-            </div>
-            <pre id="detailJson" class="detail-json">No record selected.</pre>
-          </aside>
-        </section>
+      <main class="main-shell">
+        <section class="journey" aria-label="Recruiter journey" id="journey"></section>
+        <section class="page" id="page" tabindex="-1"></section>
       </main>
     </div>
 
-    <script src="/static/dashboard.js"></script>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <div class="modal-backdrop" id="modalBackdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-header">
+          <h2 id="modalTitle">Confirm</h2>
+          <button class="icon-only" type="button" id="modalClose" aria-label="Close">x</button>
+        </div>
+        <div id="modalBody"></div>
+      </section>
+    </div>
+
+    <script src="/static/dashboard.js?v=guided-recruiter-3"></script>
   </body>
 </html>

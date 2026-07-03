@@ -107,52 +107,55 @@ def test_dashboard_assets_reference_required_read_only_api_endpoints(client):
         assert endpoint in combined
 
     required_product_text = {
-        "Today",
-        "Opportunities",
-        "Outreach",
-        "Advanced",
-        "What is happening",
-        "Who has been contacted",
-        "Drafted",
-        "Sent",
-        "Send all",
-        "Completed email and CV drafts",
-        "Companies already contacted",
-        "Guided edits",
-        "Start profile interview",
-        "Waiting for profile agent reply",
-        "Finish artifacts",
-        "Finalizing candidate profile artifacts",
-        "Upload resume",
-        "Validate artifacts",
-        "Candidate artifacts",
-        "Approve reviewed profile",
-        "Review each JSON artifact",
-        "Launch company research",
-        "Application draft",
-        "Application draft progress",
-        "Application draft batch progress",
-        "Open PDF",
-        "Draft all missing",
-        "Time budget",
-        "Target companies",
-        "Auto-refreshing every 10 seconds",
-        "Generated files and transcript",
-        "user_profile.json",
-        "master_cv_profile.json",
-        "policy.json",
-        "onboarding_review.json",
-        "No approved profile yet",
-        "Local profile mode",
-        "Raw backend records",
+        "Home",
+        "Profile",
+        "Companies",
+        "Applications",
+        "Advanced/Admin",
+        "Personal recruiter",
+        "Recruiter journey",
+        "Recommended next action",
+        "Needs your attention",
+        "Current work",
+        "Recent accomplishments",
+        "Your career profile is ready",
+        "Recruiter conversation",
+        "Structured profile",
+        "Resume source material",
+        "Approve meaningful changes",
+        "Find and review companies",
+        "Brief your recruiter",
+        "Company matches",
+        "Company detail",
+        "Why it matches",
+        "Concerns and uncertainties",
+        "Application workspace",
+        "Review applications before anything leaves",
+        "Ready for your approval",
+        "Final approval",
+        "No application is sent without your explicit confirmation.",
+        "Operational records and debugging tools",
+        "Administrative view",
+        "Raw records, run IDs, paths, payloads, queue state, gate results, and audit logs are shown here.",
     }
     for text in required_product_text:
         assert text in combined
 
+    primary_nav_terms = {
+        'label: "Home"',
+        'label: "Profile"',
+        'label: "Companies"',
+        'label: "Applications"',
+    }
+    for text in primary_nav_terms:
+        assert text in combined
+
+    assert 'label: "Advanced"' not in combined
     assert "Start Onboarding" not in combined
     assert 'label: "Onboarding"' not in combined
-    assert "companyResearchLocations" not in combined
-    assert "state.filters[target] = { run_id: runFilter };" in combined
+    assert "Opportunities" not in combined
+    assert "Today" not in combined
+    assert "Local profile mode" not in combined
 
 
 def test_dashboard_assets_do_not_expose_sending_or_external_ai_surfaces(client):
