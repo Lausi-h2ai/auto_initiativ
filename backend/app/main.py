@@ -10,6 +10,7 @@ from backend.app.api.routes import router
 from backend.app.db.session import init_db
 
 STATIC_DIR = Path(__file__).parent / "static"
+DESIGN_LAB_DIR = STATIC_DIR / "design-lab"
 
 
 @asynccontextmanager
@@ -29,6 +30,18 @@ def create_app() -> FastAPI:
             STATIC_DIR / "dashboard.html",
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
+
+    @app.get("/design-lab/concept-a", include_in_schema=False)
+    def design_lab_concept_a() -> FileResponse:
+        return FileResponse(DESIGN_LAB_DIR / "concept-a.html")
+
+    @app.get("/design-lab/concept-b", include_in_schema=False)
+    def design_lab_concept_b() -> FileResponse:
+        return FileResponse(DESIGN_LAB_DIR / "concept-b.html")
+
+    @app.get("/design-lab/concept-c", include_in_schema=False)
+    def design_lab_concept_c() -> FileResponse:
+        return FileResponse(DESIGN_LAB_DIR / "concept-c.html")
 
     return app
 

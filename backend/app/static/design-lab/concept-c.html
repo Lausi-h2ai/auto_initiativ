@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Auto Initiativ Design Lab - Concept C</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/design-lab/design-lab.css">
+  </head>
+  <body data-concept="c">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="lab-header" aria-label="Design lab concept navigation">
+      <a class="lab-brand" href="/design-lab/concept-a" aria-label="Auto Initiativ design lab">
+        <span class="lab-mark">AI</span>
+        <span>
+          <strong>Auto Initiativ</strong>
+          <small>Design lab</small>
+        </span>
+      </a>
+      <nav class="lab-tabs" aria-label="Concepts">
+        <a href="/design-lab/concept-a">Personal recruiter</a>
+        <a href="/design-lab/concept-b">Guided workflow</a>
+        <a aria-current="page" href="/design-lab/concept-c">Curated shortlist</a>
+      </nav>
+    </header>
+
+    <main class="concept-shell shortlist-shell" id="main">
+      <section class="shortlist-intro" aria-labelledby="shortlist-title">
+        <div>
+          <p class="context-line">Curated shortlist · Switzerland focus · Review before preparing</p>
+          <h1 id="shortlist-title">Five companies worth a closer look.</h1>
+          <p>
+            These matches were selected for practical AI work, realistic relocation paths, and clear overlap
+            with your document understanding and product engineering experience.
+          </p>
+        </div>
+        <button class="primary-action" type="button" data-select-company="0">Review first match</button>
+      </section>
+
+      <section class="shortlist-layout" aria-label="Company shortlist">
+        <div class="company-list" data-company-list></div>
+        <aside class="company-detail" data-company-detail aria-live="polite"></aside>
+      </section>
+    </main>
+
+    <script src="/static/design-lab/design-lab.js"></script>
+  </body>
+</html>

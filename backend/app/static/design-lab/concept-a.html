@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Auto Initiativ Design Lab - Concept A</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/design-lab/design-lab.css">
+  </head>
+  <body data-concept="a">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="lab-header" aria-label="Design lab concept navigation">
+      <a class="lab-brand" href="/design-lab/concept-a" aria-label="Auto Initiativ design lab">
+        <span class="lab-mark">AI</span>
+        <span>
+          <strong>Auto Initiativ</strong>
+          <small>Design lab</small>
+        </span>
+      </a>
+      <nav class="lab-tabs" aria-label="Concepts">
+        <a aria-current="page" href="/design-lab/concept-a">Personal recruiter</a>
+        <a href="/design-lab/concept-b">Guided workflow</a>
+        <a href="/design-lab/concept-c">Curated shortlist</a>
+      </nav>
+    </header>
+
+    <main class="concept-shell concierge-shell" id="main">
+      <p class="context-line">Profile complete · Discovering companies · Nothing sends without your approval</p>
+      <section class="concierge-hero" aria-labelledby="concept-a-title">
+        <div>
+          <p class="quiet-note">Good afternoon, Laurent</p>
+          <h1 id="concept-a-title">Three applications are ready for your review.</h1>
+          <p class="hero-copy">
+            Your recruiter has prepared focused drafts for companies that match your product and document AI experience.
+            Review the recommendations, adjust anything you want, then decide what can move forward.
+          </p>
+          <div class="hero-actions">
+            <button class="primary-action" type="button" data-open-modal="applicationReview">Review applications</button>
+            <button class="text-action" type="button" data-toggle-panel="recentProgress">See recent progress</button>
+          </div>
+        </div>
+        <aside class="work-indicator" aria-label="Background work">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <strong>Research is continuing quietly</strong>
+          <p>Checking new Swiss climate and AI companies. Next update expected in about 10 minutes.</p>
+        </aside>
+      </section>
+
+      <section class="attention-strip" aria-labelledby="attention-title">
+        <div>
+          <h2 id="attention-title">Needs your attention</h2>
+          <p>Three decisions are waiting before anything can be sent.</p>
+        </div>
+        <ul class="attention-list">
+          <li>
+            <span>Review tailored email for LatticeFlow</span>
+            <button type="button" data-open-modal="applicationReview">Open</button>
+          </li>
+          <li>
+            <span>Confirm relocation wording for Zurich roles</span>
+            <button type="button" data-complete-item>Confirm</button>
+          </li>
+          <li>
+            <span>Resolve one unverified contact at Viso</span>
+            <button type="button" data-open-modal="contactCheck">Check</button>
+          </li>
+        </ul>
+      </section>
+
+      <section class="recent-progress" id="recentProgress" hidden>
+        <h2>Recent progress</h2>
+        <ol>
+          <li>Profile approved for discovery.</li>
+          <li>Five high-fit companies shortlisted.</li>
+          <li>Three tailored applications prepared for review.</li>
+        </ol>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" data-modal="applicationReview" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="review-title">
+        <button class="close-button" type="button" data-close-modal aria-label="Close review">Close</button>
+        <h2 id="review-title">Review prepared applications</h2>
+        <p>The drafts are ready for your judgment. Sending still requires a separate final confirmation.</p>
+        <ul class="review-list">
+          <li><strong>LatticeFlow</strong><span>Computer vision safety · strong fit</span></li>
+          <li><strong>Viso.ai</strong><span>Applied AI platform · contact needs review</span></li>
+          <li><strong>Scandit</strong><span>Document and data capture · strong fit</span></li>
+        </ul>
+        <button class="primary-action" type="button" data-close-modal>Continue review</button>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" data-modal="contactCheck" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="contact-title">
+        <button class="close-button" type="button" data-close-modal aria-label="Close contact check">Close</button>
+        <h2 id="contact-title">Contact needs verification</h2>
+        <p>The email pattern looks plausible, but there is not enough evidence to send. Choose a verified contact or leave this application unsent.</p>
+        <button class="primary-action" type="button" data-close-modal>Keep for review</button>
+      </section>
+    </div>
+
+    <script src="/static/design-lab/design-lab.js"></script>
+  </body>
+</html>

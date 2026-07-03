@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Auto Initiativ Design Lab - Concept B</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/static/design-lab/design-lab.css">
+  </head>
+  <body data-concept="b">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="lab-header" aria-label="Design lab concept navigation">
+      <a class="lab-brand" href="/design-lab/concept-a" aria-label="Auto Initiativ design lab">
+        <span class="lab-mark">AI</span>
+        <span>
+          <strong>Auto Initiativ</strong>
+          <small>Design lab</small>
+        </span>
+      </a>
+      <nav class="lab-tabs" aria-label="Concepts">
+        <a href="/design-lab/concept-a">Personal recruiter</a>
+        <a aria-current="page" href="/design-lab/concept-b">Guided workflow</a>
+        <a href="/design-lab/concept-c">Curated shortlist</a>
+      </nav>
+    </header>
+
+    <main class="concept-shell workflow-shell" id="main">
+      <p class="context-line">Research brief · One decision at a time · 3 of 5</p>
+      <section class="workflow-panel" aria-labelledby="workflow-title">
+        <div class="workflow-context">
+          <p class="quiet-note">Current decision</p>
+          <h1 id="workflow-title">Let us refine where you want to work.</h1>
+          <p>
+            This helps the research agent avoid noisy company lists and focus on places where your experience
+            with practical AI systems is relevant.
+          </p>
+          <p class="assurance">The search can run in the background after you continue. No application can be sent without your review.</p>
+        </div>
+
+        <form class="guided-form" data-guided-form>
+          <fieldset>
+            <legend>Which company environment should be prioritized?</legend>
+            <label class="choice-card selected">
+              <input type="radio" name="companyType" value="product" checked>
+              <span>
+                <strong>Product companies building applied AI</strong>
+                <small>Best for document understanding, workflow automation, and useful computer vision.</small>
+              </span>
+            </label>
+            <label class="choice-card">
+              <input type="radio" name="companyType" value="research">
+              <span>
+                <strong>Research-heavy teams with product paths</strong>
+                <small>Prioritize labs that ship, not pure academic groups.</small>
+              </span>
+            </label>
+            <label class="choice-card">
+              <input type="radio" name="companyType" value="platform">
+              <span>
+                <strong>Developer platforms and infrastructure</strong>
+                <small>Focus on engineering leverage, reliability, and tooling.</small>
+              </span>
+            </label>
+          </fieldset>
+
+          <label class="field-label" for="research-note">Optional instruction for the recruiter</label>
+          <textarea id="research-note" rows="4">Focus on medium-sized AI companies around Zurich that work on useful, non-defense products.</textarea>
+
+          <div class="form-actions">
+            <button class="secondary-action" type="button" data-step-back>Back</button>
+            <button class="primary-action" type="submit">Continue</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="next-preview" data-next-preview aria-live="polite">
+        <strong>Next</strong>
+        <span>Choose exclusions so the recruiter does not waste time on poor-fit companies.</span>
+      </section>
+    </main>
+
+    <script src="/static/design-lab/design-lab.js"></script>
+  </body>
+</html>
