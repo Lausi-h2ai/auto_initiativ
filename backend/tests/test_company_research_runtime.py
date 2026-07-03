@@ -130,6 +130,8 @@ def test_company_research_runtime_uses_campaign_time_budget_for_prompt_timeout(t
 
 
 def test_company_research_runtime_continues_until_target_company_count(tmp_path: Path, monkeypatch):
+    import_counts = []
+
     class PromptResult:
         def __init__(self, text: str) -> None:
             self.text = text
@@ -176,6 +178,7 @@ def test_company_research_runtime_continues_until_target_company_count(tmp_path:
             pass
 
         def import_run(self, run_id: str, *, run_type: str):
+            import_counts.append(len(list((output_root / "companies").glob("*.json"))))
             return FakeImportResult()
 
     run_root = tmp_path / "run-1"
@@ -200,12 +203,96 @@ def test_company_research_runtime_continues_until_target_company_count(tmp_path:
 
     assert len(client.prompts) == 2
     assert "Continue the prepared company research task" in client.prompts[1]
+    assert import_counts == [1, 2]
     assert client.closed is True
     state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))
     assert state["status"] == "imported"
     assert state["last_company_count"] == 2
     assert state["target_company_count"] == 2
     assert state["continuation_count"] == 1
+
+
+def test_company_research_runtime_imports_existing_partial_artifacts_before_prompting(tmp_path: Path, monkeypatch):
+    import_counts = []
+    mark_statuses = []
+
+    class PromptResult:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.events = [{"type": "agent_end", "stopReason": "stop"}]
+
+    class CompletingClient:
+        def __init__(self, output_root: Path) -> None:
+            self.output_root = output_root
+            self.prompts: list[str] = []
+            self.closed = False
+
+        def prompt(self, message: str, *, timeout_seconds: float):
+            self.prompts.append(message)
+            company_path = self.output_root / "companies" / "company-2.json"
+            company_path.write_text("{}", encoding="utf-8")
+            return PromptResult("completed final company")
+
+        def command(self, payload, *, timeout_seconds: float):
+            return {}
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeSession:
+        def __init__(self, engine) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeRun:
+        status = "imported"
+
+    class FakeImportResult:
+        run = FakeRun()
+        validation_results = []
+
+    class FakeImportService:
+        def __init__(self, *, session, settings) -> None:
+            pass
+
+        def import_run(self, run_id: str, *, run_type: str):
+            import_counts.append(len(list((output_root / "companies").glob("*.json"))))
+            return FakeImportResult()
+
+    run_root = tmp_path / "run-1"
+    output_root = run_root / "output"
+    (run_root / "input").mkdir(parents=True)
+    (output_root / "companies").mkdir(parents=True)
+    (output_root / "contacts").mkdir()
+    (output_root / "fit_evaluations").mkdir()
+    (run_root / "task.md").write_text("# Task", encoding="utf-8")
+    (run_root / "instructions.md").write_text("# Instructions", encoding="utf-8")
+    (run_root / "input" / "campaign.json").write_text(
+        json.dumps({"time_budget_minutes": 2, "max_companies": 2}),
+        encoding="utf-8",
+    )
+    (output_root / "companies" / "company-1.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(company_research_runtime, "Session", FakeSession)
+    monkeypatch.setattr(company_research_runtime, "RunImportService", FakeImportService)
+    client = CompletingClient(output_root)
+    runtime = CompanyResearchRuntime(settings=_settings(tmp_path), clients={"run-1": client})
+    runtime._mark_run = lambda run_id, status, **kwargs: mark_statuses.append(status)
+
+    runtime._run_agent("run-1")
+
+    assert import_counts == [1, 2]
+    assert mark_statuses[:1] == ["research_running"]
+    assert client.prompts == [runtime._prompt("run-1")]
+    assert client.closed is True
+    state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "imported"
+    assert state["last_company_count"] == 2
+    assert state["target_company_count"] == 2
 
 
 def test_company_research_runtime_imports_existing_artifacts_without_prompting(tmp_path: Path, monkeypatch):

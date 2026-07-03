@@ -69,7 +69,7 @@ Goal: implement the dry-run safety gate.
 Tasks:
 
 - Validate `send_intent` records against schema and database state.
-- Check user policy, blocked domains, blocked recipients, company dedupe, contact dedupe, source existence, attachment existence, limits, forbidden claims, and review flags.
+- Check user policy, blocked domains, blocked recipients, company dedupe, contact dedupe, source existence, attachment existence, limits, forbidden claims, and blocking review flags.
 - Create `gate_result` records.
 - Write audit logs before and after gate evaluation.
 - Keep gate output deterministic and testable.
@@ -77,7 +77,7 @@ Tasks:
 Acceptance:
 
 - Gate decisions are explainable.
-- All risky or missing data blocks by default.
+- Risky or missing data blocks when it cannot be remediated automatically; otherwise it produces an auditable agent-remediation signal.
 - Gate tests cover every blocking reason.
 - Still no sending code.
 

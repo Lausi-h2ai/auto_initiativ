@@ -16,8 +16,8 @@ Use this mode for:
 
 - Dry-run Phase 1 and Phase 3 behavior.
 - Dashboard preview.
-- Explaining blocks and review requirements.
-- Preflight checks before a user approves anything.
+- Explaining blocks and agent-remediation requirements.
+- Preflight checks before backend-controlled reservation or delivery.
 
 This mode must never create a send reservation and must never call an email adapter.
 
@@ -25,7 +25,7 @@ This mode must never create a send reservation and must never call an email adap
 
 Runs the same checks as `evaluate_only`, then attempts a transactional send reservation if all checks pass.
 
-Use this mode only after future implementation adds explicit user approval or an autonomous sending policy. A successful reservation means the backend may proceed to a future email adapter. It does not mean the email was sent.
+Use this mode only after future implementation adds an autonomous sending policy. A successful reservation means the backend may proceed to a future email adapter. It does not mean the email was sent.
 
 ## Inputs
 
@@ -53,7 +53,7 @@ The gate must check at least:
 - Daily and weekly send limits are not exceeded.
 - No forbidden claims are present.
 - Every CV bullet and user-descriptive email claim references approved claim IDs from the immutable master CV profile snapshot.
-- No required field is low-confidence or marked `needs_review`.
+- No required field is low-confidence or marked with a blocking review flag.
 - Contact email safety rules pass.
 - In `reserve_for_send` mode, transactional reservation is available before adapter handoff.
 - Audit log is written before and after evaluation.
@@ -62,14 +62,18 @@ The gate must check at least:
 
 The gate should prefer publicly listed professional contact addresses.
 
-Block or require review for:
+Block or route to agent remediation for:
 
 - Private or personal email addresses.
 - Guessed or pattern-inferred emails.
 - Emails found only in weak, stale, scraped, or unverifiable sources.
 - Contacts whose professional relationship to the company is unclear.
 
-The policy may decide whether these cases are hard blocks or review requirements, but missing policy should default to `needs_review` or `blocked`.
+The policy may decide whether these cases are hard blocks or remediation requirements. Missing or unknown email-source policy should not block by itself, but it should not be treated as ready when confidence is low.
+
+Generic professional recipients such as careers, jobs, recruiting, talent, HR, info, or contact addresses are allowed when they are valid emails and the draft stays appropriately general.
+
+Unknown remote policy is descriptive uncertainty, not a blocker. Only evidence of an actual location, relocation, travel, onsite, or work-mode conflict should block or require remediation.
 
 ## Gate Outcomes
 
@@ -95,10 +99,12 @@ Block when:
 - Policy cannot be loaded.
 - The contact or company is a duplicate under policy.
 - Confidence is below configured threshold.
-- Any required field needs review.
+- Any required field has a blocking review flag.
 - The email body contains claims not traceable to approved profile claims or sources.
 - Any CV bullet or user-descriptive email claim lacks an approved claim ID.
-- The recipient is private, personal, guessed, or weakly sourced and policy requires blocking.
+- The recipient is private, personal, guessed, weakly sourced, or low-confidence and policy requires blocking.
+
+The following review flags are informational and must not block by themselves: `generic_recipient`, `generic_contact`, `generic_contact_email`, `generic_email_recipient`, `remote_policy_unknown`, `remote_policy_unverified`, `claim_ids_present`, `claim_id_reference`, and `claim_id_references`.
 
 ## Transactional Reservation
 

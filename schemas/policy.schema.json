@@ -29,7 +29,7 @@
         "allow_recipient_repeat": { "type": "boolean" },
         "company_dedupe_window_days": { "type": "integer", "minimum": 0 },
         "recipient_dedupe_window_days": { "type": "integer", "minimum": 0 },
-        "require_manual_review_before_send": { "type": "boolean", "default": true }
+        "require_manual_review_before_send": { "type": "boolean", "default": false }
       }
     },
     "limits": {
@@ -78,4 +78,3 @@
     }
   }
 }
-

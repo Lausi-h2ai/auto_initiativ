@@ -207,6 +207,21 @@ class CompanyResearchRuntime:
                 prompt_timeout_seconds=prompt_timeout,
                 continuation_count=continuation_count,
             ):
+                if initial_counts["companies"] > 0:
+                    self._import_research_artifacts(
+                        run_id,
+                        state_status="running",
+                        counts=initial_counts,
+                        target_company_count=target_company_count,
+                        elapsed_seconds=0,
+                        continuation_count=continuation_count,
+                    )
+                    self._mark_run(
+                        run_id,
+                        "research_running",
+                        action="company_research_partial_import_completed",
+                        result_status="completed",
+                    )
                 client = self._client(run_id)
                 prompt = self._prompt(run_id)
                 while True:
@@ -231,14 +246,30 @@ class CompanyResearchRuntime:
                         elapsed_seconds=elapsed_seconds,
                         continuation_count=continuation_count,
                     )
-                    if not self._should_continue_research(
+                    should_continue = self._should_continue_research(
                         counts=counts,
                         target_company_count=target_company_count,
                         elapsed_seconds=elapsed_seconds,
                         prompt_timeout_seconds=prompt_timeout,
                         continuation_count=continuation_count,
-                    ):
+                    )
+                    if not should_continue:
                         break
+                    if counts["companies"] > 0:
+                        self._import_research_artifacts(
+                            run_id,
+                            state_status="running",
+                            counts=counts,
+                            target_company_count=target_company_count,
+                            elapsed_seconds=elapsed_seconds,
+                            continuation_count=continuation_count,
+                        )
+                        self._mark_run(
+                            run_id,
+                            "research_running",
+                            action="company_research_partial_import_completed",
+                            result_status="completed",
+                        )
                     continuation_count += 1
                     prompt = self._continuation_prompt(
                         run_id,
@@ -283,23 +314,14 @@ class CompanyResearchRuntime:
             elapsed_seconds = round(time.monotonic() - started_monotonic, 3)
             self._write_state(run_id, "importing", last_reply=final_reply, importing_at=_utc_now())
             self._mark_run(run_id, "research_importing", action="company_research_agent_completed", result_status="completed")
-            with Session(db_session_module.engine) as session:
-                import_result = RunImportService(session=session, settings=self.settings).import_run(
-                    run_id,
-                    run_type=COMPANY_RESEARCH_RUN_TYPE,
-                )
-                self._write_state(
-                    run_id,
-                    import_result.run.status,
-                    imported_at=_utc_now(),
-                    import_status=import_result.run.status,
-                    validation_results=len(import_result.validation_results),
-                    artifact_counts=final_counts,
-                    last_company_count=final_counts["companies"],
-                    target_company_count=target_company_count,
-                    elapsed_seconds=elapsed_seconds,
-                    continuation_count=continuation_count,
-                )
+            self._import_research_artifacts(
+                run_id,
+                state_status=None,
+                counts=final_counts,
+                target_company_count=target_company_count,
+                elapsed_seconds=elapsed_seconds,
+                continuation_count=continuation_count,
+            )
         except Exception as exc:
             self._write_state(run_id, "failed", last_error=str(exc), failed_at=_utc_now(), error_type=type(exc).__name__)
             self._append_event(run_id, {"type": "company_research_failed", "error": str(exc), "error_type": type(exc).__name__})
@@ -308,6 +330,34 @@ class CompanyResearchRuntime:
             client = self.clients.pop(run_id, None)
             if client is not None:
                 client.close()
+
+    def _import_research_artifacts(
+        self,
+        run_id: str,
+        *,
+        state_status: str | None,
+        counts: dict[str, int],
+        target_company_count: int,
+        elapsed_seconds: float,
+        continuation_count: int,
+    ) -> None:
+        with Session(db_session_module.engine) as session:
+            import_result = RunImportService(session=session, settings=self.settings).import_run(
+                run_id,
+                run_type=COMPANY_RESEARCH_RUN_TYPE,
+            )
+            self._write_state(
+                run_id,
+                state_status or import_result.run.status,
+                imported_at=_utc_now(),
+                import_status=import_result.run.status,
+                validation_results=len(import_result.validation_results),
+                artifact_counts=counts,
+                last_company_count=counts["companies"],
+                target_company_count=target_company_count,
+                elapsed_seconds=elapsed_seconds,
+                continuation_count=continuation_count,
+            )
 
     def _ensure_prepared_run(self, run_id: str) -> None:
         with Session(db_session_module.engine) as session:

@@ -8,7 +8,7 @@ It is not permission to send.
 
 ## Authority
 
-Only the backend safety gate can decide whether a send intent passes. In dry-run mode, passing means the intent is eligible for review, not that an email is sent.
+Only the backend safety gate can decide whether a send intent passes. In dry-run mode, passing means the intent is eligible for the next backend-controlled step, not that an email is sent.
 
 The gate can run in `evaluate_only` mode or future `reserve_for_send` mode. A send intent itself must not request or imply adapter execution.
 
@@ -48,13 +48,15 @@ Examples of user-descriptive claims:
 - Languages
 - Availability or work authorization, when presented as a factual claim
 
-Unsupported claims must be removed or marked for review. A send intent with unreferenced user-descriptive claims must fail the gate.
+Unsupported claims must be removed or marked for agent remediation. A send intent with unreferenced user-descriptive claims must fail the gate. Claim IDs themselves are not a review burden; they are the required ledger that keeps tailoring grounded.
 
 ## Contact Safety
 
 Send intents should prefer publicly listed professional contacts.
 
-Private or personal email addresses must be marked for review or blocked according to policy. Guessed, pattern-inferred, or weakly sourced emails must never be treated as ready to send without backend review.
+Private or personal email addresses must be routed to agent remediation or blocked according to policy. Guessed, pattern-inferred, weakly sourced, or low-confidence emails must not be treated as ready to send until contact research either replaces them with a better public professional email or leaves an auditable remediation reason.
+
+Generic professional recipients are allowed when they are valid emails. The draft should stay general instead of pretending a named person was identified.
 
 ## Forbidden Content
 

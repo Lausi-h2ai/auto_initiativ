@@ -279,12 +279,18 @@ select {
 }
 
 body[data-section="profile"] .content-grid,
+body[data-section="today"] .content-grid,
+body[data-section="opportunities"] .content-grid,
+body[data-section="outreach"] .content-grid,
 body[data-section="companies"] .content-grid,
 body[data-section="onboarding"] .content-grid {
   grid-template-columns: minmax(0, 1fr);
 }
 
 body[data-section="profile"] .detail-panel,
+body[data-section="today"] .detail-panel,
+body[data-section="opportunities"] .detail-panel,
+body[data-section="outreach"] .detail-panel,
 body[data-section="companies"] .detail-panel,
 body[data-section="onboarding"] .detail-panel {
   display: none;
@@ -330,9 +336,34 @@ table {
 }
 
 body[data-section="profile"] table,
+body[data-section="today"] table,
+body[data-section="opportunities"] table,
+body[data-section="outreach"] table,
 body[data-section="companies"] table,
 body[data-section="onboarding"] table {
   min-width: 0;
+}
+
+body[data-section="today"] th,
+body[data-section="today"] td,
+body[data-section="opportunities"] th,
+body[data-section="opportunities"] td,
+body[data-section="outreach"] th,
+body[data-section="outreach"] td {
+  border-bottom: 0;
+  padding: 0;
+}
+
+body[data-section="today"] tbody tr,
+body[data-section="opportunities"] tbody tr,
+body[data-section="outreach"] tbody tr {
+  cursor: default;
+}
+
+body[data-section="today"] tbody tr:hover,
+body[data-section="opportunities"] tbody tr:hover,
+body[data-section="outreach"] tbody tr:hover {
+  background: transparent;
 }
 
 th,
@@ -444,6 +475,240 @@ tbody tr.selected {
 
 .error-state {
   color: var(--danger);
+}
+
+.workspace-cell {
+  padding: 0;
+}
+
+.assistant-workspace {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  background: #fbfcfe;
+}
+
+.workspace-loading {
+  padding: 28px;
+  color: var(--muted);
+}
+
+.workspace-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 16px;
+}
+
+.workspace-hero h3,
+.workspace-hero p {
+  margin: 0;
+}
+
+.workspace-hero h3 {
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.workspace-hero p {
+  margin-top: 7px;
+  color: var(--muted);
+  max-width: 720px;
+}
+
+.workspace-status-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  gap: 8px;
+  min-width: min(320px, 100%);
+}
+
+.status-metric {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.status-metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.status-metric strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--strong);
+  font-size: 22px;
+}
+
+.status-metric.ok {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.status-metric.warn {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.status-metric.danger {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.workspace-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.pipeline-list,
+.action-queue-panel,
+.activity-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.workspace-card strong,
+.workspace-card p {
+  margin: 0;
+}
+
+.workspace-card p,
+.workspace-card-meta span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workspace-card-meta,
+.workspace-card-actions,
+.workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.action-card.confirm {
+  border-color: #bbf7d0;
+}
+
+.action-card.fix {
+  border-color: #fde68a;
+}
+
+.action-card.profile {
+  border-color: #bfdbfe;
+}
+
+.remediation-details {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.remediation-details strong,
+.remediation-details p {
+  margin: 0;
+}
+
+.remediation-details ul {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.remediation-details li {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.remediation-details li span {
+  display: block;
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.draft-card {
+  margin-bottom: 10px;
+}
+
+.draft-preview {
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  padding-left: 10px;
+}
+
+.empty-workspace {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 16px;
+  color: var(--muted);
+}
+
+.empty-workspace strong,
+.empty-workspace p {
+  margin: 0;
+}
+
+.empty-workspace p {
+  margin-top: 5px;
+}
+
+.advanced-tabs {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.advanced-tab {
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 9px;
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.advanced-tab.active {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #ffffff;
 }
 
 .onboarding-run-field {
@@ -1010,9 +1275,45 @@ tbody tr.selected {
   .content-grid {
     grid-template-columns: 1fr;
   }
+
+  body[data-section="profile"] .content-grid,
+  body[data-section="today"] .content-grid,
+  body[data-section="opportunities"] .content-grid,
+  body[data-section="outreach"] .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-columns,
+  .pipeline-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 700px) {
+  .sidebar {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    overflow: visible;
+  }
+
+  .nav-group {
+    flex-basis: 100%;
+    margin: 0;
+  }
+
+  .nav button {
+    width: auto;
+    min-height: 34px;
+    padding: 7px 10px;
+  }
+
   .workspace {
     padding: 14px;
   }
@@ -1025,6 +1326,15 @@ tbody tr.selected {
   .summary-grid,
   .filters {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-hero {
+    flex-direction: column;
+  }
+
+  .workspace-status-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
   }
 
   .onboarding-run-field {

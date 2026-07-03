@@ -16,7 +16,7 @@ Codex agents may be creative, exploratory, and language-heavy. The backend must 
 - Draft CV variants from approved master CV claims.
 - Draft outreach emails.
 - Produce structured JSON outputs.
-- Mark uncertainty, contradictions, and review needs.
+- Mark uncertainty, contradictions, and remediation needs.
 
 ## Agents Must Not
 
@@ -56,6 +56,10 @@ When evidence is weak, the agent must:
 Every CV bullet and every user-descriptive email claim must reference approved claim IDs from the provided master CV profile snapshot.
 
 For contacts, agents should prefer publicly listed professional email addresses. Private, personal, guessed, pattern-inferred, weakly sourced, or stale emails must be marked with review flags and must not be presented as ready to send.
+
+Generic professional recipients such as careers, jobs, recruiting, talent, HR, info, or contact addresses are acceptable when they are valid and publicly sourced. In that case, drafts must stay general and must not imply a specific person reviewed the message.
+
+If a prior agent cannot find a valid contact email or leaves an inferred/weak email, a later contact-research agent should search public sources and either replace it with a better valid professional email or preserve an explicit remediation flag. Agents must not rely on manual user approval to make weak evidence safe.
 
 Company research is for profile-aligned unsolicited outreach. Agents do not need to find currently open job listings before recording a company candidate, but they must still preserve evidence for why the company seems relevant.
 

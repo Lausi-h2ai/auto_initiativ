@@ -145,7 +145,7 @@ def test_promotion_blocks_duplicate_master_cv_claim_ids(db_session, runs_root):
     assert "duplicate_claim_id" in {issue.code for issue in result.issues}
 
 
-def test_promotion_blocks_non_conservative_policy_defaults(db_session, runs_root):
+def test_promotion_allows_policy_without_manual_review_requirement(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     policy = db_session.exec(select(PolicySnapshot)).one()
     _rewrite_raw(policy, lambda data: data["outreach"].update({"require_manual_review_before_send": False}))
@@ -154,8 +154,8 @@ def test_promotion_blocks_non_conservative_policy_defaults(db_session, runs_root
 
     result = OnboardingPromotionService(db_session).promote_run_snapshots("onboarding-promote", _request())
 
-    assert result.status == "blocked"
-    assert "manual_review_policy_not_conservative" in {issue.code for issue in result.issues}
+    assert result.status == "approved"
+    assert "manual_review_policy_not_conservative" not in {issue.code for issue in result.issues}
 
 
 def test_onboarding_promotion_api_promotes_without_send_endpoint(client, runs_root):

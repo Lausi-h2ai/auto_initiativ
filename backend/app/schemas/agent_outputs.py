@@ -179,7 +179,7 @@ class PolicyOutreach(StrictModel):
     allow_recipient_repeat: bool
     company_dedupe_window_days: int = Field(ge=0)
     recipient_dedupe_window_days: int = Field(ge=0)
-    require_manual_review_before_send: bool | None = True
+    require_manual_review_before_send: bool | None = False
 
 
 class PolicyLimits(StrictModel):

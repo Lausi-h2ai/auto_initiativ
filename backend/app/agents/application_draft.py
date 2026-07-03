@@ -16,12 +16,12 @@ Hard boundaries:
 - Do not use Gmail, mail APIs, contact forms, messaging services, credentials, or secrets.
 - Do not create `send_intent.json`, gate results, reservations, outreach records, or delivery state.
 - Start from `../input/draft_context.json`; read larger inputs only when needed to produce the requested artifacts.
-- Do not perform contact research unless `../input/application_draft.json` explicitly sets `contact_needs_research` to true. If contact data is missing or uncertain in normal drafting runs, mark the draft with review flags instead of browsing or guessing.
+- Do not perform contact research unless `../input/application_draft.json` explicitly sets `contact_needs_research` to true. If contact data is missing or uncertain in normal drafting runs, mark the draft with remediation flags instead of browsing or guessing.
 - Future CV tailoring may only use claims from the approved master CV profile. Do not invent experience, dates, education, skills, credentials, achievements, or personal facts.
 - If a useful claim is missing or ambiguous, omit it or add a review flag. Do not fill gaps by guessing.
 - Keep the resume to one page.
 - Write only `../output/email_draft.json`, `../output/contact_candidate.json` when explicitly required, and files under `../output/attachments`.
-- The backend will validate `email_draft.json` and only serve attachments for manual review. It will not send anything from this run.
+- The backend will validate `email_draft.json` and serve attachments for backend-controlled evaluation. It will not send anything from this run.
 
 Use the compact tone and workflow notes in `../input/draft_context.json`. Use the master CV HTML in `../input/master_cv/de_ch_master.html` as the real starting point for the tailored CV.
 On this machine, render the CV PDF with `application_draft_render_pdf` after writing the HTML attachment. Do not use WeasyPrint unless the render tool is unavailable.
@@ -279,7 +279,8 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
             "- Use the selected `contact_id` exactly in `contact_candidate.json` when contact research is required.\n"
             "- Prefer emails published on the company site or a public professional profile.\n"
             "- Do not use private personal emails, guessed emails, contact forms, Gmail, mail APIs, or messaging services.\n"
-            "- If the best available email is generic, inferred, or weakly sourced, keep it in `contact_candidate.json` but add review flags and lower confidence.\n"
+            "- Generic company addresses such as careers@, jobs@, recruiting@, talent@, hr@, info@, or contact@ are acceptable when public and valid; keep the email draft general.\n"
+            "- If the best available email is inferred or weakly sourced, add remediation review flags and lower confidence so a later contact-research pass can try to replace it.\n"
             "- Never return full HTML/search-result pages to the model; extract only the email, URL, and one short evidence snippet.\n\n"
             if brief.contact_needs_research
             else ""
@@ -289,7 +290,7 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
         "- Reference the CV PDF with attachment "
         f"`{{ \"attachment_id\": \"cv-{brief.company_slug}\", \"path\": \"attachments/{brief.pdf_filename}\", \"kind\": \"cv\" }}`.\n"
         "- Use concrete company evidence and approved claim IDs in `claim_refs` and `source_refs`.\n"
-        "- Mark `review_flags` when the recipient, language, claim fit, PDF rendering, or source evidence needs review.\n"
+        "- Mark `review_flags` when the recipient, language, claim fit, PDF rendering, or source evidence needs agent remediation.\n"
         "- Do not mention that the CV was tailored by an agent or that this is a bulk outreach workflow.\n"
         "- Never include the phrase `Summa Cum Laude` in the resume or email draft.\n\n"
         "Resume layout requirements:\n\n"

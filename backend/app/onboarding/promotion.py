@@ -244,17 +244,6 @@ class OnboardingPromotionService:
                             )
                         )
 
-        outreach = data.get("outreach", {})
-        if not isinstance(outreach, dict) or outreach.get("require_manual_review_before_send") is not True:
-            issues.append(
-                SnapshotPromotionIssue(
-                    "manual_review_policy_not_conservative",
-                    "Policy promotion requires manual review before send to remain enabled.",
-                    snapshot_type="policy",
-                    field="outreach.require_manual_review_before_send",
-                )
-            )
-
         limits = data.get("limits", {})
         if not isinstance(limits, dict) or limits.get("daily_send_limit") is None or limits.get("weekly_send_limit") is None:
             issues.append(

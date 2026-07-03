@@ -28,12 +28,13 @@ Hard boundaries:
 - Use only the approved profile, master CV, policy, schemas, and campaign brief in `input/`.
 - Use Playwright-backed browsing from the scoped shell only for public company, search, funding, hiring, product, and job-page research.
 - Preserve source references for every factual claim.
-- Mark uncertainty with lower confidence and `review_flags`.
+- Mark uncertainty with lower confidence and `review_flags`; do not rely on manual user approval to make weak evidence safe.
 - Read `input/existing_companies.json` before researching and avoid companies whose name, domain, normalized name, or policy key already appears there.
 - While researching each company, attempt to find a public professional careers, recruiting, HR, jobs, or talent contact email address.
 - Prefer role-neutral company-listed addresses such as careers@, jobs@, recruiting@, talent@, hr@, or a public careers-team address.
 - Do not scrape private personal emails, guess individual employee emails, submit forms, or message anyone.
-- If an address is inferred, weakly sourced, stale, or ambiguous, lower confidence and add review flags.
+- Generic company addresses such as careers@, jobs@, recruiting@, talent@, hr@, info@, or contact@ are acceptable when public and valid.
+- If an address is inferred, weakly sourced, stale, or ambiguous, lower confidence and add remediation review flags so a later contact-research pass can try to replace it.
 - Treat remote, hybrid, and onsite as acceptable when the approved user profile says so. Record remote or office policy when it is readily available, but do not spend disproportionate time proving remote availability and do not mark unknown remote policy as a risk by itself.
 - Only flag location or work-mode risk when there is evidence of an actual conflict, such as a required location, relocation, travel pattern, or onsite policy outside the approved target locations or stated preferences.
 
@@ -73,7 +74,7 @@ def build_company_research_task(campaign: CompanyResearchCampaign) -> str:
         "- Write fit evaluations to `../output/fit_evaluations/<stable-evaluation-id>.json`.\n"
         "- Each company candidate must identify the company, domain, description, locations, source refs, confidence, and review flags.\n"
         "- Each contact candidate must reference the same `company_id`, preserve source refs, and classify the email source.\n"
-        "- Prefer company-published career contact addresses over individual people; if no public address is found, omit the contact file instead of inventing one.\n"
+        "- Prefer company-published career contact addresses over individual people; generic company addresses are acceptable when public and valid. If no public address is found, omit the contact file instead of inventing one.\n"
         "- Each fit evaluation must reference the same `company_id`, the approved profile ID, and the approved policy ID.\n"
         "- Use the approved user profile and campaign brief for target locations; do not require currently open job listings before recording an interesting company.\n"
         "- Remote policy is descriptive metadata, not a hard requirement when the profile allows hybrid or onsite. Do not add a risk just because remote policy is unverified.\n"
