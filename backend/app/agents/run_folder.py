@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from backend.app.auth.context import scoped_runs_root
 from backend.app.agents.codex_exec import CodexExecRequest
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.models import AuditLog, Run, utc_now
@@ -105,7 +106,7 @@ class RunFolderGenerator:
     def prepare(self, spec: RunFolderSpec) -> RunFolder:
         self._validate_spec(spec)
 
-        run_dir = self.settings.runs_root / spec.run_id
+        run_dir = scoped_runs_root(self.settings.runs_root) / spec.run_id
         input_dir = run_dir / "input"
         output_dir = run_dir / "output"
         logs_dir = run_dir / "logs"

@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import time
+from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from backend.app.auth.context import scoped_runs_root
 from backend.app.agents.company_research import COMPANY_RESEARCH_INSTRUCTIONS
 from backend.app.agents.pi_rpc import ClientFactory, PiRpcClient, PiRpcClientProtocol
 from backend.app.core.config import Settings, get_settings
@@ -133,7 +135,8 @@ class CompanyResearchRuntime:
                 return ResearchLaunchResult(run_id=run_id, status="running", command=command, workdir=workspace)
             self._write_state(run_id, "running", command=command, workdir=str(workspace), started_at=_utc_now())
             self._mark_run(run_id, "research_running", action="company_research_launch_started", result_status="started")
-            thread = threading.Thread(target=self._run_agent, args=(run_id,), daemon=True)
+            context = copy_context()
+            thread = threading.Thread(target=context.run, args=(self._run_agent, run_id), daemon=True)
             _RESEARCH_THREADS[run_id] = thread
             thread.start()
         return ResearchLaunchResult(run_id=run_id, status="running", command=command, workdir=workspace)
@@ -626,7 +629,7 @@ class CompanyResearchRuntime:
         return events
 
     def _run_root(self, run_id: str) -> Path:
-        return self.settings.runs_root / run_id
+        return scoped_runs_root(self.settings.runs_root) / run_id
 
     def _workspace(self, run_id: str) -> Path:
         return self._run_root(run_id) / "workspace"

@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from backend.app.auth.context import current_identity
+from backend.app.auth.context import current_identity, scoped_runs_root
 from backend.app.agents.codex_tmux import TmuxCodexBridge, TmuxCodexError, TmuxTarget
 from backend.app.agents.company_research import (
     COMPANY_RESEARCH_INSTRUCTIONS,
@@ -51,6 +51,7 @@ from backend.app.db.models import (
     ImportedFile,
     ImportedGateResult,
     MasterCvProfileSnapshot,
+    OnboardingSession,
     OutreachRecord,
     PolicySnapshot,
     SendApprovalSnapshot,
@@ -60,6 +61,7 @@ from backend.app.db.models import (
     SentMessage,
     UserProfileSnapshot,
     ValidationResult,
+    utc_now,
 )
 from backend.app.email_delivery import OutreachResolutionError, OutreachResolutionService, SendBatchService
 from backend.app.db.session import get_session
@@ -293,6 +295,27 @@ def _session_state_response(
     )
 
 
+def _persist_onboarding_session(
+    session: Session,
+    run_id: str,
+    state: OnboardingSessionStateResponse,
+    entries: list[OnboardingChatEntryResponse],
+) -> None:
+    record = session.exec(select(OnboardingSession).where(OnboardingSession.session_id == run_id)).first()
+    if record is None:
+        record = OnboardingSession(session_id=run_id, run_id=run_id)
+    record.status = state.status
+    record.transport = "tmux" if state.tmux else "pi_rpc"
+    record.transport_metadata_json = json.dumps(state.model_dump(mode="json"), sort_keys=True)
+    record.transcript_json = json.dumps([entry.model_dump(mode="json") for entry in entries], sort_keys=True)
+    record.started_at = record.started_at or (utc_now() if state.status not in {"not_started", "failed"} else None)
+    if state.status in {"closed", "completed"}:
+        record.completed_at = utc_now()
+    record.updated_at = utc_now()
+    session.add(record)
+    session.commit()
+
+
 def get_onboarding_chat_adapter(settings: Settings = Depends(get_settings)) -> OnboardingCodexChatAdapter:
     if settings.onboarding_chat_runtime == "pi_rpc":
         return PiRpcOnboardingChatAdapter(settings=settings)
@@ -307,7 +330,7 @@ def get_onboarding_chat_adapter(settings: Settings = Depends(get_settings)) -> O
     return OnboardingCodexChatAdapter(
         TmuxCodexBridge(target),
         workdir=settings.codex_workdir,
-        runs_root=settings.runs_root,
+        runs_root=scoped_runs_root(settings.runs_root),
         reply_wait_seconds=settings.codex_chat_reply_wait_seconds,
     )
 
@@ -425,6 +448,17 @@ def _latest_company_outreach(session: Session, company: Company) -> OutreachReco
     ).first()
 
 
+def _latest_company_fit(session: Session, company: Company) -> FitEvaluation | None:
+    return session.exec(
+        select(FitEvaluation)
+        .where(
+            (FitEvaluation.company_id == company.id)
+            | (FitEvaluation.external_company_id == company.company_id)
+        )
+        .order_by(FitEvaluation.created_at.desc(), FitEvaluation.id.desc())
+    ).first()
+
+
 def _company_response(
     company: Company,
     *,
@@ -435,6 +469,7 @@ def _company_response(
     send_intent = _latest_company_send_intent(session, company)
     latest_gate = _latest_gate_result(session, send_intent.intent_id) if send_intent is not None else None
     outreach = _latest_company_outreach(session, company)
+    fit = _latest_company_fit(session, company)
     is_active_profile_scope = company.id in (active_profile_company_ids or set())
     has_application_draft = company.company_id in (drafted_company_ids or set())
     has_policy_conflicts = _json_has_items(company.policy_conflicts_json)
@@ -470,6 +505,9 @@ def _company_response(
         send_gate_status=latest_gate.status if latest_gate is not None else None,
         has_been_contacted=outreach is not None,
         outreach_status=outreach.status if outreach is not None else None,
+        fit_score=fit.fit_score if fit is not None else None,
+        fit_decision=fit.decision if fit is not None else None,
+        fit_reasons=_json_loads(fit.reasons_json, []) if fit is not None else [],
         raw=_json_loads(company.raw_json, {}),
         imported_file_id=company.imported_file_id,
         created_at=company.created_at,
@@ -984,7 +1022,7 @@ def _onboarding_artifact_responses(
     run_id: str,
     settings: Settings,
 ) -> list[OnboardingArtifactResponse]:
-    output_path = settings.runs_root / run_id / "output"
+    output_path = scoped_runs_root(settings.runs_root) / run_id / "output"
     validation_results = session.exec(
         select(ValidationResult).where(ValidationResult.run_id == run_id).order_by(ValidationResult.filename, ValidationResult.id.desc())
     ).all()
@@ -1035,7 +1073,7 @@ def _onboarding_artifact_responses(
 
 
 def _onboarding_input_file_responses(run_id: str, settings: Settings) -> list[OnboardingInputFileResponse]:
-    input_path = settings.runs_root / run_id / "input"
+    input_path = scoped_runs_root(settings.runs_root) / run_id / "input"
     if not input_path.exists():
         return []
     files: list[OnboardingInputFileResponse] = []
@@ -1056,7 +1094,11 @@ def _profile_snapshot_summary(snapshot_type: str, snapshot: Any) -> ProfileSnaps
 
 
 def _latest_snapshot(session: Session, model: type[Any], status: str) -> Any | None:
-    return session.exec(select(model).where(model.status == status).order_by(model.imported_at.desc())).first()
+    return session.exec(
+        select(model)
+        .where(model.status == status)
+        .order_by(model.imported_file_id.is_(None), model.imported_at.desc())
+    ).first()
 
 
 def _approved_profile_bundle(session: Session) -> tuple[UserProfileSnapshot, MasterCvProfileSnapshot, PolicySnapshot]:
@@ -1734,8 +1776,11 @@ def get_onboarding_chat_transcript(
 def get_onboarding_chat_status(
     run_id: str,
     adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+    session: Session = Depends(get_session),
 ) -> OnboardingSessionStateResponse:
-    return _session_state_response(run_id, adapter)
+    state = _session_state_response(run_id, adapter)
+    _persist_onboarding_session(session, run_id, state, state.entries)
+    return state
 
 
 @router.post("/onboarding/chat/{run_id}/start", response_model=OnboardingChatStartResponse)
@@ -1743,6 +1788,7 @@ def start_onboarding_chat(
     run_id: str,
     adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
     settings: Settings = Depends(get_settings),
+    session: Session = Depends(get_session),
 ) -> OnboardingChatStartResponse:
     try:
         if hasattr(adapter, "prepare_agent_workspace"):
@@ -1751,7 +1797,7 @@ def start_onboarding_chat(
                 build_onboarding_agent_instructions(
                     run_id=run_id,
                     workdir=settings.codex_workdir,
-                    runs_root=settings.runs_root,
+                    runs_root=scoped_runs_root(settings.runs_root),
                     schemas_root=settings.schemas_root,
                 ),
             )
@@ -1773,12 +1819,15 @@ def start_onboarding_chat(
             adapter.record_failure(run_id, str(exc))
         raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
     entries = adapter.transcript_entries(run_id)
+    entry_responses = _chat_entries_response(entries)
+    session_state = _session_state_response(run_id, adapter, entries)
+    _persist_onboarding_session(session, run_id, session_state, entry_responses)
     return OnboardingChatStartResponse(
         run_id=run_id,
         status=status,
         trust_prompt_accepted=accepted,
-        session_state=_session_state_response(run_id, adapter, entries),
-        entries=_chat_entries_response(entries),
+        session_state=session_state,
+        entries=entry_responses,
     )
 
 
@@ -1787,6 +1836,7 @@ def send_onboarding_chat_message(
     run_id: str,
     request: OnboardingChatMessageRequest,
     adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+    session: Session = Depends(get_session),
 ) -> OnboardingChatMessageResponse:
     try:
         adapter.start_or_attach(run_id)
@@ -1797,12 +1847,15 @@ def send_onboarding_chat_message(
             adapter.record_failure(run_id, str(exc))
         raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
     entries = adapter.transcript_entries(run_id)
+    entry_responses = _chat_entries_response(entries)
+    session_state = _session_state_response(run_id, adapter, entries)
+    _persist_onboarding_session(session, run_id, session_state, entry_responses)
     return OnboardingChatMessageResponse(
         run_id=run_id,
         reply=reply.message,
         transcript_path=str(reply.transcript_path),
-        session_state=_session_state_response(run_id, adapter, entries),
-        entries=_chat_entries_response(entries),
+        session_state=session_state,
+        entries=entry_responses,
     )
 
 
@@ -1810,6 +1863,7 @@ def send_onboarding_chat_message(
 def refresh_onboarding_chat_output(
     run_id: str,
     adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+    session: Session = Depends(get_session),
 ) -> OnboardingChatMessageResponse:
     try:
         reply = adapter.refresh_output(run_id)
@@ -1818,12 +1872,15 @@ def refresh_onboarding_chat_output(
             adapter.record_failure(run_id, str(exc))
         raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
     entries = adapter.transcript_entries(run_id)
+    entry_responses = _chat_entries_response(entries)
+    session_state = _session_state_response(run_id, adapter, entries)
+    _persist_onboarding_session(session, run_id, session_state, entry_responses)
     return OnboardingChatMessageResponse(
         run_id=run_id,
         reply=reply.message,
         transcript_path=str(reply.transcript_path),
-        session_state=_session_state_response(run_id, adapter, entries),
-        entries=_chat_entries_response(entries),
+        session_state=session_state,
+        entries=entry_responses,
     )
 
 
@@ -1831,6 +1888,7 @@ def refresh_onboarding_chat_output(
 def close_onboarding_chat(
     run_id: str,
     adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+    session: Session = Depends(get_session),
 ) -> OnboardingChatActionResponse:
     try:
         adapter.close_session(run_id)
@@ -1839,11 +1897,14 @@ def close_onboarding_chat(
             adapter.record_failure(run_id, str(exc))
         raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
     entries = adapter.transcript_entries(run_id)
+    entry_responses = _chat_entries_response(entries)
+    session_state = _session_state_response(run_id, adapter, entries)
+    _persist_onboarding_session(session, run_id, session_state, entry_responses)
     return OnboardingChatActionResponse(
         run_id=run_id,
         status="closed",
-        session_state=_session_state_response(run_id, adapter, entries),
-        entries=_chat_entries_response(entries),
+        session_state=session_state,
+        entries=entry_responses,
     )
 
 
@@ -1851,6 +1912,7 @@ def close_onboarding_chat(
 def reset_onboarding_chat(
     run_id: str,
     adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
+    session: Session = Depends(get_session),
 ) -> OnboardingChatActionResponse:
     try:
         adapter.reset_session(run_id)
@@ -1859,11 +1921,14 @@ def reset_onboarding_chat(
             adapter.record_failure(run_id, str(exc))
         raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
     entries = adapter.transcript_entries(run_id)
+    entry_responses = _chat_entries_response(entries)
+    session_state = _session_state_response(run_id, adapter, entries)
+    _persist_onboarding_session(session, run_id, session_state, entry_responses)
     return OnboardingChatActionResponse(
         run_id=run_id,
         status="not_started",
-        session_state=_session_state_response(run_id, adapter, entries),
-        entries=_chat_entries_response(entries),
+        session_state=session_state,
+        entries=entry_responses,
     )
 
 
@@ -1893,7 +1958,7 @@ def finish_onboarding_chat(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> OnboardingChatFinishResponse:
-    (settings.runs_root / run_id / "output").mkdir(parents=True, exist_ok=True)
+    (scoped_runs_root(settings.runs_root) / run_id / "output").mkdir(parents=True, exist_ok=True)
     try:
         adapter.start_or_attach(run_id)
         adapter.accept_trust_prompt_if_present()
@@ -1927,13 +1992,16 @@ def finish_onboarding_chat(
     final_reply = reply.message
     if repair_replies:
         final_reply = "\n\n".join([reply.message, *repair_replies])
+    final_entries = _chat_entries_response(adapter.transcript_entries(run_id))
+    final_state = _session_state_response(run_id, adapter)
+    _persist_onboarding_session(session, run_id, final_state, final_entries)
     return OnboardingChatFinishResponse(
         run_id=run_id,
         reply=final_reply,
         transcript_path=str(reply.transcript_path),
         import_result=_import_response(import_result),
         artifacts=_onboarding_artifact_responses(session, run_id, settings),
-        entries=_chat_entries_response(adapter.transcript_entries(run_id)),
+        entries=final_entries,
     )
 
 
@@ -1943,7 +2011,7 @@ def get_onboarding_artifacts(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> OnboardingArtifactsResponse:
-    output_path = settings.runs_root / run_id / "output"
+    output_path = scoped_runs_root(settings.runs_root) / run_id / "output"
     return OnboardingArtifactsResponse(
         run_id=run_id,
         output_path=str(output_path),
@@ -1959,7 +2027,7 @@ def get_onboarding_artifact_content(
 ) -> OnboardingArtifactContentResponse:
     if filename not in ONBOARDING_CHAT_FILENAMES:
         raise HTTPException(status_code=404, detail="Unknown onboarding artifact")
-    output_path = (settings.runs_root / run_id / "output").resolve()
+    output_path = (scoped_runs_root(settings.runs_root) / run_id / "output").resolve()
     artifact_path = (output_path / filename).resolve()
     if output_path not in artifact_path.parents:
         raise HTTPException(status_code=400, detail="Invalid artifact path")
@@ -1993,7 +2061,7 @@ def list_onboarding_input_files(
     run_id: str,
     settings: Settings = Depends(get_settings),
 ) -> OnboardingInputFilesResponse:
-    input_path = settings.runs_root / run_id / "input"
+    input_path = scoped_runs_root(settings.runs_root) / run_id / "input"
     return OnboardingInputFilesResponse(
         run_id=run_id,
         input_path=str(input_path),
@@ -2015,7 +2083,7 @@ async def upload_onboarding_input_file(
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
     if len(content) > max_bytes:
         raise HTTPException(status_code=413, detail="Uploaded file exceeds 20 MB")
-    input_path = settings.runs_root / run_id / "input"
+    input_path = scoped_runs_root(settings.runs_root) / run_id / "input"
     input_path.mkdir(parents=True, exist_ok=True)
     destination = input_path / safe_filename
     destination.write_bytes(content)
@@ -2120,6 +2188,7 @@ def email_delivery_settings(
         allow_real_recipients=settings.email_allow_real_recipients,
         sandbox_recipient=settings.gmail_sandbox_recipient,
         gmail_configured=gmail_configured,
+        gmail_connection_available=bool(settings.google_oauth_client_id and settings.google_oauth_client_secret),
         mode=mode,
     )
 

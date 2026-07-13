@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator
 
 
@@ -28,6 +29,11 @@ def current_identity() -> RequestIdentity | None:
 def current_workspace_id() -> int | None:
     identity = current_identity()
     return identity.effective_workspace_id if identity is not None else None
+
+
+def scoped_runs_root(base: Path) -> Path:
+    workspace_id = current_workspace_id()
+    return base if workspace_id is None else base / "users" / str(workspace_id) / "runs"
 
 
 def set_identity(identity: RequestIdentity | None) -> Token[RequestIdentity | None]:

@@ -3,12 +3,25 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "vite --config frontend/vite.config.ts",
+    "build": "vite build --config frontend/vite.config.ts",
+    "typecheck": "tsc -p frontend/tsconfig.json --noEmit",
     "playwright:install": "playwright install chromium",
     "playwright:check": "playwright --version",
     "playwright:guided": "playwright test tests/guided-workflow.spec.js"
   },
+  "dependencies": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-router-dom": "6.30.3"
+  },
   "devDependencies": {
+    "@types/react": "19.2.13",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "4.7.0",
     "@playwright/test": "1.52.0",
     "playwright": "1.52.0"
+    ,"typescript": "5.9.3",
+    "vite": "5.4.21"
   }
 }

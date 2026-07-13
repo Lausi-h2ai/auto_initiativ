@@ -752,6 +752,9 @@ def test_companies_list_detail_and_filters(client, db_session, runs_root):
     assert company["send_gate_status"] == "passed_evaluate_only"
     assert company["has_been_contacted"] is True
     assert company["outreach_status"] == "sent"
+    assert company["fit_score"] == 0.81
+    assert company["fit_decision"] == "promising"
+    assert company["fit_reasons"]
     undrafted = next(item for item in companies if item["company_id"] == "company-undrafted")
     assert undrafted["has_application_draft"] is False
     assert undrafted["has_send_intent"] is False

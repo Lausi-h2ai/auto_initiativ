@@ -18,7 +18,7 @@ from backend.app.db.models import AdminAccessAudit, AuthSession, User, Workspace
 
 
 PUBLIC_PREFIXES = ("/auth/google/", "/static/", "/assets/")
-PUBLIC_PATHS = {"/health", "/login", "/favicon.ico"}
+PUBLIC_PATHS = {"/health", "/login", "/favicon.ico", "/monitoring/client-errors"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
@@ -35,7 +35,40 @@ class AuthWorkspaceMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         settings = get_settings()
         if not settings.auth_required:
-            return await call_next(request)
+            if not settings.dev_auth_bypass_email:
+                return await call_next(request)
+            with Session(db_session_module.engine) as session:
+                email = settings.dev_auth_bypass_email.strip().lower()
+                user = session.exec(select(User).where(User.email == email)).first()
+                if user is None:
+                    user = User(
+                        google_subject=f"dev:{email}",
+                        email=email,
+                        display_name=email.split("@", 1)[0].replace(".", " ").title(),
+                        role="admin",
+                    )
+                    session.add(user)
+                    session.flush()
+                    session.add(
+                        Workspace(
+                            workspace_id=f"workspace-dev-{uuid4()}",
+                            owner_user_id=user.id,
+                            name="Development workspace",
+                        )
+                    )
+                    session.commit()
+                workspace = session.exec(select(Workspace).where(Workspace.owner_user_id == user.id)).one()
+                request.state.user_id = user.id
+                request.state.workspace_id = workspace.id
+                request.state.workspace_public_id = workspace.workspace_id
+                request.state.role = user.role
+                request.state.csrf_token = "development-bypass"
+                identity = RequestIdentity(user_id=user.id, workspace_id=workspace.id, role=user.role)
+            context_token = set_identity(identity)
+            try:
+                return await call_next(request)
+            finally:
+                reset_identity(context_token)
         path = request.url.path
         if path in PUBLIC_PATHS or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
             return await call_next(request)

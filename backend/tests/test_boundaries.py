@@ -23,6 +23,13 @@ def test_no_openai_dependency_declared_and_gmail_send_dependency_is_explicit():
 
 def test_metadata_contains_operational_domain_and_guarded_send_tables():
     assert set(SQLModel.metadata.tables) == {
+        "users",
+        "workspaces",
+        "invitations",
+        "auth_sessions",
+        "oauth_states",
+        "gmail_connections",
+        "admin_access_audits",
         "runs",
         "imported_files",
         "validation_results",
@@ -42,6 +49,12 @@ def test_metadata_contains_operational_domain_and_guarded_send_tables():
         "company_identity_aliases",
         "send_approval_snapshots",
         "sent_messages",
+        "campaigns",
+        "onboarding_sessions",
+        "campaign_companies",
+        "agent_tasks",
+        "review_exceptions",
+        "documents",
     }
 
 
@@ -60,4 +73,4 @@ def test_email_adapter_configuration_defaults_to_disabled():
     assert not any("smtp" in field for field in config_fields)
     assert "email_adapter" not in config_fields
     assert "send_adapter" not in config_fields
-    assert Settings().email_sending_enabled is False
+    assert Settings(_env_file=None).email_sending_enabled is False

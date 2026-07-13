@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from backend.app.auth.context import scoped_runs_root
 from backend.app.agents.onboarding_chat import (
     ChatReply,
     ChatTranscriptEntry,
@@ -252,7 +253,7 @@ class PiRpcOnboardingChatAdapter:
         self.env = env
 
     def prepare_agent_workspace(self, run_id: str, instructions: str) -> dict[str, str]:
-        run_root = self.settings.runs_root / run_id
+        run_root = scoped_runs_root(self.settings.runs_root) / run_id
         workspace = run_root / "workspace"
         for dirname in ("input", "output", "logs", "workspace"):
             (run_root / dirname).mkdir(parents=True, exist_ok=True)
@@ -482,10 +483,10 @@ class PiRpcOnboardingChatAdapter:
         return env
 
     def _workspace(self, run_id: str) -> Path:
-        return self.settings.runs_root / run_id / "workspace"
+        return scoped_runs_root(self.settings.runs_root) / run_id / "workspace"
 
     def _session_dir(self, run_id: str) -> Path:
-        return self.settings.runs_root / run_id / "logs" / "pi-session"
+        return scoped_runs_root(self.settings.runs_root) / run_id / "logs" / "pi-session"
 
     def _has_saved_pi_session(self, run_id: str) -> bool:
         session_dir = self._session_dir(run_id)
@@ -493,18 +494,18 @@ class PiRpcOnboardingChatAdapter:
 
     def _clear_session_dir(self, run_id: str) -> None:
         session_dir = self._session_dir(run_id).resolve()
-        run_root = (self.settings.runs_root / run_id).resolve()
+        run_root = (scoped_runs_root(self.settings.runs_root) / run_id).resolve()
         if session_dir.exists() and session_dir.is_dir() and session_dir.is_relative_to(run_root):
             shutil.rmtree(session_dir)
 
     def _transcript_store(self, run_id: str) -> JsonlTranscriptStore:
-        return JsonlTranscriptStore(self.settings.runs_root / run_id / "logs" / "onboarding_chat.jsonl")
+        return JsonlTranscriptStore(scoped_runs_root(self.settings.runs_root) / run_id / "logs" / "onboarding_chat.jsonl")
 
     def _state_store(self, run_id: str) -> JsonSessionStateStore:
-        return JsonSessionStateStore(self.settings.runs_root / run_id / "logs" / "onboarding_session.json", run_id)
+        return JsonSessionStateStore(scoped_runs_root(self.settings.runs_root) / run_id / "logs" / "onboarding_session.json", run_id)
 
     def _plain_reply_path(self, run_id: str) -> Path:
-        return self.settings.runs_root / run_id / "logs" / "latest_assistant_message.txt"
+        return scoped_runs_root(self.settings.runs_root) / run_id / "logs" / "latest_assistant_message.txt"
 
     def _read_plain_reply_file(self, run_id: str) -> str:
         path = self._plain_reply_path(run_id)
@@ -523,7 +524,7 @@ class PiRpcOnboardingChatAdapter:
             self._append_runtime_log(run_id, event)
 
     def _append_runtime_log(self, run_id: str, event: dict[str, Any]) -> None:
-        log_path = self.settings.runs_root / run_id / "logs" / "pi_rpc_events.jsonl"
+        log_path = scoped_runs_root(self.settings.runs_root) / run_id / "logs" / "pi_rpc_events.jsonl"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as file:
             file.write(_json_dumps(event) + "\n")

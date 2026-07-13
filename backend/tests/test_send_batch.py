@@ -288,6 +288,7 @@ def test_email_delivery_settings_endpoint_reports_safe_default(client):
     assert body["sending_enabled"] is False
     assert body["provider"] == "gmail_sandbox"
     assert body["allow_real_recipients"] is False
+    assert body["gmail_connection_available"] is False
     assert body["mode"] == "disabled"
 
 

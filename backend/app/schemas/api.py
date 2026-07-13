@@ -400,6 +400,7 @@ class EmailDeliverySettingsResponse(BaseModel):
     allow_real_recipients: bool
     sandbox_recipient: str | None = None
     gmail_configured: bool
+    gmail_connection_available: bool
     mode: str
 
 
@@ -436,6 +437,9 @@ class CompanyResponse(BaseModel):
     send_gate_status: str | None = None
     has_been_contacted: bool = False
     outreach_status: str | None = None
+    fit_score: float | None = None
+    fit_decision: str | None = None
+    fit_reasons: list[Any] = Field(default_factory=list)
     raw: dict[str, Any]
     imported_file_id: int | None
     created_at: datetime

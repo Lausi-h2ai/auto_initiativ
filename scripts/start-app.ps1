@@ -28,6 +28,8 @@ Write-Host "Starting Auto Initiativ..."
 Write-Host "API:       http://$BindHost`:$Port"
 Write-Host "Dashboard: http://$BindHost`:$Port/dashboard"
 Write-Host "Health:    http://$BindHost`:$Port/health"
+Write-Host "Issues:    $repoRoot\logs\issues.ndjson"
+Write-Host "Monitor:   .\scripts\watch-issues.cmd  (run in a second terminal)"
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
 

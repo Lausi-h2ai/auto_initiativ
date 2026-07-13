@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from backend.app.auth.context import scoped_runs_root
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.models import AuditLog, ImportedFile, Run, ValidationResult, utc_now
 from backend.app.imports.domain_normalizer import DomainNormalizationService
@@ -81,7 +82,7 @@ class RunImportService:
         run_type: str | None = None,
         expected_filenames: tuple[str, ...] = EXPECTED_FILENAMES,
     ) -> ImportResult:
-        resolved_output_path = output_path or self.settings.runs_root / run_id / "output"
+        resolved_output_path = output_path or scoped_runs_root(self.settings.runs_root) / run_id / "output"
         run = self._get_or_create_run(run_id, resolved_output_path)
         if run_type is not None:
             run.agent_type = run_type
@@ -294,7 +295,7 @@ class RunImportService:
         return tuple(dict.fromkeys(filenames))
 
     def _application_draft_manifest_expected_files(self, run_id: str) -> list[str] | None:
-        manifest_path = self.settings.runs_root / run_id / "manifest.json"
+        manifest_path = scoped_runs_root(self.settings.runs_root) / run_id / "manifest.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

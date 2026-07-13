@@ -28,6 +28,9 @@ def runs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("EMAIL_PROVIDER", "gmail_sandbox")
     monkeypatch.setenv("EMAIL_ALLOW_REAL_RECIPIENTS", "false")
     monkeypatch.setenv("AUTH_REQUIRED", "false")
+    monkeypatch.setenv("DEV_AUTH_BYPASS_EMAIL", "")
+    monkeypatch.setenv("WORKFLOW_WORKER_ENABLED", "false")
+    monkeypatch.setenv("ISSUE_LOG_PATH", str(tmp_path / "issues.ndjson"))
     monkeypatch.delenv("GMAIL_SANDBOX_RECIPIENT", raising=False)
     return root
 
