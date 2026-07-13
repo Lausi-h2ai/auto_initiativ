@@ -402,6 +402,8 @@ function ProfilePage() {
   const act = async (path: string, payload?: unknown) => { setBusy(true); setError(""); try { const result = await mutate<any>(`/onboarding/chat/${runId}/${path}`, "POST", payload); setStatus(result.session_state || status); await refresh(); return result; } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
   const send = async (event: FormEvent) => { event.preventDefault(); if (!message.trim()) return; const text = message; setMessage(""); await act("messages", { message: text }); };
   const approve = async () => { setBusy(true); try { await mutate(`/onboarding/chat/${runId}/import-artifacts`, "POST"); await mutate(`/onboarding/runs/${runId}/promote`, "POST", { reviewer_id: String(me.id), confirm_user_profile: true, confirm_master_cv_profile: true, confirm_policy: true }); await refresh(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
+  const entries = (status?.entries || []).filter((entry: any) => entry.role === "user" || entry.role === "assistant");
+  const recruiterRunning = status?.status === "running" || status?.status === "waiting";
 
   return (
     <div className="page profile-page">
@@ -417,11 +419,12 @@ function ProfilePage() {
           <div className="chat-card">
             <header><div><RoleAvatar letters="OR" active /><div><strong>Onboarding recruiter</strong><small>{status?.status === "running" ? "Listening" : "Ready when you are"}</small></div></div><StatusPill status={status?.status || "not started"} /></header>
             <div className="chat-transcript">
-              {(status?.entries || []).filter((entry: any) => entry.role === "user" || entry.role === "assistant").map((entry: any, index: number) => <div className={`chat-message ${entry.role === "user" ? "user" : "agent"}`} key={entry.id || index}><small>{entry.role === "user" ? "You" : "Your recruiter"}</small><p>{entry.content}</p></div>)}
-              {!status?.entries?.length && <div className="chat-welcome"><RoleAvatar letters="OR" /><h3>Let’s build the story your team can rely on.</h3><p>I’ll ask about your experience, what you want next, and any boundaries that matter. Uploading a CV helps, but it isn’t required.</p><button className="primary-button" disabled={busy} onClick={() => void act("start")}>Begin conversation</button></div>}
+              {entries.map((entry: any, index: number) => <div className={`chat-message ${entry.role === "user" ? "user" : "agent"}`} key={entry.id || index}><small>{entry.role === "user" ? "You" : "Your recruiter"}</small><p>{entry.content}</p></div>)}
+              {!entries.length && !recruiterRunning && <div className="chat-welcome"><RoleAvatar letters="OR" /><h3>Let’s build the story your team can rely on.</h3><p>I’ll ask about your experience, what you want next, and any boundaries that matter. Uploading a CV helps, but it isn’t required.</p><button className="primary-button" disabled={busy} onClick={() => void act("start")}>{busy ? "Connecting…" : "Begin conversation"}</button></div>}
+              {!entries.length && recruiterRunning && <div className="chat-welcome"><RoleAvatar letters="OR" active /><h3>Your recruiter is connected.</h3><p>If the first greeting has not appeared, reconnect the session or send a short introduction below.</p><button className="secondary-button" disabled={busy} onClick={() => void act("start")}>{busy ? "Reconnecting…" : "Reconnect recruiter"}</button></div>}
             </div>
-            {status?.entries?.length ? <form className="chat-compose" onSubmit={(event) => void send(event)}><textarea rows={2} placeholder="Reply naturally…" value={message} onChange={(e) => setMessage(e.target.value)} /><button disabled={busy || !message.trim()}>Send</button></form> : null}
-            {status?.entries?.length ? <footer><button className="text-button" disabled={busy} onClick={() => void act("finish")}>Finish and prepare my review</button><button className="secondary-button" disabled={busy} onClick={() => void approve()}>Approve recruiter summary</button></footer> : null}
+            {entries.length || recruiterRunning ? <form className="chat-compose" onSubmit={(event) => void send(event)}><textarea rows={2} placeholder="Reply naturally…" value={message} onChange={(e) => setMessage(e.target.value)} /><button disabled={busy || !message.trim()}>Send</button></form> : null}
+            {entries.length ? <footer><button className="text-button" disabled={busy} onClick={() => void act("finish")}>Finish and prepare my review</button><button className="secondary-button" disabled={busy} onClick={() => void approve()}>Approve recruiter summary</button></footer> : null}
             {error && <InlineError message={error} />}
           </div>
         </section>

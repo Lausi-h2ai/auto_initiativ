@@ -241,7 +241,7 @@ def test_start_fresh_session_kills_existing_session_then_creates_shell():
 
 
 def test_start_fresh_window_returns_new_target():
-    runner = FakeRunner(CommandResult(returncode=0, stdout="3\n", stderr=""))
+    runner = FakeRunner(CommandResult(returncode=0, stdout="\\3\n", stderr=""))
     bridge = TmuxCodexBridge(TmuxTarget(distro="Ubuntu-24.04-bonsai-vllm"), runner=runner)
 
     target = bridge.start_fresh_window("/mnt/f/auto_initiativ", window_name="campaign-1")
@@ -352,6 +352,27 @@ def test_start_interactive_codex_pastes_cd_and_codex_command():
     assert command == "cd /mnt/f/auto_initiativ && codex"
     assert runner.calls[0][2] == command
     assert runner.calls[2][0][-4:] == ["send-keys", "-t", "codex:0.0", "C-m"]
+
+
+def test_start_interactive_codex_can_pin_supported_model_and_workspace_sandbox():
+    runner = FakeRunner()
+    bridge = TmuxCodexBridge(TmuxTarget(distro="Ubuntu-24.04-bonsai-vllm"), runner=runner)
+
+    command = bridge.start_interactive_codex(
+        "/mnt/f/auto_initiativ",
+        model="gpt-5.4",
+        sandbox="workspace-write",
+        approval_policy="never",
+        additional_dirs=("/mnt/f/auto_initiativ/runs/run-1/logs", "/mnt/f/auto_initiativ/runs/run-1/output"),
+    )
+
+    assert command == (
+        "cd /mnt/f/auto_initiativ && codex --model gpt-5.4 --sandbox workspace-write "
+        "--ask-for-approval never "
+        "--add-dir /mnt/f/auto_initiativ/runs/run-1/logs "
+        "--add-dir /mnt/f/auto_initiativ/runs/run-1/output"
+    )
+    assert runner.calls[0][2] == command
 
 
 def test_cancel_and_reset_send_control_commands():

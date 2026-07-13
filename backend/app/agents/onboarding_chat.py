@@ -79,7 +79,7 @@ def extract_latest_codex_reply(capture: str) -> str:
 def extract_codex_reply_from_delta(delta: str) -> str:
     cleaned_delta = _clean_terminal_capture(delta)
     bullet_reply = extract_latest_codex_reply(cleaned_delta)
-    if bullet_reply:
+    if bullet_reply and not _is_terminal_status_line(bullet_reply):
         return bullet_reply
 
     lines = cleaned_delta.splitlines()
@@ -115,6 +115,7 @@ def _is_terminal_status_line(line: str) -> bool:
         "[",
         "...",
         "ctrl + t",
+        "Working (",
     )
     if line.startswith(status_prefixes):
         return True
@@ -222,13 +223,20 @@ class JsonSessionStateStore:
             last_error=data.get("last_error") if isinstance(data.get("last_error"), str) else None,
         )
 
-    def write(self, status: str, *, tmux: dict[str, object] | None = None, last_error: str | None = None) -> OnboardingSessionState:
+    def write(
+        self,
+        status: str,
+        *,
+        tmux: dict[str, object] | None = None,
+        last_error: str | None = None,
+        clear_tmux: bool = False,
+    ) -> OnboardingSessionState:
         current = self.read()
         state = OnboardingSessionState(
             run_id=self.run_id,
             status=status,
             updated_at=_utc_now(),
-            tmux=tmux if tmux is not None else current.tmux,
+            tmux=None if clear_tmux else tmux if tmux is not None else current.tmux,
             last_error=last_error,
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -243,6 +251,10 @@ class OnboardingCodexChatAdapter:
         *,
         workdir: str,
         runs_root: Path,
+        runs_workdir: str | None = None,
+        model: str | None = None,
+        sandbox: str | None = None,
+        approval_policy: str | None = None,
         sleeper: Sleeper | None = None,
         reply_wait_seconds: float = 2,
         reply_timeout_seconds: float = 90,
@@ -253,6 +265,10 @@ class OnboardingCodexChatAdapter:
         self.repo_workdir = workdir.rstrip("/")
         self.workdir = self.repo_workdir
         self.runs_root = runs_root
+        self.runs_workdir = (runs_workdir or f"{self.repo_workdir}/runs").rstrip("/")
+        self.model = model
+        self.sandbox = sandbox
+        self.approval_policy = approval_policy
         self.sleeper = sleeper or (lambda seconds: None)
         self.reply_wait_seconds = reply_wait_seconds
         self.reply_timeout_seconds = reply_timeout_seconds
@@ -264,18 +280,18 @@ class OnboardingCodexChatAdapter:
         workspace = run_root / "workspace"
         for dirname in ("input", "output", "logs", "workspace"):
             (run_root / dirname).mkdir(parents=True, exist_ok=True)
-        agents_path = workspace / "AGENTS.md"
+        agents_path = run_root / "AGENTS.md"
         agents_path.write_text(instructions, encoding="utf-8")
         readme_path = workspace / "README.md"
         readme_path.write_text(
             (
                 f"# Onboarding Workspace\n\n"
                 f"This folder is the dedicated Codex workspace for onboarding run `{run_id}`.\n"
-                "Follow `AGENTS.md`. User documents are in `../input`; candidate JSON artifacts belong in `../output`; clean assistant replies belong in `../logs/latest_assistant_message.txt`.\n"
+                "Follow `../AGENTS.md`. User documents are in `../input`; candidate JSON artifacts belong in `../output`; clean assistant replies belong in `../logs/latest_assistant_message.txt`.\n"
             ),
             encoding="utf-8",
         )
-        self.workdir = self._run_workspace_workdir(run_id)
+        self.workdir = self._run_workdir(run_id)
         return {
             "host_workspace": str(workspace),
             "wsl_workspace": self.workdir,
@@ -287,10 +303,24 @@ class OnboardingCodexChatAdapter:
             self._restore_tmux_target(run_id)
         command = self.bridge.pane_command(timeout=timeout)
         if command not in {"node", "codex"}:
+            if self.model or self.sandbox or self.approval_policy:
+                additional_dirs = ()
+                if run_id is not None:
+                    run_root = f"{self.runs_workdir}/{run_id}"
+                    additional_dirs = (f"{run_root}/logs", f"{run_root}/output")
+                return self.bridge.start_interactive_codex(
+                    self.workdir,
+                    timeout=timeout,
+                    model=self.model,
+                    sandbox=self.sandbox,
+                    approval_policy=self.approval_policy,
+                    additional_dirs=additional_dirs,
+                )
             return self.bridge.start_interactive_codex(self.workdir, timeout=timeout)
         return "attached"
 
     def attach_session(self, run_id: str, *, fresh: bool = False, timeout: float | None = 10) -> dict[str, object]:
+        self._restore_tmux_target(run_id)
         app_session = self.bridge.attach_app_session(run_id, self.workdir, fresh=fresh, timeout=timeout)
         payload = {
             "app_session_id": app_session.app_session_id,
@@ -334,6 +364,45 @@ class OnboardingCodexChatAdapter:
         self.bridge.send_control("C-m", timeout=timeout)
         return True
 
+    def accept_startup_prompt_if_present(self, timeout: float | None = 10) -> bool:
+        capture = self.bridge.capture_pane(start_line=-80, timeout=timeout)
+        return self._accept_startup_prompt(capture, timeout=timeout)
+
+    def wait_until_codex_ready(
+        self,
+        *,
+        startup_timeout_seconds: float = 15,
+        timeout: float | None = 10,
+    ) -> bool:
+        deadline = self.clock() + startup_timeout_seconds
+        accepted = False
+        while True:
+            capture = self.bridge.capture_pane(start_line=-80, timeout=timeout)
+            if "OpenAI Codex (" in capture and re.search(r"(?m)^\s*›(?:\s|$)", capture):
+                return accepted
+            if self._accept_startup_prompt(capture, timeout=timeout):
+                accepted = True
+            if self.clock() >= deadline:
+                return accepted
+            time.sleep(0.2)
+
+    def _accept_startup_prompt(self, capture: str, *, timeout: float | None) -> bool:
+        if (
+            "Choose how you'd like Codex to proceed." in capture
+            and "Try new model" in capture
+            and "Use existing model" in capture
+        ):
+            self.bridge.send_control("C-m", timeout=timeout)
+            return True
+        if "Update now" in capture and "Skip" in capture and "Press enter to continue" in capture:
+            self.bridge.send_control("Down", timeout=timeout)
+            self.bridge.send_control("C-m", timeout=timeout)
+            return True
+        if "Do you trust the contents of this directory?" in capture and self.workdir in capture:
+            self.bridge.send_control("C-m", timeout=timeout)
+            return True
+        return False
+
     def send_message(self, run_id: str, message: str, timeout: float | None = 10) -> ChatReply:
         self._restore_tmux_target(run_id)
         transcript = self._transcript_store(run_id)
@@ -356,7 +425,15 @@ class OnboardingCodexChatAdapter:
         self._state_store(run_id).write("running")
         return ChatReply(message=reply, raw_capture=raw_capture, transcript_path=transcript.path)
 
-    def ensure_recruiter_prompt(self, run_id: str, prompt: str, timeout: float | None = 10, *, force: bool = False) -> bool:
+    def ensure_recruiter_prompt(
+        self,
+        run_id: str,
+        prompt: str,
+        timeout: float | None = 10,
+        *,
+        force: bool = False,
+        require_plain_reply: bool = False,
+    ) -> bool:
         transcript = self._transcript_store(run_id)
         if not force and any(entry.get("event") == "recruiter_prompt_sent" for entry in transcript.read_entries()):
             return False
@@ -374,7 +451,13 @@ class OnboardingCodexChatAdapter:
         self._clear_plain_reply_file(run_id)
         previous_capture = self.bridge.capture_pane(start_line=self.capture_start_line, timeout=timeout)
         self.bridge.send_chat_message(prompt, timeout=timeout)
-        reply, raw_capture = self._wait_for_reply(run_id, previous_capture, sent_message=prompt, timeout=timeout)
+        reply, raw_capture = self._wait_for_reply(
+            run_id,
+            previous_capture,
+            sent_message=prompt,
+            timeout=timeout,
+            require_plain_reply=require_plain_reply,
+        )
         if reply:
             transcript.append(
                 ChatTranscriptEntry(
@@ -428,7 +511,7 @@ class OnboardingCodexChatAdapter:
         else:
             self.bridge.reset_to_shell(self.workdir, timeout=timeout)
         self._transcript_store(run_id).clear()
-        self._state_store(run_id).write("not_started", tmux=None)
+        self._state_store(run_id).write("not_started", clear_tmux=True)
         self._transcript_store(run_id).append(
             ChatTranscriptEntry(
                 run_id=run_id,
@@ -494,8 +577,8 @@ class OnboardingCodexChatAdapter:
     def _plain_reply_path(self, run_id: str) -> Path:
         return self.runs_root / run_id / "logs" / "latest_assistant_message.txt"
 
-    def _run_workspace_workdir(self, run_id: str) -> str:
-        return f"{self.repo_workdir}/runs/{run_id}/workspace"
+    def _run_workdir(self, run_id: str) -> str:
+        return f"{self.runs_workdir}/{run_id}"
 
     def _clear_plain_reply_file(self, run_id: str) -> None:
         path = self._plain_reply_path(run_id)
@@ -515,6 +598,7 @@ class OnboardingCodexChatAdapter:
         *,
         sent_message: str,
         timeout: float | None,
+        require_plain_reply: bool = False,
     ) -> tuple[str, str]:
         deadline = self.clock() + self.reply_timeout_seconds
         last_capture = previous_capture
@@ -525,7 +609,8 @@ class OnboardingCodexChatAdapter:
             self.sleeper(self.reply_wait_seconds)
             current_capture = self.bridge.capture_pane(start_line=self.capture_start_line, timeout=timeout)
             delta = _strip_echoed_user_message(_capture_delta(previous_capture, current_capture), sent_message)
-            reply = self._read_plain_reply_file(run_id) or extract_codex_reply_from_delta(delta)
+            plain_reply = self._read_plain_reply_file(run_id)
+            reply = plain_reply or ("" if require_plain_reply else extract_codex_reply_from_delta(delta))
             if reply and reply == last_reply and current_capture == last_capture:
                 stable_reply_count += 1
             elif reply:

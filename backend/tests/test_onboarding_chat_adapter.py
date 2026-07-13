@@ -46,7 +46,7 @@ class FakeBridge:
         self.calls.append(("attach_app_session", (app_session_id, workdir, fresh, timeout)))
         return TmuxAppSession(
             app_session_id=app_session_id,
-            target=TmuxTarget(distro="Ubuntu-24.04-bonsai-vllm"),
+            target=self.target,
             workdir=workdir,
             status="started" if fresh else "attached",
         )
@@ -128,16 +128,16 @@ def test_prepare_agent_workspace_writes_run_specific_agents_file(tmp_path: Path)
         ),
     )
 
-    assert workspace["wsl_workspace"] == "/mnt/f/auto_initiativ/runs/run-1/workspace"
-    assert workspace["agents_path"] == str(tmp_path / "run-1" / "workspace" / "AGENTS.md")
-    assert adapter.workdir == "/mnt/f/auto_initiativ/runs/run-1/workspace"
+    assert workspace["wsl_workspace"] == "/mnt/f/auto_initiativ/runs/run-1"
+    assert workspace["agents_path"] == str(tmp_path / "run-1" / "AGENTS.md")
+    assert adapter.workdir == "/mnt/f/auto_initiativ/runs/run-1"
     assert (tmp_path / "run-1" / "input").is_dir()
     assert (tmp_path / "run-1" / "output").is_dir()
     assert (tmp_path / "run-1" / "logs").is_dir()
-    agents_text = (tmp_path / "run-1" / "workspace" / "AGENTS.md").read_text(encoding="utf-8")
+    agents_text = (tmp_path / "run-1" / "AGENTS.md").read_text(encoding="utf-8")
     assert "Onboarding Recruiting Agent" in agents_text
-    assert "../logs/latest_assistant_message.txt" in agents_text
-    assert "../output/user_profile.json" in agents_text
+    assert "logs/latest_assistant_message.txt" in agents_text
+    assert "output/user_profile.json" in agents_text
     assert "Do not send email" in agents_text
 
 
@@ -148,11 +148,55 @@ def test_attach_session_uses_prepared_run_workspace(tmp_path: Path):
 
     attachment = adapter.attach_session("run-1", fresh=True)
 
-    assert attachment["workdir"] == "/mnt/f/auto_initiativ/runs/run-1/workspace"
+    assert attachment["workdir"] == "/mnt/f/auto_initiativ/runs/run-1"
     assert bridge.calls[0] == (
         "attach_app_session",
-        ("run-1", "/mnt/f/auto_initiativ/runs/run-1/workspace", True, 10),
+        ("run-1", "/mnt/f/auto_initiativ/runs/run-1", True, 10),
     )
+
+
+def test_attach_session_restores_persisted_tmux_target(tmp_path: Path):
+    bridge = FakeBridge()
+    adapter = OnboardingCodexChatAdapter(bridge, workdir="/mnt/f/auto_initiativ", runs_root=tmp_path)
+    adapter._state_store("run-1").write(
+        "running",
+        tmux={
+            "tmux_session": "codex",
+            "tmux_window": 3,
+            "tmux_pane": 1,
+            "workdir": "/mnt/f/auto_initiativ/runs/run-1/workspace",
+        },
+    )
+
+    adapter.attach_session("run-1")
+
+    assert bridge.target.pane_ref == "codex:3.1"
+    assert adapter.workdir == "/mnt/f/auto_initiativ/runs/run-1/workspace"
+
+
+def test_prepared_workspace_uses_scoped_runtime_paths(tmp_path: Path):
+    scoped_runs_root = tmp_path / "runs" / "users" / "2" / "runs"
+    runtime_runs_root = "/mnt/f/auto_initiativ/runs/users/2/runs"
+    adapter = OnboardingCodexChatAdapter(
+        FakeBridge(),
+        workdir="/mnt/f/auto_initiativ",
+        runs_root=scoped_runs_root,
+        runs_workdir=runtime_runs_root,
+    )
+    instructions = build_onboarding_agent_instructions(
+        run_id="run-1",
+        workdir="/mnt/f/auto_initiativ",
+        runs_root=scoped_runs_root,
+        schemas_root=tmp_path / "schemas",
+        runs_workdir=runtime_runs_root,
+        schemas_workdir="/mnt/f/auto_initiativ/schemas",
+    )
+
+    workspace = adapter.prepare_agent_workspace("run-1", instructions)
+
+    assert workspace["wsl_workspace"] == "/mnt/f/auto_initiativ/runs/users/2/runs/run-1"
+    assert "Agent workspace: `/mnt/f/auto_initiativ/runs/users/2/runs/run-1`" in instructions
+    assert "/mnt/f/auto_initiativ/schemas/user_profile.schema.json" in instructions
 
 
 def test_transport_liveness_and_session_listing_delegate_to_bridge(tmp_path: Path):
@@ -213,6 +257,52 @@ def test_trust_prompt_for_other_workdir_is_not_accepted(tmp_path: Path):
     assert not any(call[0] == "send_control" for call in bridge.calls)
 
 
+def test_startup_model_migration_prompt_accepts_supported_default(tmp_path: Path):
+    bridge = FakeBridge(
+        capture=(
+            "Choose how you'd like Codex to proceed.\n"
+            "1. Try new model\n"
+            "2. Use existing model\n"
+        )
+    )
+    adapter = OnboardingCodexChatAdapter(bridge, workdir="/mnt/f/auto_initiativ", runs_root=tmp_path)
+
+    assert adapter.accept_startup_prompt_if_present() is True
+
+    assert bridge.calls[-1] == ("send_control", ("C-m", 10))
+
+
+def test_startup_update_prompt_skips_install(tmp_path: Path):
+    bridge = FakeBridge(
+        capture=(
+            "1. Update now (runs npm install -g @openai/codex)\n"
+            "2. Skip\n"
+            "3. Skip until next version\n"
+            "Press enter to continue\n"
+        )
+    )
+    adapter = OnboardingCodexChatAdapter(bridge, workdir="/mnt/f/auto_initiativ", runs_root=tmp_path)
+
+    assert adapter.accept_startup_prompt_if_present() is True
+
+    assert bridge.calls[-2:] == [("send_control", ("Down", 10)), ("send_control", ("C-m", 10))]
+
+
+def test_ready_codex_prompt_wins_over_stale_startup_history(tmp_path: Path):
+    bridge = FakeBridge(
+        capture=(
+            "1. Update now\n2. Skip\nPress enter to continue\n"
+            "OpenAI Codex (v0.130.0)\n"
+            "› \n"
+        )
+    )
+    adapter = OnboardingCodexChatAdapter(bridge, workdir="/mnt/f/auto_initiativ", runs_root=tmp_path)
+
+    assert adapter.wait_until_codex_ready() is False
+
+    assert not any(call[0] == "send_control" for call in bridge.calls)
+
+
 def test_extract_latest_codex_reply_from_capture():
     capture = """
 › Reply exactly: INTERACTIVE_TMUX_CHAT_OK
@@ -242,6 +332,12 @@ Ran pwd && rg --files
         "hello\n\n"
         "Hello. I'm in /mnt/f/auto_initiativ and starting by checking the repo instructions."
     )
+
+
+def test_extract_codex_reply_ignores_working_spinner():
+    delta = "\n• Working (0s • esc to interrupt)\n"
+
+    assert extract_codex_reply_from_delta(delta) == ""
 
 
 def test_send_message_persists_user_and_assistant_transcript(tmp_path: Path):
@@ -330,8 +426,8 @@ def test_onboarding_start_message_delegates_role_to_agents_file():
     message = build_onboarding_start_message("run-1")
 
     assert "Read the AGENTS.md file" in message
-    assert "../input" in message
-    assert "../logs/latest_assistant_message.txt" in message
+    assert "checking input" in message
+    assert "logs/latest_assistant_message.txt" in message
     assert "private paid recruiter" not in message
 
 
@@ -388,6 +484,7 @@ def test_cancel_and_reset_are_logged(tmp_path: Path):
     bridge = FakeBridge()
     adapter = OnboardingCodexChatAdapter(bridge, workdir="/mnt/f/auto_initiativ", runs_root=tmp_path)
 
+    adapter.attach_session("run-1", fresh=True)
     adapter.cancel_current_turn("run-1")
     adapter.reset_session("run-1")
 
@@ -395,6 +492,7 @@ def test_cancel_and_reset_are_logged(tmp_path: Path):
     assert ("force_kill_window", (10, True)) in bridge.calls
     entries = adapter.transcript_entries("run-1")
     assert [entry["event"] for entry in entries] == ["reset"]
+    assert adapter.session_state("run-1").tmux is None
 
 
 def test_close_session_logs_graceful_and_force_paths(tmp_path: Path):

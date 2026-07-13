@@ -104,8 +104,8 @@ def _valid_onboarding_review(run_id: str) -> dict[str, object]:
 def test_onboarding_finalization_prompt_uses_workspace_relative_paths():
     prompt = _onboarding_finalization_prompt("run-1")
 
-    assert "../output/user_profile.json" in prompt
-    assert "../output/master_cv_profile.json" in prompt
+    assert "output/user_profile.json" in prompt
+    assert "output/master_cv_profile.json" in prompt
     assert "JSON Schemas:" in prompt
     assert "user_profile.schema.json" in prompt
     assert '"profile_id"' in prompt

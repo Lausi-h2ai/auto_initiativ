@@ -307,7 +307,15 @@ class PiRpcOnboardingChatAdapter:
     def accept_trust_prompt_if_present(self, timeout: float | None = 10) -> bool:
         return False
 
-    def ensure_recruiter_prompt(self, run_id: str, prompt: str, timeout: float | None = 10, *, force: bool = False) -> bool:
+    def ensure_recruiter_prompt(
+        self,
+        run_id: str,
+        prompt: str,
+        timeout: float | None = 10,
+        *,
+        force: bool = False,
+        require_plain_reply: bool = False,
+    ) -> bool:
         transcript = self._transcript_store(run_id)
         if not force and any(entry.get("event") == "recruiter_prompt_sent" for entry in transcript.read_entries()):
             return False

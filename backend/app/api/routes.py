@@ -316,6 +316,14 @@ def _persist_onboarding_session(
     session.commit()
 
 
+def _scoped_codex_runs_workdir(settings: Settings) -> str:
+    scoped_root = scoped_runs_root(settings.runs_root).resolve()
+    base_root = settings.runs_root.resolve()
+    relative_scope = scoped_root.relative_to(base_root).as_posix()
+    runtime_root = f"{settings.codex_workdir.rstrip('/')}/runs"
+    return runtime_root if relative_scope == "." else f"{runtime_root}/{relative_scope}"
+
+
 def get_onboarding_chat_adapter(settings: Settings = Depends(get_settings)) -> OnboardingCodexChatAdapter:
     if settings.onboarding_chat_runtime == "pi_rpc":
         return PiRpcOnboardingChatAdapter(settings=settings)
@@ -331,6 +339,10 @@ def get_onboarding_chat_adapter(settings: Settings = Depends(get_settings)) -> O
         TmuxCodexBridge(target),
         workdir=settings.codex_workdir,
         runs_root=scoped_runs_root(settings.runs_root),
+        runs_workdir=_scoped_codex_runs_workdir(settings),
+        model=settings.codex_chat_model,
+        sandbox=settings.codex_chat_sandbox,
+        approval_policy=settings.codex_chat_approval_policy,
         reply_wait_seconds=settings.codex_chat_reply_wait_seconds,
     )
 
@@ -344,11 +356,11 @@ def get_application_draft_runtime(settings: Settings = Depends(get_settings)) ->
 
 
 def _onboarding_finalization_prompt(run_id: str) -> str:
-    artifact_list = ", ".join(f"`../output/{filename}`" for filename in ONBOARDING_ARTIFACT_FILENAMES)
+    artifact_list = ", ".join(f"`output/{filename}`" for filename in ONBOARDING_ARTIFACT_FILENAMES)
     schema_bundle = _onboarding_schema_bundle()
     return (
         "Finalize this onboarding interview. Create the directory "
-        f"`../output` if needed and write candidate artifacts for onboarding run `{run_id}`: {artifact_list}. "
+        f"`output` if needed and write candidate artifacts for onboarding run `{run_id}`: {artifact_list}. "
         "Each JSON file must conform exactly to its matching JSON Schema. The complete schemas are included below; "
         "do not guess alternate field names. "
         "Use only facts stated by the user in this chat or backed by local input files; clearly mark "
@@ -394,7 +406,7 @@ def _onboarding_artifact_repair_prompt(run_id: str, failures: list[dict[str, Any
         f"Attempt {attempt}/{max_attempts}: backend schema validation failed for onboarding run `{run_id}`.\n\n"
         "Repair the candidate artifact files using only the allowed onboarding artifact write tool. "
         "Rewrite complete JSON documents, not patches. Do not create any files except "
-        "`user_profile.json`, `master_cv_profile.json`, `policy.json`, and `onboarding_review.json` under `../output`. "
+        "`user_profile.json`, `master_cv_profile.json`, `policy.json`, and `onboarding_review.json` under `output`. "
         "The complete JSON Schemas are included below; conform to them exactly and do not guess alternate field names. "
         "Do not invent facts to satisfy required fields; use `needs_review` provenance or review items where evidence is missing. "
         "After rewriting, reply briefly with what you changed.\n\n"
@@ -1792,6 +1804,7 @@ def start_onboarding_chat(
 ) -> OnboardingChatStartResponse:
     try:
         if hasattr(adapter, "prepare_agent_workspace"):
+            runs_workdir = _scoped_codex_runs_workdir(settings)
             adapter.prepare_agent_workspace(
                 run_id,
                 build_onboarding_agent_instructions(
@@ -1799,20 +1812,32 @@ def start_onboarding_chat(
                     workdir=settings.codex_workdir,
                     runs_root=scoped_runs_root(settings.runs_root),
                     schemas_root=settings.schemas_root,
+                    runs_workdir=runs_workdir,
+                    schemas_workdir=f"{settings.codex_workdir.rstrip('/')}/schemas",
                 ),
             )
         attachment = None
         if hasattr(adapter, "attach_session"):
             existing_state = adapter.session_state(run_id) if hasattr(adapter, "session_state") else None
-            should_start_fresh = not bool(existing_state and existing_state.tmux)
+            expected_workdir = getattr(adapter, "workdir", None)
+            attached_workdir = existing_state.tmux.get("workdir") if existing_state and existing_state.tmux else None
+            workspace_changed = bool(expected_workdir and attached_workdir and expected_workdir != attached_workdir)
+            should_start_fresh = not bool(existing_state and existing_state.tmux) or workspace_changed
             attachment = adapter.attach_session(run_id, fresh=should_start_fresh)
         status = adapter.start_or_attach(run_id)
-        accepted = adapter.accept_trust_prompt_if_present()
+        if hasattr(adapter, "wait_until_codex_ready"):
+            accepted = adapter.wait_until_codex_ready()
+        elif hasattr(adapter, "accept_startup_prompt_if_present"):
+            accepted = adapter.accept_startup_prompt_if_present()
+        else:
+            accepted = adapter.accept_trust_prompt_if_present()
         if hasattr(adapter, "ensure_recruiter_prompt"):
+            has_visible_entries = bool(_chat_entries_response(adapter.transcript_entries(run_id)))
             adapter.ensure_recruiter_prompt(
                 run_id,
                 build_onboarding_start_message(run_id),
-                force=bool(attachment and attachment.get("status") == "started"),
+                force=bool(attachment and attachment.get("status") == "started") or not has_visible_entries,
+                require_plain_reply=True,
             )
     except ONBOARDING_RUNTIME_ERRORS as exc:
         if hasattr(adapter, "record_failure"):

@@ -234,7 +234,7 @@ class TmuxCodexBridge:
             if safe_window_name is not None:
                 args.extend(["-n", safe_window_name])
             args.append(command)
-            output = self._run_tmux(*args, timeout=timeout).strip()
+            output = self._run_tmux(*args, timeout=timeout).strip().lstrip("\\")
             window_index = int(output) if output.isdigit() else self.target.window + 1
         else:
             args = ["new-session", "-d", "-s", self.target.session, "-c", workdir]
@@ -263,8 +263,21 @@ class TmuxCodexBridge:
             return TmuxAppSession(app_session_id=app_session_id, target=target, workdir=workdir, status="started")
         return TmuxAppSession(app_session_id=app_session_id, target=self.target, workdir=workdir, status="attached")
 
-    def start_interactive_codex(self, workdir: str, timeout: float | None = 10) -> str:
-        command = f"cd {shlex.quote(workdir)} && codex"
+    def start_interactive_codex(
+        self,
+        workdir: str,
+        timeout: float | None = 10,
+        *,
+        model: str | None = None,
+        sandbox: str | None = None,
+        approval_policy: str | None = None,
+        additional_dirs: Sequence[str] = (),
+    ) -> str:
+        model_arg = f" --model {shlex.quote(model)}" if model else ""
+        sandbox_arg = f" --sandbox {shlex.quote(sandbox)}" if sandbox else ""
+        approval_arg = f" --ask-for-approval {shlex.quote(approval_policy)}" if approval_policy else ""
+        add_dir_args = "".join(f" --add-dir {shlex.quote(path)}" for path in additional_dirs)
+        command = f"cd {shlex.quote(workdir)} && codex{model_arg}{sandbox_arg}{approval_arg}{add_dir_args}"
         self._paste_literal(command, timeout=timeout)
         self._run_tmux("send-keys", "-t", self.target.pane_ref, "C-m", timeout=timeout)
         return command
