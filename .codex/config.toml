@@ -1,0 +1,7 @@
+# Auto Initiativ must not expose direct mail-sending tools to coding agents.
+[mcp_servers.gmx_mail]
+enabled = false
+
+# Kindly handles discovery and Playwright handles interactive UI work in this repo.
+[mcp_servers.bcurl]
+enabled = false

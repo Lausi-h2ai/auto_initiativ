@@ -5,7 +5,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .playwright-mcp/
-.rpg/
 .tmp/
 .uv-cache/
 .env
