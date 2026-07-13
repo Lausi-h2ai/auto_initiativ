@@ -395,12 +395,49 @@ function ProfilePage() {
   const [status, setStatus] = useState<any>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [responding, setResponding] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState("");
+  const [uploadedFiles, setUploadedFiles] = useState<Array<{ filename: string; size_bytes: number }>>([]);
   const [error, setError] = useState("");
 
   const loadStatus = () => request<any>(`/onboarding/chat/${runId}/status`).then(setStatus).catch(() => undefined);
-  useEffect(() => { void loadStatus(); }, []);
+  const loadInputFiles = () => request<any>(`/onboarding/chat/${runId}/input-files`).then((result) => setUploadedFiles(result.files || [])).catch(() => undefined);
+  useEffect(() => { void loadStatus(); void loadInputFiles(); }, []);
   const act = async (path: string, payload?: unknown) => { setBusy(true); setError(""); try { const result = await mutate<any>(`/onboarding/chat/${runId}/${path}`, "POST", payload); setStatus(result.session_state || status); await refresh(); return result; } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
-  const send = async (event: FormEvent) => { event.preventDefault(); if (!message.trim()) return; const text = message; setMessage(""); await act("messages", { message: text }); };
+  const send = async (event: FormEvent) => {
+    event.preventDefault();
+    const text = message.trim();
+    if (!text || responding) return;
+    setMessage("");
+    setPendingMessage(text);
+    setResponding(true);
+    setBusy(true);
+    setError("");
+    try {
+      const result = await mutate<any>(`/onboarding/chat/${runId}/messages`, "POST", { message: text });
+      setStatus(result.session_state || status);
+      await refresh();
+    } catch (cause) {
+      setMessage(text);
+      setError(messageOf(cause));
+    } finally {
+      setPendingMessage("");
+      setResponding(false);
+      setBusy(false);
+    }
+  };
+  const uploadFile = async (file: File) => {
+    setBusy(true);
+    setError("");
+    try {
+      await request(`/onboarding/chat/${runId}/input-files/${encodeURIComponent(file.name)}`, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+      await loadInputFiles();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const approve = async () => { setBusy(true); try { await mutate(`/onboarding/chat/${runId}/import-artifacts`, "POST"); await mutate(`/onboarding/runs/${runId}/promote`, "POST", { reviewer_id: String(me.id), confirm_user_profile: true, confirm_master_cv_profile: true, confirm_policy: true }); await refresh(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
   const entries = (status?.entries || []).filter((entry: any) => entry.role === "user" || entry.role === "assistant");
   const recruiterRunning = status?.status === "running" || status?.status === "waiting";
@@ -418,8 +455,12 @@ function ProfilePage() {
           <div className="onboarding-story"><p className="eyebrow">A thoughtful beginning</p><h2>Talk with your onboarding recruiter.</h2><p>This is a conversation, not a long form. Share documents, answer naturally, and let the recruiter organize the details.</p><div className="onboarding-promises"><span>One guided review at the end</span><span>Uncertain facts stay visibly flagged</span><span>Your approved claims become the source of truth</span></div></div>
           <div className="chat-card">
             <header><div><RoleAvatar letters="OR" active /><div><strong>Onboarding recruiter</strong><small>{status?.status === "running" ? "Listening" : "Ready when you are"}</small></div></div><StatusPill status={status?.status || "not started"} /></header>
+            <div className="chat-uploads"><label className={busy ? "disabled" : ""}>+ Add CV or document<input type="file" disabled={busy} accept=".pdf,.doc,.docx,.txt,.md,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadFile(file); event.currentTarget.value = ""; }} /></label><span>{uploadedFiles.length ? `${uploadedFiles.length} ${uploadedFiles.length === 1 ? "file" : "files"} shared` : "PDF, Word, or text - max 20 MB"}</span></div>
+            {uploadedFiles.length ? <div className="chat-uploaded-files">{uploadedFiles.map((file) => <span key={file.filename} title={file.filename}>Uploaded: {file.filename}</span>)}</div> : null}
             <div className="chat-transcript">
               {entries.map((entry: any, index: number) => <div className={`chat-message ${entry.role === "user" ? "user" : "agent"}`} key={entry.id || index}><small>{entry.role === "user" ? "You" : "Your recruiter"}</small><p>{entry.content}</p></div>)}
+              {pendingMessage && <div className="chat-message user pending"><small>You</small><p>{pendingMessage}</p><span>Sent</span></div>}
+              {responding && <div className="chat-working" role="status" aria-live="polite"><i /><span>Your recruiter received your message and is working on a response...</span></div>}
               {!entries.length && !recruiterRunning && <div className="chat-welcome"><RoleAvatar letters="OR" /><h3>Let’s build the story your team can rely on.</h3><p>I’ll ask about your experience, what you want next, and any boundaries that matter. Uploading a CV helps, but it isn’t required.</p><button className="primary-button" disabled={busy} onClick={() => void act("start")}>{busy ? "Connecting…" : "Begin conversation"}</button></div>}
               {!entries.length && recruiterRunning && <div className="chat-welcome"><RoleAvatar letters="OR" active /><h3>Your recruiter is connected.</h3><p>If the first greeting has not appeared, reconnect the session or send a short introduction below.</p><button className="secondary-button" disabled={busy} onClick={() => void act("start")}>{busy ? "Reconnecting…" : "Reconnect recruiter"}</button></div>}
             </div>
