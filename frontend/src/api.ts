@@ -78,8 +78,11 @@ export type DocumentItem = {
   filename: string;
   mime_type: string;
   size_bytes: number;
+  company_id?: number | null;
+  campaign_id?: number | null;
   status: string;
   preview_url: string;
+  download_url?: string;
   created_at: string;
 };
 

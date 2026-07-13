@@ -17,7 +17,9 @@ test("restored documents are searchable, filterable, and previewable", async ({ 
   await page.getByRole("link", { name: /Documents/ }).click();
   await expect(page.getByRole("heading", { name: "Every document, ready when you need it" })).toBeVisible();
   await expect(page.locator(".document-card")).toHaveCount(24);
-  await expect(page.getByText(/130 files/)).toBeVisible();
+  await expect(page.getByText(/251 files/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Tailored CVs 124" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Emails 124" })).toBeVisible();
   await page.screenshot({ path: "artifacts/screenshots/document-library-restored.png", fullPage: true });
 
   await page.getByRole("button", { name: "My profile" }).click();
@@ -44,6 +46,22 @@ test("restored documents are searchable, filterable, and previewable", async ({ 
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Gmail connection needs configuration" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Connect Gmail" })).toBeDisabled();
+
+  await page.getByRole("link", { name: /Companies/ }).click();
+  const companyCard = page.locator(".company-card").filter({ hasText: "TX Group" });
+  await expect(companyCard).toBeVisible();
+  await companyCard.click();
+  await page.getByRole("link", { name: "View documents" }).click();
+  await expect(page.getByRole("heading", { name: "Documents prepared for TX Group" })).toBeVisible();
+  await expect(page.locator(".document-card")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Tailored CVs 1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Emails 1" })).toBeVisible();
+  await page.screenshot({ path: "artifacts/screenshots/company-scoped-documents.png", fullPage: true });
+  await page.getByRole("button", { name: /TX Group — Tailored CV/ }).click();
+  await expect(page.locator(".document-modal iframe")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open PDF/ })).toBeVisible();
+  await expect(page.frameLocator(".document-modal iframe").locator("body")).toContainText(/Laurent Hug/i);
+  await page.screenshot({ path: "artifacts/screenshots/company-scoped-cv-preview.png", fullPage: true });
 
   expect(serverErrors).toEqual([]);
   expect(browserErrors).toEqual([]);

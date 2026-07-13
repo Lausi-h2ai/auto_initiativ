@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Link, NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Link, NavLink, Navigate, Route, Routes, useNavigate, useSearchParams } from "react-router-dom";
 import {
   AgentTask,
   Campaign,
@@ -286,7 +286,7 @@ function CompanyDrawer({ company, onClose }: { company: Company; onClose: () => 
         <DrawerSection title="Why your recruiter noticed it"><p>{company.description || "A sourced company brief is being prepared."}</p></DrawerSection>
         <DrawerSection title="Evidence-backed fit">{toStrings(company.fit_reasons).length ? <ul>{toStrings(company.fit_reasons).map((reason) => <li key={reason}>{reason}</li>)}</ul> : <p>Fit reasons will appear after evaluation.</p>}</DrawerSection>
         <DrawerSection title="Your application team"><div className="mini-agent-row"><RoleBadge role="Research" /><RoleBadge role="Fit" /><RoleBadge role="CV" /><RoleBadge role="Writing" /></div></DrawerSection>
-        <div className="drawer-actions"><Link className="secondary-button" to="/documents">View documents</Link><button className="primary-button" onClick={onClose}>Keep moving forward</button></div>
+        <div className="drawer-actions"><Link className="secondary-button" to={`/documents?company=${encodeURIComponent(String(company.id ?? company.company_id ?? ""))}&companyName=${encodeURIComponent(company.name)}`}>View documents</Link><button className="primary-button" onClick={onClose}>Keep moving forward</button></div>
       </aside>
     </div>
   );
@@ -385,36 +385,47 @@ function ProfilePage() {
 
 function DocumentsPage() {
   const { documents } = useWorkspace();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selected, setSelected] = useState<DocumentItem | null>(null);
   const [filter, setFilter] = useState<"all" | "cv" | "email" | "profile">("all");
   const [query, setQuery] = useState("");
   const [visibleCount, setVisibleCount] = useState(24);
+  const companyId = Number(searchParams.get("company"));
+  const companyName = searchParams.get("companyName") || "this company";
+  const hasCompanyScope = Number.isFinite(companyId) && companyId > 0;
+  const availableDocuments = useMemo(
+    () => hasCompanyScope ? documents.filter((document) => document.company_id === companyId) : documents,
+    [companyId, documents, hasCompanyScope],
+  );
+  const cvCount = availableDocuments.filter((document) => document.type === "tailored_cv").length;
+  const emailCount = availableDocuments.filter((document) => document.type === "email_draft").length;
   const filteredDocuments = useMemo(() => {
     const profileTypes = new Set(["career_profile", "master_cv_profile", "outreach_policy"]);
     const needle = query.trim().toLocaleLowerCase();
-    return documents.filter((document) => {
+    return availableDocuments.filter((document) => {
       const inCategory = filter === "all"
         || (filter === "cv" && document.type === "tailored_cv")
         || (filter === "email" && document.type === "email_draft")
         || (filter === "profile" && profileTypes.has(document.type));
       return inCategory && (!needle || `${document.title} ${document.filename} ${document.type}`.toLocaleLowerCase().includes(needle));
     });
-  }, [documents, filter, query]);
+  }, [availableDocuments, filter, query]);
   const selectFilter = (next: typeof filter) => { setFilter(next); setVisibleCount(24); };
   const visibleDocuments = filteredDocuments.slice(0, visibleCount);
   return (
     <div className="page documents-page">
-      <PageHeader eyebrow="Prepared by your application team" title="Every document, ready when you need it" />
+      <PageHeader eyebrow={hasCompanyScope ? "Complete application file" : "Prepared by your application team"} title={hasCompanyScope ? `Documents prepared for ${companyName}` : "Every document, ready when you need it"} />
+      {hasCompanyScope && <div className="document-scope"><div><span>Showing only</span><strong>{companyName}</strong><small>{availableDocuments.length} related {availableDocuments.length === 1 ? "document" : "documents"}</small></div><button onClick={() => { setSearchParams({}); setFilter("all"); setQuery(""); setVisibleCount(24); }}>Show all documents</button></div>}
       <div className="document-filter" aria-label="Document filters">
-        <button className={filter === "all" ? "active" : ""} onClick={() => selectFilter("all")}>All <b>{documents.length}</b></button>
-        <button className={filter === "cv" ? "active" : ""} onClick={() => selectFilter("cv")}>Tailored CVs</button>
-        <button className={filter === "email" ? "active" : ""} onClick={() => selectFilter("email")}>Emails</button>
-        <button className={filter === "profile" ? "active" : ""} onClick={() => selectFilter("profile")}>My profile</button>
+        <button className={filter === "all" ? "active" : ""} onClick={() => selectFilter("all")}>All <b>{availableDocuments.length}</b></button>
+        <button className={filter === "cv" ? "active" : ""} onClick={() => selectFilter("cv")}>Tailored CVs <b>{cvCount}</b></button>
+        <button className={filter === "email" ? "active" : ""} onClick={() => selectFilter("email")}>Emails <b>{emailCount}</b></button>
+        {!hasCompanyScope && <button className={filter === "profile" ? "active" : ""} onClick={() => selectFilter("profile")}>My profile</button>}
         <label className="document-search"><span>Search documents</span><input type="search" placeholder="Find a company or document" value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(24); }} /></label>
         <span>{filteredDocuments.length} {filteredDocuments.length === 1 ? "file" : "files"}</span>
       </div>
       {filteredDocuments.length ? <><div className="document-grid">{visibleDocuments.map((document) => <button className="document-card" key={document.id} onClick={() => setSelected(document)}><div className={`document-preview ${document.type}`}><span>{documentBadge(document)}</span><div className="paper-lines"><i /><i /><i /><i /></div></div><div><p className="eyebrow">{human(document.type)}</p><h3>{document.title}</h3><p>{formatBytes(document.size_bytes)} · {new Date(document.created_at).toLocaleDateString()}</p></div></button>)}</div>{visibleCount < filteredDocuments.length && <div className="document-more"><button className="secondary-button" onClick={() => setVisibleCount((count) => count + 24)}>Show 24 more</button><span>{visibleDocuments.length} of {filteredDocuments.length}</span></div>}</> : <EmptyState title={query ? "No matching documents" : "Nothing in this category yet"} body={query ? "Try a company name, email subject, or another document type." : "Your application team will place finished work here automatically."} />}
-      {selected && <div className="document-modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setSelected(null)}><section className="document-modal"><header><div><p className="eyebrow">{human(selected.type)}</p><h2>{selected.title}</h2></div><button onClick={() => setSelected(null)}>×</button></header><iframe title={selected.title} src={selected.preview_url} /></section></div>}
+      {selected && <div className="document-modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setSelected(null)}><section className="document-modal"><header><div><p className="eyebrow">{human(selected.type)}</p><h2>{selected.title}</h2></div><div className="document-modal-actions">{selected.download_url && <a href={selected.download_url} target="_blank" rel="noreferrer">Open PDF ↗</a>}<button onClick={() => setSelected(null)} aria-label="Close document">×</button></div></header><iframe title={selected.title} src={selected.preview_url} /></section></div>}
     </div>
   );
 }

@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, select
 
-from backend.app.auth.context import RequestIdentity, workspace_context
+from backend.app.auth.context import RequestIdentity, scoped_runs_root, workspace_context
 from backend.app.auth.service import AuthService, GoogleIdentity, csrf_token
 from backend.app.core.config import get_settings
 from backend.app.db.models import (
@@ -15,6 +15,7 @@ from backend.app.db.models import (
     AgentTask,
     Company,
     EmailDraft,
+    ImportedFile,
     Invitation,
     MasterCvProfileSnapshot,
     PolicySnapshot,
@@ -223,6 +224,28 @@ def test_legacy_drafts_and_profiles_are_exposed_as_safe_workspace_documents(auth
     )
     with workspace_context(identity), Session(authenticated_app["engine"]) as session:
         company = session.exec(select(Company).where(Company.company_id == "company-shared")).one()
+        imported_file = ImportedFile(
+            run_id="application-draft-library",
+            path="output/email_draft.json",
+            filename="email_draft.json",
+            status="imported",
+            raw_json="{}",
+        )
+        session.add(imported_file)
+        session.flush()
+        cv_path = (
+            scoped_runs_root(authenticated_app["settings"].runs_root)
+            / imported_file.run_id
+            / "output"
+            / "attachments"
+            / "user-company-cv.pdf"
+        )
+        cv_path.parent.mkdir(parents=True, exist_ok=True)
+        cv_path.write_bytes(b"%PDF-1.4\n% tailored test CV\n")
+        cv_path.with_suffix(".html").write_text(
+            '<html><body><img src="file:///private/photo.jpg"><h1>Tailored User CV</h1></body></html>',
+            encoding="utf-8",
+        )
         session.add(
             EmailDraft(
                 draft_id="draft-library",
@@ -233,6 +256,7 @@ def test_legacy_drafts_and_profiles_are_exposed_as_safe_workspace_documents(auth
                 body_text="Hello <script>alert('no')</script>",
                 confidence=0.91,
                 raw_json="{}",
+                imported_file_id=imported_file.id,
             )
         )
         session.commit()
@@ -243,9 +267,10 @@ def test_legacy_drafts_and_profiles_are_exposed_as_safe_workspace_documents(auth
 
     assert response.status_code == 200
     documents = response.json()
-    assert len(documents) == 4
+    assert len(documents) == 5
     assert {item["type"] for item in documents} == {
         "email_draft",
+        "tailored_cv",
         "career_profile",
         "master_cv_profile",
         "outreach_policy",
@@ -259,6 +284,19 @@ def test_legacy_drafts_and_profiles_are_exposed_as_safe_workspace_documents(auth
     assert "&lt;script&gt;" in preview.text
     assert preview.headers["content-security-policy"].startswith("default-src 'none'")
 
+    cv = next(item for item in documents if item["type"] == "tailored_cv")
+    assert cv["title"] == "User Company — Tailored CV"
+    cv_preview = client.get(cv["preview_url"], cookies=cookies)
+    assert cv_preview.status_code == 200
+    assert cv_preview.headers["content-type"].startswith("text/html")
+    assert "Tailored User CV" in cv_preview.text
+    assert "file:///private/photo.jpg" not in cv_preview.text
+    assert "data:image/gif;base64" in cv_preview.text
+    assert cv_preview.headers["content-security-policy"].startswith("default-src 'none'")
+    cv_download = client.get(cv["download_url"], cookies=cookies)
+    assert cv_download.status_code == 200
+    assert cv_download.headers["content-type"].startswith("application/pdf")
+
     profile = next(item for item in documents if item["type"] == "career_profile")
     profile_preview = client.get(profile["preview_url"], cookies=cookies)
     assert profile_preview.status_code == 200
@@ -267,7 +305,7 @@ def test_legacy_drafts_and_profiles_are_exposed_as_safe_workspace_documents(auth
     assert profile_preview.headers["content-security-policy"].startswith("default-src 'none'")
 
     summary = client.get("/product/summary", cookies=cookies)
-    assert summary.json()["document_count"] == 4
+    assert summary.json()["document_count"] == 5
 
     admin_documents = client.get(
         "/documents",
@@ -275,6 +313,7 @@ def test_legacy_drafts_and_profiles_are_exposed_as_safe_workspace_documents(auth
     ).json()
     assert len(admin_documents) == 3
     assert all(item["type"] != "email_draft" for item in admin_documents)
+    assert all(item["type"] != "tailored_cv" for item in admin_documents)
 
 
 def test_campaign_creation_is_on_rails_and_enqueues_research(authenticated_app):

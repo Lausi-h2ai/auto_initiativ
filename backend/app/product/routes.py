@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from html import escape
 from collections import Counter
 from datetime import datetime
@@ -24,6 +25,7 @@ from backend.app.db.models import (
     EmailDraft,
     FitEvaluation,
     GmailConnection,
+    ImportedFile,
     MasterCvProfileSnapshot,
     OutreachRecord,
     PolicySnapshot,
@@ -363,7 +365,28 @@ def resolve_exception(
     return {"id": item.exception_id, "status": item.status, "resolution": item.resolution}
 
 
-def _document_items(session: Session, campaign_id: str | None = None) -> list[dict[str, Any]]:
+def _run_roots(settings: Settings) -> list[Path]:
+    scoped_root = scoped_runs_root(settings.runs_root).resolve()
+    roots = [scoped_root]
+    identity = current_identity()
+    legacy_root = settings.runs_root.resolve()
+    if legacy_root != scoped_root and (identity is None or identity.effective_workspace_id == 1):
+        roots.append(legacy_root)
+    return roots
+
+
+def _tailored_cv_path(run_id: str, settings: Settings, suffix: str = ".pdf") -> Path | None:
+    for root in _run_roots(settings):
+        attachments = (root / run_id / "output" / "attachments").resolve()
+        if not attachments.is_relative_to(root) or not attachments.is_dir():
+            continue
+        files = sorted(path.resolve() for path in attachments.glob(f"*{suffix}") if path.is_file())
+        if files and files[0].is_relative_to(root):
+            return files[0]
+    return None
+
+
+def _document_items(session: Session, settings: Settings, campaign_id: str | None = None) -> list[dict[str, Any]]:
     statement = select(Document).order_by(Document.created_at.desc())
     campaign_company_ids: set[int] | None = None
     if campaign_id:
@@ -399,6 +422,9 @@ def _document_items(session: Session, campaign_id: str | None = None) -> list[di
             drafts = session.exec(draft_statement.where(EmailDraft.company_id.in_(campaign_company_ids))).all()
     else:
         drafts = session.exec(draft_statement).all()
+    # Legacy smoke-test drafts have no imported application run and do not belong
+    # in the user's application document library.
+    drafts = [draft for draft in drafts if draft.imported_file_id is not None]
     company_ids = {draft.company_id for draft in drafts if draft.company_id is not None}
     companies = (
         session.exec(select(Company).where(Company.id.in_(company_ids))).all()
@@ -406,6 +432,13 @@ def _document_items(session: Session, campaign_id: str | None = None) -> list[di
         else []
     )
     company_names = {company.id: company.name for company in companies}
+    imported_file_ids = {draft.imported_file_id for draft in drafts if draft.imported_file_id is not None}
+    imported_files = (
+        session.exec(select(ImportedFile).where(ImportedFile.id.in_(imported_file_ids))).all()
+        if imported_file_ids
+        else []
+    )
+    run_ids = {item.id: item.run_id for item in imported_files}
     for draft in drafts:
         company_name = company_names.get(draft.company_id) or draft.external_company_id or "Company"
         items.append(
@@ -423,6 +456,25 @@ def _document_items(session: Session, campaign_id: str | None = None) -> list[di
                 "preview_url": f"/documents/email-draft-{draft.id}/content",
             }
         )
+        run_id = run_ids.get(draft.imported_file_id)
+        cv_path = _tailored_cv_path(run_id, settings) if run_id else None
+        if cv_path is not None:
+            items.append(
+                {
+                    "id": f"tailored-cv-{draft.id}",
+                    "title": f"{company_name} — Tailored CV",
+                    "type": "tailored_cv",
+                    "filename": cv_path.name,
+                    "mime_type": "application/pdf",
+                    "size_bytes": cv_path.stat().st_size,
+                    "campaign_id": None,
+                    "company_id": draft.company_id,
+                    "status": "ready",
+                    "created_at": draft.created_at,
+                    "preview_url": f"/documents/tailored-cv-{draft.id}/content",
+                    "download_url": f"/documents/tailored-cv-{draft.id}/download",
+                }
+            )
 
     if campaign_id is None:
         profile_specs = (
@@ -454,8 +506,12 @@ def _document_items(session: Session, campaign_id: str | None = None) -> list[di
 
 
 @router.get("/documents")
-def list_documents(campaign_id: str | None = None, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
-    return _document_items(session, campaign_id)
+def list_documents(
+    campaign_id: str | None = None,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[dict[str, Any]]:
+    return _document_items(session, settings, campaign_id)
 
 
 def _email_preview(draft: EmailDraft, company_name: str) -> HTMLResponse:
@@ -529,6 +585,38 @@ def document_content(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> Response:
+    if document_id.startswith("tailored-cv-"):
+        try:
+            draft_pk = int(document_id.removeprefix("tailored-cv-"))
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        draft = session.exec(select(EmailDraft).where(EmailDraft.id == draft_pk)).first()
+        imported_file = (
+            session.exec(select(ImportedFile).where(ImportedFile.id == draft.imported_file_id)).first()
+            if draft is not None and draft.imported_file_id is not None
+            else None
+        )
+        path = _tailored_cv_path(imported_file.run_id, settings) if imported_file is not None else None
+        if path is None:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        html_path = _tailored_cv_path(imported_file.run_id, settings, ".html")
+        if html_path is not None:
+            html_content = html_path.read_text(encoding="utf-8", errors="replace")
+            html_content = re.sub(
+                r'(?i)(\bsrc\s*=\s*)(["\'])file:[^"\']*\2',
+                r'\1\2data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==\2',
+                html_content,
+            )
+            return HTMLResponse(
+                html_content,
+                headers={
+                    "Cache-Control": "no-store",
+                    "Content-Disposition": f'inline; filename="{html_path.name}"',
+                    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        return FileResponse(path, media_type="application/pdf", filename=path.name, content_disposition_type="inline")
     if document_id.startswith("email-draft-"):
         try:
             draft_pk = int(document_id.removeprefix("email-draft-"))
@@ -552,15 +640,42 @@ def document_content(
     return FileResponse(path, media_type=document.mime_type, filename=document.filename, content_disposition_type="inline")
 
 
+@router.get("/documents/{document_id}/download")
+def document_download(
+    document_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    if not document_id.startswith("tailored-cv-"):
+        raise HTTPException(status_code=404, detail="Document not found.")
+    try:
+        draft_pk = int(document_id.removeprefix("tailored-cv-"))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    draft = session.exec(select(EmailDraft).where(EmailDraft.id == draft_pk)).first()
+    imported_file = (
+        session.exec(select(ImportedFile).where(ImportedFile.id == draft.imported_file_id)).first()
+        if draft is not None and draft.imported_file_id is not None
+        else None
+    )
+    path = _tailored_cv_path(imported_file.run_id, settings) if imported_file is not None else None
+    if path is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return FileResponse(path, media_type="application/pdf", filename=path.name, content_disposition_type="inline")
+
+
 @router.get("/product/summary")
-def product_summary(session: Session = Depends(get_session)) -> dict[str, Any]:
+def product_summary(
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
     campaigns = session.exec(select(Campaign).order_by(Campaign.updated_at.desc())).all()
     links = session.exec(select(CampaignCompany)).all()
     tasks = session.exec(
         select(AgentTask).where(AgentTask.status.in_(["queued", "retry", "running"])).order_by(AgentTask.updated_at.desc())
     ).all()
     exceptions = session.exec(select(ReviewException).where(ReviewException.status == "open")).all()
-    documents = _document_items(session)
+    documents = _document_items(session, settings)
     sent = session.exec(select(SentMessage).where(SentMessage.status == "provider_accepted")).all()
     stages = Counter(item.stage for item in links)
     linked_company_ids = {item.company_id for item in links}
