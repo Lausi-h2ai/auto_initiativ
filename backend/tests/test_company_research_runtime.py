@@ -33,7 +33,7 @@ def test_company_research_runtime_builds_restricted_pi_command(tmp_path: Path):
     assert "--no-builtin-tools" in command
     assert "--session-dir" in command
     assert command[command.index("--provider") + 1] == "openai-codex"
-    assert command[command.index("--model") + 1] == "gpt-5.5"
+    assert command[command.index("--model") + 1] == "gpt-5.6-terra"
     assert command[command.index("--thinking") + 1] == "medium"
 
 

@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     pi_rpc_model: str | None = Field(default=None, validation_alias="PI_RPC_MODEL")
     pi_rpc_thinking: str | None = Field(default=None, validation_alias="PI_RPC_THINKING")
     pi_rpc_research_provider: str | None = Field(default="openai-codex", validation_alias="PI_RPC_RESEARCH_PROVIDER")
-    pi_rpc_research_model: str | None = Field(default="gpt-5.5", validation_alias="PI_RPC_RESEARCH_MODEL")
+    pi_rpc_research_model: str | None = Field(default="gpt-5.6-terra", validation_alias="PI_RPC_RESEARCH_MODEL")
     pi_rpc_research_thinking: str | None = Field(default="medium", validation_alias="PI_RPC_RESEARCH_THINKING")
     pi_rpc_timeout_seconds: float = Field(default=180, validation_alias="PI_RPC_TIMEOUT_SECONDS")
     pi_rpc_research_timeout_seconds: float = Field(default=3600, validation_alias="PI_RPC_RESEARCH_TIMEOUT_SECONDS")
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
         validation_alias="PI_RPC_APPLICATION_DRAFT_PROVIDER",
     )
     pi_rpc_application_draft_model: str | None = Field(
-        default="gpt-5.4-mini",
+        default="gpt-5.6-luna",
         validation_alias="PI_RPC_APPLICATION_DRAFT_MODEL",
     )
     pi_rpc_application_draft_thinking: str | None = Field(
