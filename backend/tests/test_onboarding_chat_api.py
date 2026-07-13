@@ -5,7 +5,7 @@ from pathlib import Path
 
 from backend.app.agents.onboarding_chat import ChatReply, ChatTranscriptEntry, JsonlTranscriptStore, OnboardingSessionState
 from backend.app.api.routes import (
-    _chat_entry_response,
+    _chat_entries_response,
     _onboarding_artifact_repair_prompt,
     _onboarding_finalization_prompt,
     get_onboarding_chat_adapter,
@@ -133,28 +133,70 @@ def test_onboarding_repair_prompt_includes_validation_failures_and_schema_defini
     assert '"profile_id"' in prompt
 
 
-def test_internal_onboarding_prompts_are_redacted_in_chat_responses():
-    finish_entry = _chat_entry_response(
-        {
-            "run_id": "run-1",
-            "role": "user",
-            "content": _onboarding_finalization_prompt("run-1"),
-            "created_at": "2026-05-15T00:00:00+00:00",
-        }
-    )
-    repair_entry = _chat_entry_response(
-        {
-            "run_id": "run-1",
-            "role": "user",
-            "content": _onboarding_artifact_repair_prompt("run-1", [], 1, 2),
-            "created_at": "2026-05-15T00:00:00+00:00",
-        }
+def test_internal_onboarding_events_and_prompts_are_excluded_from_chat_responses():
+    entries = _chat_entries_response(
+        [
+            {
+                "run_id": "run-1",
+                "role": "system",
+                "content": '{"app_session_id":"secret","tmux_session":"codex"}',
+                "created_at": "2026-05-15T00:00:00+00:00",
+                "event": "tmux_attached",
+            },
+            {
+                "run_id": "run-1",
+                "role": "system",
+                "content": "Onboarding recruiter prompt sent to Codex tmux session.",
+                "created_at": "2026-05-15T00:00:01+00:00",
+                "event": "recruiter_prompt_sent",
+            },
+            {
+                "run_id": "run-1",
+                "role": "assistant",
+                "content": (
+                    "cd /mnt/f/auto_initiativ/runs/run-1/workspace && codex "
+                    "Read the AGENTS.md file in this workspace and begin onboarding run `run-1`. "
+                    "Write the reply to ../logs/latest_assistant_message.txt."
+                ),
+                "created_at": "2026-05-15T00:00:02+00:00",
+                "raw_capture": "private terminal output",
+                "event": "recruiter_prompt_reply",
+            },
+            {
+                "run_id": "run-1",
+                "role": "user",
+                "content": _onboarding_finalization_prompt("run-1"),
+                "created_at": "2026-05-15T00:00:03+00:00",
+            },
+            {
+                "run_id": "run-1",
+                "role": "user",
+                "content": _onboarding_artifact_repair_prompt("run-1", [], 1, 2),
+                "created_at": "2026-05-15T00:00:04+00:00",
+            },
+            {
+                "run_id": "run-1",
+                "role": "assistant",
+                "content": "Welcome. What kind of role would feel like a meaningful next step?",
+                "created_at": "2026-05-15T00:00:05+00:00",
+                "raw_capture": "terminal framing that must not leave the backend",
+                "event": "recruiter_prompt_reply",
+            },
+            {
+                "run_id": "run-1",
+                "role": "user",
+                "content": "I want to work on useful AI products.",
+                "created_at": "2026-05-15T00:00:06+00:00",
+                "raw_capture": "not user-facing",
+            },
+        ]
     )
 
-    assert finish_entry.content == "Finish artifacts"
-    assert repair_entry.content == "Repair artifacts"
-    assert "JSON Schemas" not in finish_entry.content
-    assert "Validation failures JSON" not in repair_entry.content
+    assert [(entry.role, entry.content) for entry in entries] == [
+        ("assistant", "Welcome. What kind of role would feel like a meaningful next step?"),
+        ("user", "I want to work on useful AI products."),
+    ]
+    assert all(entry.raw_capture is None for entry in entries)
 
 
 class FakeOnboardingAdapter:

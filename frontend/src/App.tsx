@@ -417,7 +417,7 @@ function ProfilePage() {
           <div className="chat-card">
             <header><div><RoleAvatar letters="OR" active /><div><strong>Onboarding recruiter</strong><small>{status?.status === "running" ? "Listening" : "Ready when you are"}</small></div></div><StatusPill status={status?.status || "not started"} /></header>
             <div className="chat-transcript">
-              {(status?.entries || []).map((entry: any, index: number) => <div className={`chat-message ${entry.role === "user" ? "user" : "agent"}`} key={entry.id || index}><small>{entry.role === "user" ? "You" : "Your recruiter"}</small><p>{entry.content}</p></div>)}
+              {(status?.entries || []).filter((entry: any) => entry.role === "user" || entry.role === "assistant").map((entry: any, index: number) => <div className={`chat-message ${entry.role === "user" ? "user" : "agent"}`} key={entry.id || index}><small>{entry.role === "user" ? "You" : "Your recruiter"}</small><p>{entry.content}</p></div>)}
               {!status?.entries?.length && <div className="chat-welcome"><RoleAvatar letters="OR" /><h3>Let’s build the story your team can rely on.</h3><p>I’ll ask about your experience, what you want next, and any boundaries that matter. Uploading a CV helps, but it isn’t required.</p><button className="primary-button" disabled={busy} onClick={() => void act("start")}>Begin conversation</button></div>}
             </div>
             {status?.entries?.length ? <form className="chat-compose" onSubmit={(event) => void send(event)}><textarea rows={2} placeholder="Reply naturally…" value={message} onChange={(e) => setMessage(e.target.value)} /><button disabled={busy || !message.trim()}>Send</button></form> : null}

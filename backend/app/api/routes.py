@@ -241,35 +241,34 @@ def _import_response(result: Any) -> ImportResponse:
 
 
 def _chat_entry_response(entry: dict[str, object]) -> OnboardingChatEntryResponse:
-    content = str(entry.get("content") or "")
-    event = entry.get("event") if isinstance(entry.get("event"), str) else None
-    if _is_internal_onboarding_prompt(content):
-        content = _internal_onboarding_prompt_label(content)
-        event = event or "internal_prompt_redacted"
     return OnboardingChatEntryResponse(
         run_id=str(entry.get("run_id") or ""),
         role=str(entry.get("role") or ""),
-        content=content,
+        content=str(entry.get("content") or ""),
         created_at=str(entry.get("created_at") or ""),
-        raw_capture=entry.get("raw_capture") if isinstance(entry.get("raw_capture"), str) else None,
-        event=event,
+        raw_capture=None,
+        event=entry.get("event") if isinstance(entry.get("event"), str) else None,
     )
 
 
 def _chat_entries_response(entries: list[dict[str, object]]) -> list[OnboardingChatEntryResponse]:
-    return [_chat_entry_response(entry) for entry in entries]
+    return [_chat_entry_response(entry) for entry in entries if _is_user_visible_onboarding_entry(entry)]
+
+
+def _is_user_visible_onboarding_entry(entry: dict[str, object]) -> bool:
+    role = str(entry.get("role") or "")
+    content = str(entry.get("content") or "").strip()
+    if role not in {"user", "assistant"} or not content:
+        return False
+    return not _is_internal_onboarding_prompt(content)
 
 
 def _is_internal_onboarding_prompt(content: str) -> bool:
-    return content.startswith("Finalize this onboarding interview.") or "Validation failures JSON:" in content
-
-
-def _internal_onboarding_prompt_label(content: str) -> str:
-    if content.startswith("Finalize this onboarding interview."):
-        return "Finish artifacts"
-    if "Validation failures JSON:" in content:
-        return "Repair artifacts"
-    return "Internal onboarding action"
+    return (
+        content.startswith("Finalize this onboarding interview.")
+        or "Validation failures JSON:" in content
+        or "Read the AGENTS.md file in this workspace and begin onboarding run" in content
+    )
 
 
 def _session_state_response(
