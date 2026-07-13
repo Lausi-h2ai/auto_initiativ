@@ -19,6 +19,7 @@ const pipelineStages = ["discovered", "qualified", "preparing", "ready", "sent",
 
 export function App() {
   if (window.location.pathname === "/login") return <Login />;
+  if (window.location.pathname === "/register") return <Registration />;
   return <WorkspaceProvider />;
 }
 
@@ -84,6 +85,52 @@ function Login() {
             <span className="google-mark">G</span> Continue with Google
           </a>
           <small>Invite-only access · Your workspace is isolated from every other user.</small>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Registration() {
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await mutate("/auth/local/register", "POST", { display_name: displayName, email });
+      window.location.assign("/dashboard#/profile");
+    } catch (cause) {
+      setError(messageOf(cause));
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="login-page">
+      <section className="login-story">
+        <Brand />
+        <div className="login-copy">
+          <p className="eyebrow light">A clean workspace of your own</p>
+          <h1>Start from the beginning.</h1>
+          <p>Create a separate local account, then meet your recruiter and build your profile from scratch.</p>
+        </div>
+        <div className="trust-line"><span /> Local-only account <span /> Separate workspace <span /> No Google setup</div>
+      </section>
+      <section className="login-panel">
+        <div className="login-card">
+          <p className="eyebrow">Create a local account</p>
+          <h2>Your fresh workspace.</h2>
+          <p>This account is for local testing on this computer. It does not require a password or Google sign-in.</p>
+          <form className="registration-form" onSubmit={(event) => void submit(event)}>
+            <label><span>Your name</span><input autoFocus required minLength={2} maxLength={100} value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Laurent Hug" /></label>
+            <label><span>Email</span><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="fresh-test@example.com" /></label>
+            <button className="primary-button" disabled={busy}>{busy ? "Creating workspace…" : "Create account"}</button>
+          </form>
+          {error && <InlineError message={error} />}
+          <a className="registration-back" href="/dashboard">Back to the current workspace</a>
         </div>
       </section>
     </main>
@@ -456,7 +503,7 @@ function SettingsPage() {
     : canConnect
       ? "Sign-in and sending consent stay separate. Agents never receive access to your credentials."
       : "Add the Google OAuth client ID and secret to the local environment before connecting this workspace.";
-  return <div className="page settings-page"><PageHeader eyebrow="Your workspace" title="Simple controls for how your recruiter works" /><div className="settings-grid"><section className="settings-card"><p className="eyebrow">Account</p><h3>{me.display_name}</h3><p>{me.email}</p><div className="setting-status"><span>Private workspace</span><b>Active</b></div></section><section className="settings-card"><p className="eyebrow">Sending connection</p><h3>{delivery.gmail_configured ? "Gmail is connected" : canConnect ? "Connect Gmail when you are ready" : "Gmail connection needs configuration"}</h3><p>{connectionCopy}</p>{delivery.gmail_configured && !localFileConnection ? <button className="secondary-button" disabled={busy} onClick={() => void disconnect()}>Disconnect Gmail</button> : !delivery.gmail_configured ? <button className="primary-button" disabled={busy || !canConnect} onClick={() => void connect()}>Connect Gmail</button> : null}{connectionError && <InlineError message={connectionError} />}</section><section className="settings-card wide"><p className="eyebrow">Delivery boundary</p><h3>Deterministic checks always stay in control.</h3><p>Autopilot campaigns can remove repetitive confirmations, but they cannot bypass dedupe, source, claim, attachment, limit, policy, reservation, or audit checks.</p><div className="guardrail-row">{["Duplicate protection", "Approved claims", "Send limits", "Audit trail"].map((label) => <span key={label}>✓ {label}</span>)}</div></section></div></div>;
+  return <div className="page settings-page"><PageHeader eyebrow="Your workspace" title="Simple controls for how your recruiter works" /><div className="settings-grid"><section className="settings-card"><p className="eyebrow">Account</p><h3>{me.display_name}</h3><p>{me.email}</p>{me.local_registration_enabled && <a className="secondary-button account-create-link" href="/register">Create or switch local account</a>}<div className="setting-status"><span>Private workspace</span><b>Active</b></div></section><section className="settings-card"><p className="eyebrow">Sending connection</p><h3>{delivery.gmail_configured ? "Gmail is connected" : canConnect ? "Connect Gmail when you are ready" : "Gmail connection needs configuration"}</h3><p>{connectionCopy}</p>{delivery.gmail_configured && !localFileConnection ? <button className="secondary-button" disabled={busy} onClick={() => void disconnect()}>Disconnect Gmail</button> : !delivery.gmail_configured ? <button className="primary-button" disabled={busy || !canConnect} onClick={() => void connect()}>Connect Gmail</button> : null}{connectionError && <InlineError message={connectionError} />}</section><section className="settings-card wide"><p className="eyebrow">Delivery boundary</p><h3>Deterministic checks always stay in control.</h3><p>Autopilot campaigns can remove repetitive confirmations, but they cannot bypass dedupe, source, claim, attachment, limit, policy, reservation, or audit checks.</p><div className="guardrail-row">{["Duplicate protection", "Approved claims", "Send limits", "Audit trail"].map((label) => <span key={label}>✓ {label}</span>)}</div></section></div></div>;
 }
 
 function AdminPage() {

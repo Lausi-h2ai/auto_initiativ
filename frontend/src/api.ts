@@ -6,6 +6,7 @@ export type Me = {
   role: "user" | "admin";
   workspace: { id: string; name: string };
   csrf_token: string;
+  local_registration_enabled: boolean;
 };
 
 export type Campaign = {

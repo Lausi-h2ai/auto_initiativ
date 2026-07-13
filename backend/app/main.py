@@ -57,6 +57,13 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
 
+    @app.get("/register", include_in_schema=False)
+    def register() -> FileResponse:
+        return FileResponse(
+            SPA_INDEX if SPA_INDEX.exists() else STATIC_DIR / "dashboard.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
     @app.get("/design-lab/concept-a", include_in_schema=False)
     def design_lab_concept_a() -> FileResponse:
         return FileResponse(DESIGN_LAB_DIR / "concept-a.html")

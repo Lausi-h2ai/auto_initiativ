@@ -17,8 +17,8 @@ from backend.app.db import session as db_session_module
 from backend.app.db.models import AdminAccessAudit, AuthSession, User, Workspace, utc_now
 
 
-PUBLIC_PREFIXES = ("/auth/google/", "/static/", "/assets/")
-PUBLIC_PATHS = {"/health", "/login", "/favicon.ico", "/monitoring/client-errors"}
+PUBLIC_PREFIXES = ("/auth/google/", "/auth/local/", "/static/", "/assets/")
+PUBLIC_PATHS = {"/health", "/login", "/register", "/favicon.ico", "/monitoring/client-errors"}
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
@@ -35,28 +35,44 @@ class AuthWorkspaceMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         settings = get_settings()
         if not settings.auth_required:
-            if not settings.dev_auth_bypass_email:
-                return await call_next(request)
             with Session(db_session_module.engine) as session:
-                email = settings.dev_auth_bypass_email.strip().lower()
-                user = session.exec(select(User).where(User.email == email)).first()
-                if user is None:
-                    user = User(
-                        google_subject=f"dev:{email}",
-                        email=email,
-                        display_name=email.split("@", 1)[0].replace(".", " ").title(),
-                        role="admin",
-                    )
-                    session.add(user)
-                    session.flush()
-                    session.add(
-                        Workspace(
-                            workspace_id=f"workspace-dev-{uuid4()}",
-                            owner_user_id=user.id,
-                            name="Development workspace",
+                raw_token = request.cookies.get("ai_session")
+                auth_session = (
+                    session.exec(select(AuthSession).where(AuthSession.token_hash == token_hash(raw_token))).first()
+                    if raw_token
+                    else None
+                )
+                user = None
+                if auth_session is not None and auth_session.revoked_at is None and not _is_expired(auth_session.expires_at):
+                    user = session.get(User, auth_session.user_id)
+                    if user is None or user.status != "active":
+                        user = None
+                    else:
+                        auth_session.last_seen_at = utc_now()
+                        session.add(auth_session)
+                        session.commit()
+                if user is None and settings.dev_auth_bypass_email:
+                    email = settings.dev_auth_bypass_email.strip().lower()
+                    user = session.exec(select(User).where(User.email == email)).first()
+                    if user is None:
+                        user = User(
+                            google_subject=f"dev:{email}",
+                            email=email,
+                            display_name=email.split("@", 1)[0].replace(".", " ").title(),
+                            role="admin",
                         )
-                    )
-                    session.commit()
+                        session.add(user)
+                        session.flush()
+                        session.add(
+                            Workspace(
+                                workspace_id=f"workspace-dev-{uuid4()}",
+                                owner_user_id=user.id,
+                                name="Development workspace",
+                            )
+                        )
+                        session.commit()
+                if user is None:
+                    return await call_next(request)
                 workspace = session.exec(select(Workspace).where(Workspace.owner_user_id == user.id)).one()
                 request.state.user_id = user.id
                 request.state.workspace_id = workspace.id

@@ -139,6 +139,53 @@ def test_unauthenticated_api_is_rejected(authenticated_app):
     assert response.status_code == 401
 
 
+def test_local_registration_creates_and_switches_fresh_workspaces(client):
+    capabilities = client.get("/auth/local/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json() == {"registration_enabled": True}
+    assert client.get("/register").status_code == 200
+
+    first = client.post(
+        "/auth/local/register",
+        json={"display_name": "Fresh One", "email": "fresh-one@example.com"},
+    )
+    assert first.status_code == 201
+    first_me = client.get("/me")
+    assert first_me.status_code == 200
+    assert first_me.json()["email"] == "fresh-one@example.com"
+    assert first_me.json()["workspace"]["id"].startswith("workspace-local-")
+    assert first_me.json()["local_registration_enabled"] is True
+    assert client.get("/product/summary").json()["pipeline"] == {}
+
+    second = client.post(
+        "/auth/local/register",
+        json={"display_name": "Fresh Two", "email": "fresh-two@example.com"},
+    )
+    assert second.status_code == 201
+    second_me = client.get("/me").json()
+    assert second_me["id"] != first_me.json()["id"]
+    assert second_me["workspace"]["id"] != first_me.json()["workspace"]["id"]
+    assert second_me["email"] == "fresh-two@example.com"
+    assert client.get("/product/summary").json()["pipeline"] == {}
+
+    switched_back = client.post(
+        "/auth/local/register",
+        json={"display_name": "Fresh One", "email": "fresh-one@example.com"},
+    )
+    assert switched_back.status_code == 201
+    assert client.get("/me").json()["id"] == first_me.json()["id"]
+
+
+def test_local_registration_is_disabled_in_authenticated_mode(authenticated_app):
+    response = authenticated_app["client"].post(
+        "/auth/local/register",
+        json={"display_name": "Not Allowed", "email": "blocked@example.com"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Local registration is disabled when authentication is required."
+
+
 def test_workspace_queries_and_duplicate_ids_are_isolated(authenticated_app):
     client = authenticated_app["client"]
     admin = client.get("/companies", cookies={"ai_session": authenticated_app["admin_token"]})

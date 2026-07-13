@@ -97,7 +97,9 @@ Configuration uses environment variables. `DRY_RUN` defaults to `true`; `DATABAS
 
 ## Local Development Accounts
 
-With `AUTH_REQUIRED=false`, `DEV_AUTH_BYPASS_EMAIL` selects the local development account. The app creates a user and an isolated workspace automatically the first time it sees a new email. To test onboarding from an empty workspace, set a new synthetic email and restart the backend:
+With `AUTH_REQUIRED=false`, open **Settings → Create or switch local account** or visit `http://127.0.0.1:8000/register`. The registration screen creates an isolated workspace and switches the browser to it immediately; no Google setup or server restart is required.
+
+`DEV_AUTH_BYPASS_EMAIL` remains the fallback account when the browser has no selected local session. The app creates its workspace automatically the first time it sees a new fallback email:
 
 ```text
 AUTH_REQUIRED=false

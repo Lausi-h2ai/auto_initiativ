@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import Session, select
 
 from backend.app.auth.service import AuthService, CredentialVault, GoogleOAuthClient, require_role
@@ -21,6 +21,11 @@ GMAIL_SCOPES = ("openid", "email", "profile", "https://www.googleapis.com/auth/g
 class InvitationCreate(BaseModel):
     email: EmailStr
     role: str = "user"
+
+
+class LocalRegistrationCreate(BaseModel):
+    display_name: str = Field(min_length=2, max_length=100)
+    email: EmailStr
 
 
 def _request_user(request: Request, session: Session) -> User:
@@ -79,6 +84,83 @@ def logout(
     AuthService(session, settings).revoke_session(request.cookies.get("ai_session"))
     response.delete_cookie("ai_session", path="/")
     return {"logged_out": True}
+
+
+@router.get("/auth/local/capabilities")
+def local_auth_capabilities(settings: Settings = Depends(get_settings)) -> dict[str, bool]:
+    return {"registration_enabled": not settings.auth_required}
+
+
+@router.post("/auth/local/register", status_code=201)
+def local_register(
+    payload: LocalRegistrationCreate,
+    response: Response,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    if settings.auth_required:
+        raise HTTPException(status_code=403, detail="Local registration is disabled when authentication is required.")
+    email = str(payload.email).strip().lower()
+    display_name = payload.display_name.strip()
+    if len(display_name) < 2:
+        raise HTTPException(status_code=422, detail="Display name must contain at least two visible characters.")
+
+    user = session.exec(select(User).where(User.email == email)).first()
+    if user is not None and user.google_subject != "bootstrap:legacy" and not user.google_subject.startswith(("dev:", "local:")):
+        raise HTTPException(status_code=409, detail="This email belongs to an externally authenticated account.")
+    if user is None:
+        user = User(
+            google_subject=f"local:{uuid4()}",
+            email=email,
+            display_name=display_name,
+            role="admin",
+        )
+        session.add(user)
+        session.flush()
+        session.add(
+            Workspace(
+                workspace_id=f"workspace-local-{uuid4()}",
+                owner_user_id=user.id,
+                name=f"{display_name}'s workspace",
+            )
+        )
+        session.commit()
+        session.refresh(user)
+    else:
+        if user.status != "active":
+            raise HTTPException(status_code=403, detail="This local account is not active.")
+        user.display_name = display_name
+        user.updated_at = utc_now()
+        user.last_login_at = utc_now()
+        session.add(user)
+        session.commit()
+
+    workspace = session.exec(select(Workspace).where(Workspace.owner_user_id == user.id)).first()
+    if workspace is None:
+        workspace = Workspace(
+            workspace_id=f"workspace-local-{uuid4()}",
+            owner_user_id=user.id,
+            name=f"{display_name}'s workspace",
+        )
+        session.add(workspace)
+        session.commit()
+        session.refresh(workspace)
+    raw_token = AuthService(session, settings).create_session(user)
+    response.set_cookie(
+        "ai_session",
+        raw_token,
+        httponly=True,
+        secure=settings.secure_cookies,
+        samesite="lax",
+        max_age=settings.auth_session_days * 86400,
+        path="/",
+    )
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "workspace": {"id": workspace.workspace_id, "name": workspace.name},
+    }
 
 
 @router.post("/auth/google/gmail/start")
@@ -166,7 +248,11 @@ def gmail_disconnect(request: Request, session: Session = Depends(get_session)) 
 
 
 @router.get("/me")
-def me(request: Request, session: Session = Depends(get_session)) -> dict[str, object]:
+def me(
+    request: Request,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
     user = _request_user(request, session)
     workspace = session.exec(select(Workspace).where(Workspace.owner_user_id == user.id)).one()
     return {
@@ -177,6 +263,7 @@ def me(request: Request, session: Session = Depends(get_session)) -> dict[str, o
         "role": user.role,
         "workspace": {"id": workspace.workspace_id, "name": workspace.name},
         "csrf_token": request.state.csrf_token,
+        "local_registration_enabled": not settings.auth_required,
     }
 
 
