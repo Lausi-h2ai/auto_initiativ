@@ -5,6 +5,8 @@ from datetime import timedelta
 
 from sqlmodel import select
 
+from backend.app.api.routes import email_delivery_settings
+from backend.app.auth.context import RequestIdentity, workspace_context
 from backend.app.db.models import AuditLog, OutreachRecord, SendApprovalSnapshot, SendIntent, SendReservation, SentMessage, utc_now
 from backend.app.core.config import Settings
 from backend.app.email_delivery.adapters import (
@@ -290,6 +292,49 @@ def test_email_delivery_settings_endpoint_reports_safe_default(client):
     assert body["allow_real_recipients"] is False
     assert body["gmail_connection_available"] is False
     assert body["mode"] == "disabled"
+
+
+def test_local_dev_identity_reuses_existing_file_gmail_credentials(db_session, tmp_path, monkeypatch):
+    client_secrets = tmp_path / "gmail-client.json"
+    token = tmp_path / "gmail-token.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+    token.write_text("{}", encoding="utf-8")
+    adapter = _AcceptedAdapter()
+    monkeypatch.setattr("backend.app.email_delivery.batch_send.GmailEmailAdapter", lambda settings: adapter)
+    settings = Settings(
+        auth_required=False,
+        email_sending_enabled=True,
+        email_provider="gmail_sandbox",
+        gmail_sandbox_recipient="sandbox@example.com",
+        gmail_oauth_client_secrets_path=client_secrets,
+        gmail_oauth_token_path=token,
+    )
+
+    with workspace_context(RequestIdentity(user_id=42, workspace_id=42)):
+        delivery = email_delivery_settings(settings=settings, session=db_session)
+        resolved_adapter = SendBatchService(db_session, settings=settings)._adapter()
+
+    assert delivery.gmail_configured is True
+    assert delivery.gmail_connection_source == "local_file"
+    assert resolved_adapter is adapter
+
+
+def test_authenticated_mode_does_not_share_file_gmail_credentials(db_session, tmp_path):
+    client_secrets = tmp_path / "gmail-client.json"
+    token = tmp_path / "gmail-token.json"
+    client_secrets.write_text("{}", encoding="utf-8")
+    token.write_text("{}", encoding="utf-8")
+    settings = Settings(
+        auth_required=True,
+        gmail_oauth_client_secrets_path=client_secrets,
+        gmail_oauth_token_path=token,
+    )
+
+    with workspace_context(RequestIdentity(user_id=42, workspace_id=42)):
+        delivery = email_delivery_settings(settings=settings, session=db_session)
+
+    assert delivery.gmail_configured is False
+    assert delivery.gmail_connection_source is None
 
 
 def test_gmail_sandbox_mode_rewrites_recipient_before_provider_send(db_session, runs_root, monkeypatch):

@@ -33,6 +33,7 @@ from backend.app.email_delivery.adapters import (
     GmailEmailAdapter,
     GmailPreSendError,
     GmailProviderRejectedBeforeAcceptError,
+    local_file_gmail_credentials_available,
 )
 from backend.app.gates.reserve_for_send import ReserveForSendGateService
 
@@ -487,10 +488,11 @@ class SendBatchService:
                     GmailConnection.status == "connected",
                 )
             ).first()
-            if connection is None:
+            if connection is not None:
+                credentials_json = CredentialVault(self.settings).decrypt(connection.encrypted_credentials)
+                return GmailEmailAdapter(self.settings, credentials_json=credentials_json)
+            if not local_file_gmail_credentials_available(self.settings):
                 raise KnownUnsentEmailError("Connect Gmail before enabling campaign delivery.")
-            credentials_json = CredentialVault(self.settings).decrypt(connection.encrypted_credentials)
-            return GmailEmailAdapter(self.settings, credentials_json=credentials_json)
         return GmailEmailAdapter(self.settings)
 
     def _sent_message(

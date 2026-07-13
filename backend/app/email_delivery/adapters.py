@@ -10,6 +10,22 @@ from typing import Any, Protocol
 from backend.app.core.config import Settings
 
 
+def local_file_gmail_credentials_available(settings: Settings) -> bool:
+    """Return whether the legacy machine-local Gmail credentials may be used.
+
+    File credentials are intentionally limited to unauthenticated local-development
+    mode. Authenticated/multi-user deployments must use a per-user GmailConnection.
+    """
+
+    return bool(
+        not settings.auth_required
+        and settings.gmail_oauth_client_secrets_path
+        and settings.gmail_oauth_client_secrets_path.is_file()
+        and settings.gmail_oauth_token_path
+        and settings.gmail_oauth_token_path.is_file()
+    )
+
+
 @dataclass(frozen=True)
 class EmailMessage:
     intent_id: str

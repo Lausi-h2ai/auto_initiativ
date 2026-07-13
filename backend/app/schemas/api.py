@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -401,6 +401,7 @@ class EmailDeliverySettingsResponse(BaseModel):
     sandbox_recipient: str | None = None
     gmail_configured: bool
     gmail_connection_available: bool
+    gmail_connection_source: Literal["database", "local_file"] | None = None
     mode: str
 
 

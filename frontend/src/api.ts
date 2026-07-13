@@ -100,6 +100,7 @@ export type Delivery = {
   allow_real_recipients: boolean;
   gmail_configured: boolean;
   gmail_connection_available: boolean;
+  gmail_connection_source?: "database" | "local_file" | null;
   mode: string;
 };
 

@@ -94,3 +94,33 @@ Useful endpoints:
 - `GET /audit-logs`
 
 Configuration uses environment variables. `DRY_RUN` defaults to `true`; `DATABASE_URL` defaults to a local SQLite database at `backend/dev.db`; `RUNS_ROOT` defaults to `runs/`; and `SCHEMAS_ROOT` defaults to `schemas/`.
+
+## Local Development Accounts
+
+With `AUTH_REQUIRED=false`, `DEV_AUTH_BYPASS_EMAIL` selects the local development account. The app creates a user and an isolated workspace automatically the first time it sees a new email. To test onboarding from an empty workspace, set a new synthetic email and restart the backend:
+
+```text
+AUTH_REQUIRED=false
+DEV_AUTH_BYPASS_EMAIL=fresh-test-01@local.invalid
+```
+
+Changing the email creates or switches to another workspace without deleting the previous one. For a completely blank database and run directory as well, point `DATABASE_URL` and `RUNS_ROOT` at new paths before restarting:
+
+```text
+DATABASE_URL=sqlite:///F:/auto_initiativ/backend/dev-fresh-01.db
+RUNS_ROOT=F:/auto_initiativ/runs-fresh-01
+```
+
+When `AUTH_REQUIRED=true`, accounts remain invite-only. An administrator adds an email under **Administration**, then that user signs in with Google and receives a fresh private workspace.
+
+## Local Gmail Credentials
+
+In local development mode (`AUTH_REQUIRED=false`), the backend reuses the existing machine-local Gmail files when both paths exist:
+
+```text
+GMAIL_OAUTH_CLIENT_SECRETS_PATH=...
+GMAIL_OAUTH_TOKEN_PATH=...
+GMAIL_USER_ID=me
+```
+
+This preserves the original single-machine workflow without requiring the newer Google web-login configuration. Authenticated or multi-user deployments never share these files; they require a per-user Gmail connection. Keep the local server bound to `127.0.0.1` when authentication is disabled.

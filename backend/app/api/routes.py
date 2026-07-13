@@ -64,6 +64,7 @@ from backend.app.db.models import (
     utc_now,
 )
 from backend.app.email_delivery import OutreachResolutionError, OutreachResolutionService, SendBatchService
+from backend.app.email_delivery.adapters import local_file_gmail_credentials_available
 from backend.app.db.session import get_session
 from backend.app.db.normalization import normalize_recipient_email
 from backend.app.gates.evaluate_only import EvaluateOnlyGateService
@@ -2162,18 +2163,24 @@ def email_delivery_settings(
     session: Session = Depends(get_session),
 ) -> EmailDeliverySettingsResponse:
     identity = current_identity()
+    local_file_credentials = local_file_gmail_credentials_available(settings)
+    connection_source: str | None = None
     if identity is not None:
-        gmail_configured = session.exec(
+        database_connection = session.exec(
             select(GmailConnection).where(
                 GmailConnection.user_id == identity.user_id,
                 GmailConnection.status == "connected",
             )
-        ).first() is not None
+        ).first()
+        if database_connection is not None:
+            gmail_configured = True
+            connection_source = "database"
+        else:
+            gmail_configured = local_file_credentials
+            connection_source = "local_file" if local_file_credentials else None
     else:
-        gmail_configured = (
-            settings.gmail_oauth_client_secrets_path is not None
-            and settings.gmail_oauth_token_path is not None
-        )
+        gmail_configured = local_file_credentials
+        connection_source = "local_file" if local_file_credentials else None
     if not settings.email_sending_enabled:
         mode = "disabled"
     elif settings.email_provider == "gmail_sandbox":
@@ -2189,6 +2196,7 @@ def email_delivery_settings(
         sandbox_recipient=settings.gmail_sandbox_recipient,
         gmail_configured=gmail_configured,
         gmail_connection_available=bool(settings.google_oauth_client_id and settings.google_oauth_client_secret),
+        gmail_connection_source=connection_source,
         mode=mode,
     )
 

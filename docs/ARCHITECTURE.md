@@ -132,6 +132,8 @@ GMAIL_OAUTH_TOKEN_PATH=...
 GMAIL_USER_ID=me
 ```
 
+When `AUTH_REQUIRED=false`, these two Gmail OAuth files are treated as the local machine's sender connection even when `DEV_AUTH_BYPASS_EMAIL` supplies a workspace identity. This compatibility path is local-development only. When authentication is enabled, Gmail credentials must be stored per user through `GmailConnection`; the backend must never share the machine-local token across authenticated workspaces.
+
 Real-recipient Gmail delivery is a separate opt-in:
 
 ```text
