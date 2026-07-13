@@ -142,7 +142,7 @@ class OnboardingSession(WorkspaceOwned, table=True):
     session_id: str = Field(index=True)
     run_id: str = Field(index=True)
     status: str = Field(default="not_started", index=True)
-    transport: str = Field(default="tmux", index=True)
+    transport: str = Field(default="pi_rpc", index=True)
     transport_metadata_json: str = Field(default="{}", sa_column=Column(Text))
     transcript_json: str = Field(default="[]", sa_column=Column(Text))
     started_at: Optional[datetime] = None

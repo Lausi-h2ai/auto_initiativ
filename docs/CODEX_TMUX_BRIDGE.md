@@ -1,5 +1,7 @@
 # Codex Tmux Bridge
 
+> Legacy developer diagnostic only. Application-owned onboarding, research, and drafting run through Pi RPC; this bridge is not wired into production workflows.
+
 This project can drive a signed-in Codex CLI session through a WSL tmux pane for local-first agent work.
 
 ## Working Smoke Test

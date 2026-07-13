@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 from backend.app.auth.context import scoped_runs_root
 from backend.app.agents.application_draft import APPLICATION_DRAFT_INSTRUCTIONS
 from backend.app.agents.pi_rpc import ClientFactory, PiRpcClient, PiRpcClientProtocol
+from backend.app.agents.pi_runtime import build_restricted_pi_rpc_command
 from backend.app.core.config import Settings, get_settings
 from backend.app.db import session as db_session_module
 from backend.app.db.models import AuditLog, ImportedFile, Run, ValidationResult, utc_now
@@ -279,35 +280,14 @@ class ApplicationDraftRuntime:
         )
 
     def _command(self, run_id: str) -> list[str]:
-        command = [
-            self.settings.pi_rpc_binary,
-            "--mode",
-            "rpc",
-            "--session-dir",
-            str(self._session_dir(run_id)),
-            "--extension",
-            str(self.settings.pi_rpc_application_draft_extension_path),
-        ]
-        if self.settings.pi_rpc_no_builtin_tools:
-            command.append("--no-builtin-tools")
-        provider = (
-            self.settings.pi_rpc_application_draft_provider
-            or self.settings.pi_rpc_research_provider
-            or self.settings.pi_rpc_provider
+        return build_restricted_pi_rpc_command(
+            binary=self.settings.pi_rpc_binary,
+            session_dir=self._session_dir(run_id),
+            extension_path=self.settings.pi_rpc_application_draft_extension_path,
+            provider=self.settings.pi_rpc_application_draft_provider,
+            model=self.settings.pi_rpc_application_draft_model,
+            thinking=self.settings.pi_rpc_application_draft_thinking,
         )
-        model = self.settings.pi_rpc_application_draft_model or self.settings.pi_rpc_research_model or self.settings.pi_rpc_model
-        thinking = (
-            self.settings.pi_rpc_application_draft_thinking
-            or self.settings.pi_rpc_research_thinking
-            or self.settings.pi_rpc_thinking
-        )
-        if provider:
-            command.extend(["--provider", provider])
-        if model:
-            command.extend(["--model", model])
-        if thinking:
-            command.extend(["--thinking", thinking])
-        return command
 
     def _mark_run(
         self,

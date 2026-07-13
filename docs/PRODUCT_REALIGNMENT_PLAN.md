@@ -7,11 +7,11 @@ The app is a local personal AI recruiter, not primarily an internal operations d
 The main user workflow should be:
 
 1. Create or select a user profile.
-2. Complete an onboarding chat with a Codex recruiter running in tmux.
+2. Complete an onboarding chat with a recruiter running through Pi RPC.
 3. Validate/import candidate `user_profile.json`, `master_cv_profile.json`, `policy.json`, and `onboarding_review.json` artifacts.
 4. Review and approve profile, master CV, and policy snapshots.
 5. Create a regional job-search campaign.
-6. Launch long-running Codex research in a tmux session/window.
+6. Launch long-running company research through Pi RPC.
 7. Import found companies into the backend.
 8. Review company details, fit, risks, sources, and policy conflicts.
 9. Later, generate drafts and gated outreach intents.
@@ -60,13 +60,13 @@ The backend must own:
 
 Codex owns only draft work products and structured output files. It does not own state transitions.
 
-## Tmux Runtime Alignment
+## Pi Runtime Alignment
 
-The tmux bridge is the right runtime for live onboarding and long-running local research because it keeps the user-facing Codex session visible, interruptible, and inspectable.
+Pi RPC is the single application agent runtime for onboarding, company research, application drafting, and future workloads. It returns structured events and assistant text directly, supports abort and resumable session files, and allows each workload to expose only its dedicated extension.
 
-Do not replace it with a generic `codex exec` batch architecture for chat or campaign research.
+Do not add a parallel tmux or `codex exec` production path. The legacy adapters are developer diagnostics only and must remain unwired from application workflows.
 
-Use `codex exec` only where it is a natural fit for a bounded non-interactive file-output task. Even then, stdout/stderr are logs, and backend import remains the authority.
+Pi output and events are logs and draft work products; backend validation and import remain the authority.
 
 ## Safety Constraints
 
@@ -89,7 +89,7 @@ Recommended sequence:
 1. Profile shell and active profile selection.
 2. Onboarding chat UI refinement backed by first-class onboarding session records.
 3. Campaign creation with region, role, and search constraints.
-4. Campaign research tmux run launch and transport log view.
+4. Campaign research Pi run launch and structured event log view.
 5. Company import, review list, and company detail page.
 6. Company accept/reject/needs-review workflow.
 7. Contact and fit review views.

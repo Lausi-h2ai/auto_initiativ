@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.app.core.agent_models import agent_model_for
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -29,30 +31,28 @@ class Settings(BaseSettings):
     workflow_worker_enabled: bool = Field(default=True, validation_alias="WORKFLOW_WORKER_ENABLED")
     dev_auth_bypass_email: str | None = Field(default=None, validation_alias="DEV_AUTH_BYPASS_EMAIL")
     issue_log_path: Path = Field(default=REPO_ROOT / "logs" / "issues.ndjson", validation_alias="ISSUE_LOG_PATH")
-    codex_wsl_distro: str = Field(default="Ubuntu-24.04-bonsai-vllm", validation_alias="CODEX_WSL_DISTRO")
-    codex_tmux_session: str = Field(default="codex", validation_alias="CODEX_TMUX_SESSION")
-    codex_tmux_window: int = Field(default=0, validation_alias="CODEX_TMUX_WINDOW")
-    codex_tmux_pane: int = Field(default=0, validation_alias="CODEX_TMUX_PANE")
-    codex_workdir: str = Field(default="/mnt/f/auto_initiativ", validation_alias="CODEX_WORKDIR")
-    codex_chat_reply_wait_seconds: float = Field(default=2, validation_alias="CODEX_CHAT_REPLY_WAIT_SECONDS")
-    codex_chat_model: str | None = Field(default="gpt-5.4", validation_alias="CODEX_CHAT_MODEL")
-    codex_chat_sandbox: str | None = Field(default="workspace-write", validation_alias="CODEX_CHAT_SANDBOX")
-    codex_chat_approval_policy: str | None = Field(default="never", validation_alias="CODEX_CHAT_APPROVAL_POLICY")
     codex_exec_binary: str = Field(default="codex", validation_alias="CODEX_EXEC_BINARY")
     codex_exec_timeout_seconds: float = Field(default=900, validation_alias="CODEX_EXEC_TIMEOUT_SECONDS")
     codex_exec_sandbox: str = Field(default="read-only", validation_alias="CODEX_EXEC_SANDBOX")
     codex_exec_json_events: bool = Field(default=True, validation_alias="CODEX_EXEC_JSON_EVENTS")
-    onboarding_chat_runtime: str = Field(default="tmux", validation_alias="ONBOARDING_CHAT_RUNTIME")
     pi_rpc_binary: str = Field(default="pi", validation_alias="PI_RPC_BINARY")
-    pi_rpc_provider: str | None = Field(default=None, validation_alias="PI_RPC_PROVIDER")
-    pi_rpc_model: str | None = Field(default=None, validation_alias="PI_RPC_MODEL")
-    pi_rpc_thinking: str | None = Field(default=None, validation_alias="PI_RPC_THINKING")
-    pi_rpc_research_provider: str | None = Field(default="openai-codex", validation_alias="PI_RPC_RESEARCH_PROVIDER")
-    pi_rpc_research_model: str | None = Field(default="gpt-5.6-terra", validation_alias="PI_RPC_RESEARCH_MODEL")
-    pi_rpc_research_thinking: str | None = Field(default="medium", validation_alias="PI_RPC_RESEARCH_THINKING")
-    pi_rpc_timeout_seconds: float = Field(default=180, validation_alias="PI_RPC_TIMEOUT_SECONDS")
+    pi_rpc_onboarding_provider: str = Field(default="openai-codex", validation_alias="PI_RPC_ONBOARDING_PROVIDER")
+    pi_rpc_onboarding_model: str = Field(
+        default=agent_model_for("onboarding"),
+        validation_alias="PI_RPC_ONBOARDING_MODEL",
+    )
+    pi_rpc_onboarding_thinking: str = Field(default="medium", validation_alias="PI_RPC_ONBOARDING_THINKING")
+    pi_rpc_onboarding_timeout_seconds: float = Field(
+        default=180,
+        validation_alias="PI_RPC_ONBOARDING_TIMEOUT_SECONDS",
+    )
+    pi_rpc_research_provider: str = Field(default="openai-codex", validation_alias="PI_RPC_RESEARCH_PROVIDER")
+    pi_rpc_research_model: str = Field(
+        default=agent_model_for("company_research"),
+        validation_alias="PI_RPC_RESEARCH_MODEL",
+    )
+    pi_rpc_research_thinking: str = Field(default="medium", validation_alias="PI_RPC_RESEARCH_THINKING")
     pi_rpc_research_timeout_seconds: float = Field(default=3600, validation_alias="PI_RPC_RESEARCH_TIMEOUT_SECONDS")
-    pi_rpc_no_builtin_tools: bool = Field(default=True, validation_alias="PI_RPC_NO_BUILTIN_TOOLS")
     onboarding_artifact_repair_attempts: int = Field(default=2, validation_alias="ONBOARDING_ARTIFACT_REPAIR_ATTEMPTS")
     pi_rpc_extension_path: Path = Field(
         default=REPO_ROOT / "backend" / "pi_extensions" / "onboarding_artifacts.ts",
@@ -66,15 +66,15 @@ class Settings(BaseSettings):
         default=REPO_ROOT / "backend" / "pi_extensions" / "application_draft.ts",
         validation_alias="PI_RPC_APPLICATION_DRAFT_EXTENSION_PATH",
     )
-    pi_rpc_application_draft_provider: str | None = Field(
+    pi_rpc_application_draft_provider: str = Field(
         default="openai-codex",
         validation_alias="PI_RPC_APPLICATION_DRAFT_PROVIDER",
     )
-    pi_rpc_application_draft_model: str | None = Field(
-        default="gpt-5.6-luna",
+    pi_rpc_application_draft_model: str = Field(
+        default=agent_model_for("application_draft"),
         validation_alias="PI_RPC_APPLICATION_DRAFT_MODEL",
     )
-    pi_rpc_application_draft_thinking: str | None = Field(
+    pi_rpc_application_draft_thinking: str = Field(
         default="low",
         validation_alias="PI_RPC_APPLICATION_DRAFT_THINKING",
     )

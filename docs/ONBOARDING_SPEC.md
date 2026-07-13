@@ -33,15 +33,15 @@ It may ask the user to provide old CVs, cover letters, LinkedIn text, portfolios
 
 ## Dashboard Chat Flow
 
-The onboarding dashboard should present a chat window backed by a long-running interactive Codex session in a local tmux pane.
+The onboarding dashboard presents a chat window backed by a resumable Pi RPC session in a run-specific workspace.
 
 The backend should:
 
-- Start or attach to the configured tmux Codex session for the onboarding run.
-- Send user messages into the Codex session with `tmux set-buffer`, `tmux paste-buffer`, and Enter.
-- Capture Codex replies from the pane and append them to the onboarding transcript.
+- Start or resume the run-specific Pi RPC session using the onboarding workload policy.
+- Send user messages as Pi RPC prompts and consume structured response events.
+- Require a non-empty recruiter greeting before startup succeeds, and append clean assistant replies to the onboarding transcript.
 - Persist the transcript as audit/review context, not as validated profile state.
-- Keep uploaded documents and transcript references in the run `input/` folder where practical.
+- Keep uploaded documents under the run `input/` folder and expose them only through the restricted onboarding extension.
 
 At the end of the chat, the backend should send a finalization instruction asking Codex to write:
 

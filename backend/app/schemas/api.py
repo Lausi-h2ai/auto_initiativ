@@ -86,7 +86,7 @@ class OnboardingSessionStateResponse(BaseModel):
     run_id: str
     status: str
     updated_at: str
-    tmux: dict[str, Any] | None = None
+    runtime: dict[str, Any] | None = None
     last_error: str | None = None
     entries: list[OnboardingChatEntryResponse] = Field(default_factory=list)
 

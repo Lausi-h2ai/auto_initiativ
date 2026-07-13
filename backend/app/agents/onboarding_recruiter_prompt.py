@@ -14,23 +14,29 @@ ONBOARDING_ARTIFACT_FILENAMES = (
 def build_onboarding_agent_instructions(
     *,
     run_id: str,
-    workdir: str,
+    workdir: str | None = None,
     runs_root: Path,
     schemas_root: Path,
     runs_workdir: str | None = None,
     schemas_workdir: str | None = None,
 ) -> str:
-    runtime_runs_root = (runs_workdir or f"{workdir.rstrip('/')}/runs").rstrip("/")
-    runtime_schemas_root = (schemas_workdir or f"{workdir.rstrip('/')}/schemas").rstrip("/")
-    agent_workspace = f"{runtime_runs_root}/{run_id}"
-    output_dir = "output"
-    input_dir = "input"
-    logs_dir = "logs"
+    if runs_workdir is not None:
+        agent_workspace = f"{runs_workdir.rstrip('/')}/{run_id}"
+        output_dir = "output"
+        input_dir = "input"
+        logs_dir = "logs"
+        schema_root = schemas_workdir.rstrip("/") if schemas_workdir else str(schemas_root)
+    else:
+        agent_workspace = "."
+        output_dir = "../output"
+        input_dir = "../input"
+        logs_dir = "../logs"
+        schema_root = str(schemas_root)
     plain_reply_path = f"{logs_dir}/latest_assistant_message.txt"
     transcript_path = f"{logs_dir}/onboarding_chat.jsonl"
     artifact_list = "\n".join(f"- `{output_dir}/{filename}`" for filename in ONBOARDING_ARTIFACT_FILENAMES)
     schema_list = "\n".join(
-        f"- `{output_dir}/{filename}` must validate against `{runtime_schemas_root}/{filename.replace('.json', '.schema.json')}`"
+        f"- `{output_dir}/{filename}` must validate against `{schema_root}/{filename.replace('.json', '.schema.json')}`"
         for filename in ONBOARDING_ARTIFACT_FILENAMES
     )
     return f"""# Onboarding Recruiting Agent
@@ -100,7 +106,7 @@ Artifact guidance:
 def build_onboarding_start_message(run_id: str) -> str:
     return f"""Read the AGENTS.md file in this workspace and begin onboarding run `{run_id}`.
 
-Start by checking input for uploaded career documents. In Pi RPC mode, use onboarding_extract_input_text to read PDFs or DOCX files before asking the first question. Then greet the user briefly as their recruiter and ask the highest-value first question. After your reply, write the same clean reply text to logs/latest_assistant_message.txt."""
+Start by checking `../input` for uploaded career documents. Use onboarding_extract_input_text to read PDFs or DOCX files before asking the first question. Then greet the user briefly as their recruiter and ask the highest-value first question. After your reply, write the same clean reply text to `../logs/latest_assistant_message.txt`."""
 
 
 def build_onboarding_recruiter_prompt(

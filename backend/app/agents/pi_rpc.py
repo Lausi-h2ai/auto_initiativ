@@ -24,6 +24,7 @@ from backend.app.agents.onboarding_chat import (
     OnboardingSessionState,
 )
 from backend.app.core.config import Settings, get_settings
+from backend.app.agents.pi_runtime import build_restricted_pi_rpc_command
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -42,6 +43,8 @@ class PiRpcClientProtocol(Protocol):
     def prompt(self, message: str, *, timeout_seconds: float) -> PiRpcPromptResult: ...
 
     def command(self, payload: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]: ...
+
+    def abort(self) -> None: ...
 
     def close(self) -> None: ...
 
@@ -151,6 +154,11 @@ class PiRpcClient:
                     raise PiRpcError(str(event.get("error") or "Pi command failed"))
                 return event
         raise PiRpcError(f"Timed out waiting for Pi command response. stderr: {self._stderr_tail()}")
+
+    def abort(self) -> None:
+        # Do not consume the shared event queue here. The active prompt loop
+        # receives both the acknowledgement and the resulting agent_end event.
+        self._send({"id": f"abort-{uuid.uuid4()}", "type": "abort"})
 
     def close(self) -> None:
         if self.process.poll() is not None:
@@ -293,7 +301,7 @@ class PiRpcOnboardingChatAdapter:
                 event="pi_rpc_attached",
             )
         )
-        self._state_store(run_id).write("running", tmux=payload)
+        self._state_store(run_id).write("running", runtime=payload)
         return payload
 
     def start_or_attach(self, run_id: str | None = None, timeout: float | None = 10) -> str:
@@ -329,7 +337,7 @@ class PiRpcOnboardingChatAdapter:
             )
         )
         self._state_store(run_id).write("waiting")
-        result = self._client(run_id).prompt(prompt, timeout_seconds=self.settings.pi_rpc_timeout_seconds)
+        result = self._client(run_id).prompt(prompt, timeout_seconds=self.settings.pi_rpc_onboarding_timeout_seconds)
         self._append_events(run_id, result.events)
         if result.text:
             transcript.append(
@@ -342,6 +350,9 @@ class PiRpcOnboardingChatAdapter:
                     event="recruiter_prompt_reply",
                 )
             )
+        if require_plain_reply and not result.text.strip():
+            self._state_store(run_id).write("failed", last_error="Pi returned no recruiter greeting.")
+            raise PiRpcError("Pi returned no recruiter greeting.")
         self._state_store(run_id).write("running")
         return True
 
@@ -349,7 +360,7 @@ class PiRpcOnboardingChatAdapter:
         transcript = self._transcript_store(run_id)
         transcript.append(ChatTranscriptEntry(run_id=run_id, role="user", content=message, created_at=_utc_now()))
         self._state_store(run_id).write("waiting")
-        result = self._client(run_id).prompt(message, timeout_seconds=self.settings.pi_rpc_timeout_seconds)
+        result = self._client(run_id).prompt(message, timeout_seconds=self.settings.pi_rpc_onboarding_timeout_seconds)
         self._append_events(run_id, result.events)
         transcript.append(
             ChatTranscriptEntry(
@@ -370,6 +381,22 @@ class PiRpcOnboardingChatAdapter:
     def open_terminal(self, run_id: str) -> str:
         return " ".join(self._logged_command(run_id))
 
+    def cancel_current_turn(self, run_id: str) -> None:
+        client = self.clients.get(run_id)
+        if client is None:
+            return
+        client.abort()
+        self._state_store(run_id).write("running")
+        self._transcript_store(run_id).append(
+            ChatTranscriptEntry(
+                run_id=run_id,
+                role="system",
+                content="Pi RPC onboarding turn cancelled.",
+                created_at=_utc_now(),
+                event="cancelled",
+            )
+        )
+
     def close_session(self, run_id: str, *, force: bool = False, timeout: float | None = 10) -> None:
         self._close_client(run_id)
         self._state_store(run_id).write("closed")
@@ -387,7 +414,7 @@ class PiRpcOnboardingChatAdapter:
         self._close_client(run_id)
         self._transcript_store(run_id).clear()
         self._clear_session_dir(run_id)
-        self._state_store(run_id).write("not_started", tmux=None)
+        self._state_store(run_id).write("not_started", clear_runtime=True)
         self._transcript_store(run_id).append(
             ChatTranscriptEntry(
                 run_id=run_id,
@@ -438,23 +465,16 @@ class PiRpcOnboardingChatAdapter:
             client.close()
 
     def _command(self, run_id: str) -> list[str]:
-        command = [
-            self.settings.pi_rpc_binary,
-            "--mode",
-            "rpc",
-            "--session-dir",
-            str(self._session_dir(run_id)),
-        ]
-        if self._has_saved_pi_session(run_id):
-            command.append("--continue")
-        command.extend(["--extension", str(self.settings.pi_rpc_extension_path)])
-        if self.settings.pi_rpc_no_builtin_tools:
-            command.append("--no-builtin-tools")
-        if self.settings.pi_rpc_provider:
-            command.extend(["--provider", self.settings.pi_rpc_provider])
-        if self.settings.pi_rpc_model:
-            command.extend(["--model", self.settings.pi_rpc_model])
-        return command
+        return build_restricted_pi_rpc_command(
+            binary=self.settings.pi_rpc_binary,
+            session_dir=self._session_dir(run_id),
+            extension_path=self.settings.pi_rpc_extension_path,
+            provider=self.settings.pi_rpc_onboarding_provider,
+            model=self.settings.pi_rpc_onboarding_model,
+            thinking=self.settings.pi_rpc_onboarding_thinking,
+            continue_session=self._has_saved_pi_session(run_id),
+            trust_generated_context=True,
+        )
 
     def _logged_command(self, run_id: str) -> list[str]:
         return list(self._command(run_id))

@@ -15,7 +15,6 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from backend.app.auth.context import current_identity, scoped_runs_root
-from backend.app.agents.codex_tmux import TmuxCodexBridge, TmuxCodexError, TmuxTarget
 from backend.app.agents.company_research import (
     COMPANY_RESEARCH_INSTRUCTIONS,
     CompanyResearchCampaign,
@@ -146,7 +145,7 @@ from backend.app.schemas.api import (
 from backend.app.send_intents import DraftQueueError, DraftSendIntentQueueService
 
 router = APIRouter()
-ONBOARDING_RUNTIME_ERRORS = (TmuxCodexError, PiRpcError)
+ONBOARDING_RUNTIME_ERRORS = (PiRpcError,)
 APPLICATION_DRAFT_BATCH_TERMINAL_STATUSES = {"imported", "imported_with_errors", "import_failed", "application_draft_failed", "failed"}
 _APPLICATION_DRAFT_BATCHES: dict[str, dict[str, Any]] = {}
 _APPLICATION_DRAFT_BATCH_LOCK = threading.Lock()
@@ -283,7 +282,7 @@ def _session_state_response(
             run_id=state.run_id,
             status=state.status,
             updated_at=state.updated_at,
-            tmux=state.tmux,
+            runtime=state.runtime,
             last_error=state.last_error,
             entries=_chat_entries_response(raw_entries),
         )
@@ -305,7 +304,8 @@ def _persist_onboarding_session(
     if record is None:
         record = OnboardingSession(session_id=run_id, run_id=run_id)
     record.status = state.status
-    record.transport = "tmux" if state.tmux else "pi_rpc"
+    runtime_name = state.runtime.get("runtime") if state.runtime else None
+    record.transport = runtime_name if isinstance(runtime_name, str) else "pi_rpc"
     record.transport_metadata_json = json.dumps(state.model_dump(mode="json"), sort_keys=True)
     record.transcript_json = json.dumps([entry.model_dump(mode="json") for entry in entries], sort_keys=True)
     record.started_at = record.started_at or (utc_now() if state.status not in {"not_started", "failed"} else None)
@@ -316,35 +316,8 @@ def _persist_onboarding_session(
     session.commit()
 
 
-def _scoped_codex_runs_workdir(settings: Settings) -> str:
-    scoped_root = scoped_runs_root(settings.runs_root).resolve()
-    base_root = settings.runs_root.resolve()
-    relative_scope = scoped_root.relative_to(base_root).as_posix()
-    runtime_root = f"{settings.codex_workdir.rstrip('/')}/runs"
-    return runtime_root if relative_scope == "." else f"{runtime_root}/{relative_scope}"
-
-
 def get_onboarding_chat_adapter(settings: Settings = Depends(get_settings)) -> OnboardingCodexChatAdapter:
-    if settings.onboarding_chat_runtime == "pi_rpc":
-        return PiRpcOnboardingChatAdapter(settings=settings)
-    if settings.onboarding_chat_runtime != "tmux":
-        raise HTTPException(status_code=500, detail=f"Unsupported onboarding chat runtime: {settings.onboarding_chat_runtime}")
-    target = TmuxTarget(
-        distro=settings.codex_wsl_distro,
-        session=settings.codex_tmux_session,
-        window=settings.codex_tmux_window,
-        pane=settings.codex_tmux_pane,
-    )
-    return OnboardingCodexChatAdapter(
-        TmuxCodexBridge(target),
-        workdir=settings.codex_workdir,
-        runs_root=scoped_runs_root(settings.runs_root),
-        runs_workdir=_scoped_codex_runs_workdir(settings),
-        model=settings.codex_chat_model,
-        sandbox=settings.codex_chat_sandbox,
-        approval_policy=settings.codex_chat_approval_policy,
-        reply_wait_seconds=settings.codex_chat_reply_wait_seconds,
-    )
+    return PiRpcOnboardingChatAdapter(settings=settings)
 
 
 def get_company_research_runtime(settings: Settings = Depends(get_settings)) -> CompanyResearchRuntime:
@@ -356,11 +329,11 @@ def get_application_draft_runtime(settings: Settings = Depends(get_settings)) ->
 
 
 def _onboarding_finalization_prompt(run_id: str) -> str:
-    artifact_list = ", ".join(f"`output/{filename}`" for filename in ONBOARDING_ARTIFACT_FILENAMES)
+    artifact_list = ", ".join(f"`../output/{filename}`" for filename in ONBOARDING_ARTIFACT_FILENAMES)
     schema_bundle = _onboarding_schema_bundle()
     return (
         "Finalize this onboarding interview. Create the directory "
-        f"`output` if needed and write candidate artifacts for onboarding run `{run_id}`: {artifact_list}. "
+        f"`../output` if needed and write candidate artifacts for onboarding run `{run_id}`: {artifact_list}. "
         "Each JSON file must conform exactly to its matching JSON Schema. The complete schemas are included below; "
         "do not guess alternate field names. "
         "Use only facts stated by the user in this chat or backed by local input files; clearly mark "
@@ -406,7 +379,7 @@ def _onboarding_artifact_repair_prompt(run_id: str, failures: list[dict[str, Any
         f"Attempt {attempt}/{max_attempts}: backend schema validation failed for onboarding run `{run_id}`.\n\n"
         "Repair the candidate artifact files using only the allowed onboarding artifact write tool. "
         "Rewrite complete JSON documents, not patches. Do not create any files except "
-        "`user_profile.json`, `master_cv_profile.json`, `policy.json`, and `onboarding_review.json` under `output`. "
+        "`user_profile.json`, `master_cv_profile.json`, `policy.json`, and `onboarding_review.json` under `../output`. "
         "The complete JSON Schemas are included below; conform to them exactly and do not guess alternate field names. "
         "Do not invent facts to satisfy required fields; use `needs_review` provenance or review items where evidence is missing. "
         "After rewriting, reply briefly with what you changed.\n\n"
@@ -1804,25 +1777,18 @@ def start_onboarding_chat(
 ) -> OnboardingChatStartResponse:
     try:
         if hasattr(adapter, "prepare_agent_workspace"):
-            runs_workdir = _scoped_codex_runs_workdir(settings)
             adapter.prepare_agent_workspace(
                 run_id,
                 build_onboarding_agent_instructions(
                     run_id=run_id,
-                    workdir=settings.codex_workdir,
                     runs_root=scoped_runs_root(settings.runs_root),
                     schemas_root=settings.schemas_root,
-                    runs_workdir=runs_workdir,
-                    schemas_workdir=f"{settings.codex_workdir.rstrip('/')}/schemas",
                 ),
             )
         attachment = None
         if hasattr(adapter, "attach_session"):
             existing_state = adapter.session_state(run_id) if hasattr(adapter, "session_state") else None
-            expected_workdir = getattr(adapter, "workdir", None)
-            attached_workdir = existing_state.tmux.get("workdir") if existing_state and existing_state.tmux else None
-            workspace_changed = bool(expected_workdir and attached_workdir and expected_workdir != attached_workdir)
-            should_start_fresh = not bool(existing_state and existing_state.tmux) or workspace_changed
+            should_start_fresh = not bool(existing_state and existing_state.runtime)
             attachment = adapter.attach_session(run_id, fresh=should_start_fresh)
         status = adapter.start_or_attach(run_id)
         if hasattr(adapter, "wait_until_codex_ready"):
@@ -1839,6 +1805,9 @@ def start_onboarding_chat(
                 force=bool(attachment and attachment.get("status") == "started") or not has_visible_entries,
                 require_plain_reply=True,
             )
+        greeting_entries = _chat_entries_response(adapter.transcript_entries(run_id))
+        if not any(entry.role == "assistant" and entry.content.strip() for entry in greeting_entries):
+            raise PiRpcError("Onboarding recruiter startup completed without a user-visible greeting.")
     except ONBOARDING_RUNTIME_ERRORS as exc:
         if hasattr(adapter, "record_failure"):
             adapter.record_failure(run_id, str(exc))
@@ -1958,7 +1927,7 @@ def reset_onboarding_chat(
 
 
 @router.post("/onboarding/chat/{run_id}/open-terminal", response_model=OnboardingTerminalLaunchResponse)
-def open_onboarding_tmux_terminal(
+def get_onboarding_runtime_command(
     run_id: str,
     adapter: OnboardingCodexChatAdapter = Depends(get_onboarding_chat_adapter),
 ) -> OnboardingTerminalLaunchResponse:
@@ -1970,7 +1939,7 @@ def open_onboarding_tmux_terminal(
         raise HTTPException(status_code=502, detail=f"Onboarding agent terminal unavailable: {exc}") from exc
     return OnboardingTerminalLaunchResponse(
         run_id=run_id,
-        status="opened",
+        status="available",
         command=command,
         session_state=_session_state_response(run_id, adapter),
     )

@@ -218,7 +218,7 @@ class FakeOnboardingAdapter:
             run_id=run_id,
             status=status or current.status,
             updated_at="2026-05-15T00:00:02+00:00",
-            tmux=current.tmux,
+            runtime=current.runtime,
             last_error=last_error,
         )
         self.states[run_id] = updated
@@ -237,12 +237,18 @@ class FakeOnboardingAdapter:
 
     def attach_session(self, run_id: str, fresh: bool = False, timeout: float | None = 10) -> dict[str, object]:
         self.attach_fresh_values.append(fresh)
-        payload = {"app_session_id": run_id, "pane_ref": "codex:0.0", "status": "attached"}
+        payload = {
+            "runtime": "pi_rpc",
+            "command": ["pi", "--mode", "rpc", "--model", "gpt-5.6-sol"],
+            "session_dir": str(self.runs_root / run_id / "logs" / "pi-session"),
+            "workdir": str(self.runs_root / run_id / "workspace"),
+            "status": "attached",
+        }
         self.states[run_id] = OnboardingSessionState(
             run_id=run_id,
             status="running",
             updated_at="2026-05-15T00:00:00+00:00",
-            tmux=payload,
+            runtime=payload,
         )
         return payload
 
@@ -253,6 +259,38 @@ class FakeOnboardingAdapter:
 
     def accept_trust_prompt_if_present(self, timeout: float | None = 10) -> bool:
         return False
+
+    def ensure_recruiter_prompt(
+        self,
+        run_id: str,
+        prompt: str,
+        timeout: float | None = 10,
+        *,
+        force: bool = False,
+        require_plain_reply: bool = False,
+    ) -> bool:
+        transcript = JsonlTranscriptStore(self.runs_root / run_id / "logs" / "onboarding_chat.jsonl")
+        if not force and any(entry.get("event") == "recruiter_prompt_sent" for entry in transcript.read_entries()):
+            return False
+        transcript.append(
+            ChatTranscriptEntry(
+                run_id=run_id,
+                role="system",
+                content="Onboarding recruiter prompt sent.",
+                created_at="2026-05-15T00:00:00+00:00",
+                event="recruiter_prompt_sent",
+            )
+        )
+        transcript.append(
+            ChatTranscriptEntry(
+                run_id=run_id,
+                role="assistant",
+                content="Welcome. What kind of role would feel like a meaningful next step?",
+                created_at="2026-05-15T00:00:01+00:00",
+                event="recruiter_prompt_reply",
+            )
+        )
+        return True
 
     def send_message(self, run_id: str, message: str, timeout: float | None = 10) -> ChatReply:
         self.sent_messages.append(message)
@@ -306,7 +344,7 @@ class FakeOnboardingAdapter:
         )
 
     def open_terminal(self, run_id: str) -> str:
-        return "wsl -d Ubuntu-24.04-bonsai-vllm -- tmux new -A -s codex"
+        return "pi --mode rpc --provider openai-codex --model gpt-5.6-sol"
 
     def close_session(self, run_id: str, force: bool = False, timeout: float | None = 10) -> None:
         self._state(run_id, "closed")
@@ -348,6 +386,19 @@ class RepairingOnboardingAdapter(FakeOnboardingAdapter):
         return ChatReply(message=reply_text, raw_capture=reply_text, transcript_path=transcript.path)
 
 
+class SilentOnboardingAdapter(FakeOnboardingAdapter):
+    def ensure_recruiter_prompt(
+        self,
+        run_id: str,
+        prompt: str,
+        timeout: float | None = 10,
+        *,
+        force: bool = False,
+        require_plain_reply: bool = False,
+    ) -> bool:
+        return True
+
+
 def test_profile_summary_shows_no_approved_profile_before_onboarding(client):
     response = client.get("/profile/summary")
 
@@ -369,7 +420,9 @@ def test_onboarding_chat_api_persists_transcript_state_and_imports_candidate_pro
         assert start.status_code == 200
         assert start.json()["status"] == "attached"
         assert start.json()["session_state"]["status"] == "running"
-        assert start.json()["session_state"]["tmux"]["pane_ref"] == "codex:0.0"
+        assert start.json()["session_state"]["runtime"]["runtime"] == "pi_rpc"
+        assert start.json()["entries"][0]["role"] == "assistant"
+        assert "meaningful next step" in start.json()["entries"][0]["content"]
         assert "Onboarding Recruiting Agent" in fake_adapter.prepared_workspaces["onboarding-api"]
         assert (runs_root / "onboarding-api" / "workspace" / "AGENTS.md").exists()
         assert fake_adapter.attach_fresh_values == [True]
@@ -380,8 +433,8 @@ def test_onboarding_chat_api_persists_transcript_state_and_imports_candidate_pro
 
         terminal = client.post("/onboarding/chat/onboarding-api/open-terminal")
         assert terminal.status_code == 200
-        assert terminal.json()["status"] == "opened"
-        assert terminal.json()["command"] == "wsl -d Ubuntu-24.04-bonsai-vllm -- tmux new -A -s codex"
+        assert terminal.json()["status"] == "available"
+        assert terminal.json()["command"] == "pi --mode rpc --provider openai-codex --model gpt-5.6-sol"
 
         message = client.post(
             "/onboarding/chat/onboarding-api/messages",
@@ -393,7 +446,7 @@ def test_onboarding_chat_api_persists_transcript_state_and_imports_candidate_pro
 
         transcript = client.get("/onboarding/chat/onboarding-api/transcript")
         assert transcript.status_code == 200
-        assert [entry["role"] for entry in transcript.json()] == ["user", "assistant"]
+        assert [entry["role"] for entry in transcript.json()] == ["assistant", "user", "assistant"]
 
         refresh = client.post("/onboarding/chat/onboarding-api/refresh")
         assert refresh.status_code == 200
@@ -475,6 +528,20 @@ def test_onboarding_chat_api_persists_transcript_state_and_imports_candidate_pro
         assert summary.status_code == 200
         assert summary.json()["has_approved_profile"] is False
         assert summary.json()["candidate_user_profiles"][0]["external_id"] == "profile-onboarding-api"
+    finally:
+        client.app.dependency_overrides.pop(get_onboarding_chat_adapter, None)
+
+
+def test_onboarding_start_fails_when_runtime_produces_no_recruiter_greeting(client, runs_root):
+    silent_adapter = SilentOnboardingAdapter(runs_root)
+    client.app.dependency_overrides[get_onboarding_chat_adapter] = lambda: silent_adapter
+
+    try:
+        response = client.post("/onboarding/chat/onboarding-silent/start")
+
+        assert response.status_code == 502
+        assert "without a user-visible greeting" in response.json()["detail"]
+        assert silent_adapter.session_state("onboarding-silent").status == "failed"
     finally:
         client.app.dependency_overrides.pop(get_onboarding_chat_adapter, None)
 

@@ -104,3 +104,13 @@ Email sending must remain impossible unless the backend gate checks at least:
 Prefer clear docs, schemas, tests, and deterministic code over premature automation.
 
 The first implementation should be dry-run safe. Build observability and audit logging from the beginning.
+
+## Windows Test Runtime
+
+The default per-user Windows pytest temp directory may be inaccessible in this environment. Always give pytest a workspace-local temp root, for example:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest --basetemp artifacts\pytest-temp
+```
+
+Use a distinct workspace-local `--basetemp` path when concurrent test processes are running. Do not retry against the default `%TEMP%\pytest-of-*` location after a permission error.

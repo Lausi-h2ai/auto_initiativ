@@ -11,6 +11,7 @@ class FakePiRpcClient:
     def __init__(self, replies: list[str] | None = None) -> None:
         self.replies = list(replies or ["First onboarding question?"])
         self.prompts: list[str] = []
+        self.abort_count = 0
         self.closed = False
 
     def prompt(self, message: str, *, timeout_seconds: float) -> PiRpcPromptResult:
@@ -26,6 +27,9 @@ class FakePiRpcClient:
     def command(self, payload, *, timeout_seconds: float):
         return {"type": "response", "success": True, "data": {}}
 
+    def abort(self) -> None:
+        self.abort_count += 1
+
     def close(self) -> None:
         self.closed = True
 
@@ -36,8 +40,7 @@ def _settings(tmp_path: Path) -> Settings:
         SCHEMAS_ROOT=tmp_path / "schemas",
         PI_RPC_BINARY="pi",
         PI_RPC_EXTENSION_PATH=Path("backend/pi_extensions/onboarding_artifacts.ts"),
-        PI_RPC_NO_BUILTIN_TOOLS=True,
-        PI_RPC_TIMEOUT_SECONDS=12,
+        PI_RPC_ONBOARDING_TIMEOUT_SECONDS=12,
     )
 
 
@@ -69,6 +72,11 @@ def test_pi_rpc_adapter_prepares_workspace_and_builds_restricted_command(tmp_pat
     assert "ONBOARDING_REPO_ROOT" in captured["env"]
     assert "--continue" not in captured["command"]
     assert "--no-builtin-tools" in captured["command"]
+    assert "--no-extensions" in captured["command"]
+    assert "--approve" in captured["command"]
+    assert captured["command"][captured["command"].index("--provider") + 1] == "openai-codex"
+    assert captured["command"][captured["command"].index("--model") + 1] == "gpt-5.6-sol"
+    assert captured["command"][captured["command"].index("--thinking") + 1] == "medium"
     assert "--extension" in captured["command"]
     assert "--session-dir" in captured["command"]
 
@@ -134,3 +142,29 @@ def test_pi_rpc_adapter_reset_closes_process_and_clears_transcript(tmp_path: Pat
     assert adapter.session_state("run-1").status == "not_started"
     assert [entry["event"] for entry in adapter.transcript_entries("run-1")] == ["reset"]
     assert not session_dir.exists()
+    assert adapter.session_state("run-1").runtime is None
+
+
+def test_pi_rpc_adapter_requires_a_recruiter_greeting(tmp_path: Path):
+    fake_client = FakePiRpcClient([""])
+    adapter = PiRpcOnboardingChatAdapter(
+        settings=_settings(tmp_path),
+        clients={},
+        client_factory=lambda command, cwd, env: fake_client,
+    )
+    adapter.prepare_agent_workspace("run-1", "# Instructions")
+
+    import pytest
+
+    with pytest.raises(Exception, match="no recruiter greeting"):
+        adapter.ensure_recruiter_prompt("run-1", "Begin", require_plain_reply=True)
+
+
+def test_pi_rpc_adapter_cancels_active_turn_with_abort(tmp_path: Path):
+    fake_client = FakePiRpcClient()
+    adapter = PiRpcOnboardingChatAdapter(settings=_settings(tmp_path), clients={"run-1": fake_client})
+
+    adapter.cancel_current_turn("run-1")
+
+    assert fake_client.abort_count == 1
+    assert adapter.transcript_entries("run-1")[-1]["event"] == "cancelled"

@@ -111,7 +111,7 @@ def test_attach_session_links_app_run_to_tmux_target_and_logs(tmp_path: Path):
     assert entries[0]["event"] == "tmux_attached"
     state = adapter.session_state("run-1")
     assert state.status == "running"
-    assert state.tmux["pane_ref"] == "codex:0.0"
+    assert state.runtime["pane_ref"] == "codex:0.0"
 
 
 def test_prepare_agent_workspace_writes_run_specific_agents_file(tmp_path: Path):
@@ -136,8 +136,8 @@ def test_prepare_agent_workspace_writes_run_specific_agents_file(tmp_path: Path)
     assert (tmp_path / "run-1" / "logs").is_dir()
     agents_text = (tmp_path / "run-1" / "AGENTS.md").read_text(encoding="utf-8")
     assert "Onboarding Recruiting Agent" in agents_text
-    assert "logs/latest_assistant_message.txt" in agents_text
-    assert "output/user_profile.json" in agents_text
+    assert "../logs/latest_assistant_message.txt" in agents_text
+    assert "../output/user_profile.json" in agents_text
     assert "Do not send email" in agents_text
 
 
@@ -160,7 +160,7 @@ def test_attach_session_restores_persisted_tmux_target(tmp_path: Path):
     adapter = OnboardingCodexChatAdapter(bridge, workdir="/mnt/f/auto_initiativ", runs_root=tmp_path)
     adapter._state_store("run-1").write(
         "running",
-        tmux={
+        runtime={
             "tmux_session": "codex",
             "tmux_window": 3,
             "tmux_pane": 1,
@@ -426,8 +426,8 @@ def test_onboarding_start_message_delegates_role_to_agents_file():
     message = build_onboarding_start_message("run-1")
 
     assert "Read the AGENTS.md file" in message
-    assert "checking input" in message
-    assert "logs/latest_assistant_message.txt" in message
+    assert "checking `../input`" in message
+    assert "../logs/latest_assistant_message.txt" in message
     assert "private paid recruiter" not in message
 
 
@@ -492,7 +492,7 @@ def test_cancel_and_reset_are_logged(tmp_path: Path):
     assert ("force_kill_window", (10, True)) in bridge.calls
     entries = adapter.transcript_entries("run-1")
     assert [entry["event"] for entry in entries] == ["reset"]
-    assert adapter.session_state("run-1").tmux is None
+    assert adapter.session_state("run-1").runtime is None
 
 
 def test_close_session_logs_graceful_and_force_paths(tmp_path: Path):

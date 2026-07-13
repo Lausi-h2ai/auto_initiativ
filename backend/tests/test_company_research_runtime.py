@@ -16,8 +16,6 @@ def _settings(tmp_path: Path) -> Settings:
         SCHEMAS_ROOT=tmp_path / "schemas",
         PI_RPC_BINARY="pi",
         PI_RPC_RESEARCH_EXTENSION_PATH=Path("backend/pi_extensions/company_research.ts"),
-        PI_RPC_NO_BUILTIN_TOOLS=True,
-        PI_RPC_TIMEOUT_SECONDS=12,
         PI_RPC_RESEARCH_TIMEOUT_SECONDS=34,
     )
 
@@ -31,6 +29,9 @@ def test_company_research_runtime_builds_restricted_pi_command(tmp_path: Path):
     assert "--extension" in command
     assert "company_research.ts" in str(command)
     assert "--no-builtin-tools" in command
+    assert "--no-extensions" in command
+    assert "--no-approve" in command
+    assert "--no-context-files" in command
     assert "--session-dir" in command
     assert command[command.index("--provider") + 1] == "openai-codex"
     assert command[command.index("--model") + 1] == "gpt-5.6-terra"

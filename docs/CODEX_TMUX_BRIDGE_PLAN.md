@@ -1,5 +1,7 @@
 # Codex Tmux Bridge Plan
 
+> Historical implementation plan retained for diagnostics. Pi RPC is now the single application agent runtime, and this bridge must remain unwired from product workflows.
+
 ## Purpose
 
 The tmux bridge is the live local transport between the backend and a signed-in Codex CLI session. It supports the intended product workflow:

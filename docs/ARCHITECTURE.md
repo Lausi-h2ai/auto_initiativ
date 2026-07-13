@@ -38,9 +38,9 @@ Target backend stack:
 
 The backend has no dependency on an LLM for safety decisions.
 
-### Codex Runtime
+### Agent Runtime
 
-Codex works from prepared run folders:
+All application-owned agent work runs through Pi RPC from prepared run folders:
 
 ```text
 runs/<run_id>/
@@ -51,7 +51,19 @@ runs/<run_id>/
   instructions.md
 ```
 
-The backend prepares input files and instructions. Codex reads from `input/` and writes only to `output/`. The backend imports and validates outputs.
+The backend starts Pi in RPC mode with built-in tools and automatic resource discovery disabled. Each workload receives one explicit, narrowly scoped extension. Agents read approved inputs and write only candidate outputs; the backend imports and validates those outputs.
+
+The WSL tmux bridge and direct `codex exec` adapter remain available only for developer diagnostics and legacy tests. They are not wired into onboarding, research, drafting, or another application workflow.
+
+### Agent Model Policy
+
+Default models for agent workloads are centralized in `backend/app/core/agent_models.py`:
+
+- Onboarding uses `gpt-5.6-sol` for the flagship recruiting conversation.
+- Company research uses `gpt-5.6-terra` for read-heavy discovery.
+- Application drafting uses `gpt-5.6-luna` for efficient document generation.
+
+Every application agent model default must be declared in that policy, use the GPT-5.6 family, and run through Pi RPC with the `openai-codex` provider. Tests enforce these requirements so a future runtime cannot silently introduce an older model or a second agent harness. Environment variables remain explicit operational overrides.
 
 ### Database
 

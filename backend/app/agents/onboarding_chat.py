@@ -33,7 +33,7 @@ class OnboardingSessionState:
     run_id: str
     status: str
     updated_at: str
-    tmux: dict[str, object] | None = None
+    runtime: dict[str, object] | None = None
     last_error: str | None = None
 
 
@@ -219,7 +219,11 @@ class JsonSessionStateStore:
             run_id=str(data.get("run_id") or self.run_id),
             status=str(data.get("status") or "not_started"),
             updated_at=str(data.get("updated_at") or _utc_now()),
-            tmux=data.get("tmux") if isinstance(data.get("tmux"), dict) else None,
+            runtime=(
+                data.get("runtime")
+                if isinstance(data.get("runtime"), dict)
+                else data.get("tmux") if isinstance(data.get("tmux"), dict) else None
+            ),
             last_error=data.get("last_error") if isinstance(data.get("last_error"), str) else None,
         )
 
@@ -227,16 +231,16 @@ class JsonSessionStateStore:
         self,
         status: str,
         *,
-        tmux: dict[str, object] | None = None,
+        runtime: dict[str, object] | None = None,
         last_error: str | None = None,
-        clear_tmux: bool = False,
+        clear_runtime: bool = False,
     ) -> OnboardingSessionState:
         current = self.read()
         state = OnboardingSessionState(
             run_id=self.run_id,
             status=status,
             updated_at=_utc_now(),
-            tmux=None if clear_tmux else tmux if tmux is not None else current.tmux,
+            runtime=None if clear_runtime else runtime if runtime is not None else current.runtime,
             last_error=last_error,
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -340,7 +344,7 @@ class OnboardingCodexChatAdapter:
                 event="tmux_attached",
             )
         )
-        self._state_store(run_id).write("running", tmux=payload)
+        self._state_store(run_id).write("running", runtime=payload)
         return payload
 
     def transport_is_alive(self, timeout: float | None = 10) -> bool:
@@ -351,7 +355,7 @@ class OnboardingCodexChatAdapter:
 
     def open_terminal(self, run_id: str) -> str:
         state = self._restore_tmux_target(run_id)
-        tmux_window = state.tmux.get("tmux_window") if state.tmux else None
+        tmux_window = state.runtime.get("tmux_window") if state.runtime else None
         window = tmux_window if isinstance(tmux_window, int) else None
         return self.bridge.open_attached_terminal(window=window)
 
@@ -511,7 +515,7 @@ class OnboardingCodexChatAdapter:
         else:
             self.bridge.reset_to_shell(self.workdir, timeout=timeout)
         self._transcript_store(run_id).clear()
-        self._state_store(run_id).write("not_started", clear_tmux=True)
+        self._state_store(run_id).write("not_started", clear_runtime=True)
         self._transcript_store(run_id).append(
             ChatTranscriptEntry(
                 run_id=run_id,
@@ -633,11 +637,11 @@ class OnboardingCodexChatAdapter:
 
     def _restore_tmux_target(self, run_id: str) -> OnboardingSessionState:
         state = self._state_store(run_id).read()
-        if not state.tmux:
+        if not state.runtime:
             return state
-        session = state.tmux.get("tmux_session")
-        window = state.tmux.get("tmux_window")
-        pane = state.tmux.get("tmux_pane")
+        session = state.runtime.get("tmux_session")
+        window = state.runtime.get("tmux_window")
+        pane = state.runtime.get("tmux_pane")
         if isinstance(session, str) and isinstance(window, int) and isinstance(pane, int):
             self.bridge.target = TmuxTarget(
                 distro=self.bridge.target.distro,
@@ -645,7 +649,7 @@ class OnboardingCodexChatAdapter:
                 window=window,
                 pane=pane,
             )
-        workdir = state.tmux.get("workdir")
+        workdir = state.runtime.get("workdir")
         if isinstance(workdir, str) and workdir:
             self.workdir = workdir
         return state
