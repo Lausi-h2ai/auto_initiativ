@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, Float, Index, Text, text
+from sqlalchemy import Column, Float, Index, Text, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 
@@ -11,11 +11,238 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Run(SQLModel, table=True):
-    __tablename__ = "runs"
+class WorkspaceOwned(SQLModel):
+    """Marker used by the session layer to enforce workspace isolation."""
+
+    workspace_id: Optional[int] = Field(default=None, foreign_key="workspaces.id", index=True)
+
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    run_id: str = Field(index=True, unique=True)
+    google_subject: str = Field(index=True, unique=True)
+    email: str = Field(index=True, unique=True)
+    display_name: str
+    avatar_url: Optional[str] = None
+    role: str = Field(default="user", index=True)
+    status: str = Field(default="active", index=True)
+    last_login_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Workspace(SQLModel, table=True):
+    __tablename__ = "workspaces"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: str = Field(index=True, unique=True)
+    owner_user_id: int = Field(foreign_key="users.id", index=True, unique=True)
+    name: str
+    status: str = Field(default="active", index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Invitation(SQLModel, table=True):
+    __tablename__ = "invitations"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    invitation_id: str = Field(index=True, unique=True)
+    email: str = Field(index=True, unique=True)
+    invited_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    role: str = Field(default="user", index=True)
+    status: str = Field(default="pending", index=True)
+    accepted_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    accepted_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AuthSession(SQLModel, table=True):
+    __tablename__ = "auth_sessions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True, unique=True)
+    token_hash: str = Field(index=True, unique=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    expires_at: datetime = Field(index=True)
+    last_seen_at: datetime = Field(default_factory=utc_now)
+    revoked_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class OAuthState(SQLModel, table=True):
+    __tablename__ = "oauth_states"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    state_hash: str = Field(index=True, unique=True)
+    purpose: str = Field(index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    code_verifier: str
+    redirect_uri: str
+    expires_at: datetime = Field(index=True)
+    consumed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class GmailConnection(SQLModel, table=True):
+    __tablename__ = "gmail_connections"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    connection_id: str = Field(index=True, unique=True)
+    user_id: int = Field(foreign_key="users.id", index=True, unique=True)
+    google_subject: str = Field(index=True)
+    email: str = Field(index=True)
+    encrypted_credentials: str = Field(sa_column=Column(Text))
+    scopes_json: str = Field(default="[]", sa_column=Column(Text))
+    status: str = Field(default="connected", index=True)
+    connected_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    revoked_at: Optional[datetime] = None
+
+
+class AdminAccessAudit(SQLModel, table=True):
+    __tablename__ = "admin_access_audits"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    access_id: str = Field(index=True, unique=True)
+    admin_user_id: int = Field(foreign_key="users.id", index=True)
+    target_workspace_id: int = Field(foreign_key="workspaces.id", index=True)
+    action: str = Field(index=True)
+    resource_type: Optional[str] = Field(default=None, index=True)
+    resource_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class Campaign(WorkspaceOwned, table=True):
+    __tablename__ = "campaigns"
+    __table_args__ = (UniqueConstraint("workspace_id", "campaign_id", name="uq_campaigns_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    campaign_id: str = Field(index=True)
+    name: str
+    status: str = Field(default="draft", index=True)
+    sending_mode: str = Field(default="prepare_only", index=True)
+    brief_json: str = Field(default="{}", sa_column=Column(Text))
+    user_profile_snapshot_id: Optional[int] = Field(default=None, foreign_key="user_profile_snapshots.id", index=True)
+    master_cv_profile_snapshot_id: Optional[int] = Field(default=None, foreign_key="master_cv_profile_snapshots.id", index=True)
+    policy_snapshot_id: Optional[int] = Field(default=None, foreign_key="policy_snapshots.id", index=True)
+    started_at: Optional[datetime] = None
+    paused_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class OnboardingSession(WorkspaceOwned, table=True):
+    __tablename__ = "onboarding_sessions"
+    __table_args__ = (UniqueConstraint("workspace_id", "session_id", name="uq_onboarding_sessions_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True)
+    run_id: str = Field(index=True)
+    status: str = Field(default="not_started", index=True)
+    transport: str = Field(default="tmux", index=True)
+    transport_metadata_json: str = Field(default="{}", sa_column=Column(Text))
+    transcript_json: str = Field(default="[]", sa_column=Column(Text))
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class CampaignCompany(WorkspaceOwned, table=True):
+    __tablename__ = "campaign_companies"
+    __table_args__ = (UniqueConstraint("campaign_id", "company_id", name="uq_campaign_companies_campaign_company"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaigns.id", index=True)
+    company_id: int = Field(foreign_key="companies.id", index=True)
+    stage: str = Field(default="discovered", index=True)
+    disposition: Optional[str] = Field(default=None, index=True)
+    stage_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    entered_stage_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class AgentTask(WorkspaceOwned, table=True):
+    __tablename__ = "agent_tasks"
+    __table_args__ = (UniqueConstraint("workspace_id", "task_id", name="uq_agent_tasks_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: str = Field(index=True)
+    campaign_id: Optional[int] = Field(default=None, foreign_key="campaigns.id", index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    agent_role: str = Field(index=True)
+    task_type: str = Field(index=True)
+    status: str = Field(default="queued", index=True)
+    progress: int = Field(default=0)
+    narrative: str = Field(default="Queued for specialist review.", sa_column=Column(Text))
+    input_json: str = Field(default="{}", sa_column=Column(Text))
+    output_json: str = Field(default="{}", sa_column=Column(Text))
+    attempt_count: int = Field(default=0)
+    max_attempts: int = Field(default=3)
+    available_at: datetime = Field(default_factory=utc_now, index=True)
+    locked_at: Optional[datetime] = None
+    locked_by: Optional[str] = Field(default=None, index=True)
+    last_error: Optional[str] = Field(default=None, sa_column=Column(Text))
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ReviewException(WorkspaceOwned, table=True):
+    __tablename__ = "review_exceptions"
+    __table_args__ = (UniqueConstraint("workspace_id", "exception_id", name="uq_review_exceptions_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    exception_id: str = Field(index=True)
+    campaign_id: Optional[int] = Field(default=None, foreign_key="campaigns.id", index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
+    agent_task_id: Optional[int] = Field(default=None, foreign_key="agent_tasks.id", index=True)
+    category: str = Field(index=True)
+    title: str
+    explanation: str = Field(sa_column=Column(Text))
+    recommended_action: str = Field(sa_column=Column(Text))
+    status: str = Field(default="open", index=True)
+    resolution: Optional[str] = Field(default=None, sa_column=Column(Text))
+    resolved_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    resolved_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Document(WorkspaceOwned, table=True):
+    __tablename__ = "documents"
+    __table_args__ = (UniqueConstraint("workspace_id", "document_id", name="uq_documents_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    document_id: str = Field(index=True)
+    campaign_id: Optional[int] = Field(default=None, foreign_key="campaigns.id", index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    document_type: str = Field(index=True)
+    title: str
+    filename: str
+    relative_path: str
+    mime_type: str
+    size_bytes: int = 0
+    content_hash: Optional[str] = Field(default=None, index=True)
+    provenance_json: str = Field(default="{}", sa_column=Column(Text))
+    status: str = Field(default="ready", index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Run(WorkspaceOwned, table=True):
+    __tablename__ = "runs"
+    __table_args__ = (UniqueConstraint("workspace_id", "run_id", name="uq_runs_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: str = Field(index=True)
     agent_type: Optional[str] = None
     output_path: str
     status: str = Field(index=True)
@@ -25,7 +252,7 @@ class Run(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
-class ImportedFile(SQLModel, table=True):
+class ImportedFile(WorkspaceOwned, table=True):
     __tablename__ = "imported_files"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -40,7 +267,7 @@ class ImportedFile(SQLModel, table=True):
     imported_at: datetime = Field(default_factory=utc_now)
 
 
-class ValidationResult(SQLModel, table=True):
+class ValidationResult(WorkspaceOwned, table=True):
     __tablename__ = "validation_results"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -55,7 +282,7 @@ class ValidationResult(SQLModel, table=True):
     validated_at: datetime = Field(default_factory=utc_now)
 
 
-class AuditLog(SQLModel, table=True):
+class AuditLog(WorkspaceOwned, table=True):
     __tablename__ = "audit_logs"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -70,11 +297,12 @@ class AuditLog(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class UserProfileSnapshot(SQLModel, table=True):
+class UserProfileSnapshot(WorkspaceOwned, table=True):
     __tablename__ = "user_profile_snapshots"
+    __table_args__ = (UniqueConstraint("workspace_id", "profile_id", name="uq_user_profiles_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    profile_id: str = Field(index=True, unique=True)
+    profile_id: str = Field(index=True)
     schema_version: str
     source_created_at: Optional[datetime] = None
     source_updated_at: Optional[datetime] = None
@@ -85,11 +313,12 @@ class UserProfileSnapshot(SQLModel, table=True):
     imported_at: datetime = Field(default_factory=utc_now)
 
 
-class MasterCvProfileSnapshot(SQLModel, table=True):
+class MasterCvProfileSnapshot(WorkspaceOwned, table=True):
     __tablename__ = "master_cv_profile_snapshots"
+    __table_args__ = (UniqueConstraint("workspace_id", "profile_id", name="uq_master_cv_profiles_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    profile_id: str = Field(index=True, unique=True)
+    profile_id: str = Field(index=True)
     schema_version: str
     source_created_at: Optional[datetime] = None
     content_hash: str = Field(index=True)
@@ -99,11 +328,12 @@ class MasterCvProfileSnapshot(SQLModel, table=True):
     imported_at: datetime = Field(default_factory=utc_now)
 
 
-class PolicySnapshot(SQLModel, table=True):
+class PolicySnapshot(WorkspaceOwned, table=True):
     __tablename__ = "policy_snapshots"
+    __table_args__ = (UniqueConstraint("workspace_id", "policy_id", name="uq_policies_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    policy_id: str = Field(index=True, unique=True)
+    policy_id: str = Field(index=True)
     schema_version: str
     source_created_at: Optional[datetime] = None
     content_hash: str = Field(index=True)
@@ -113,11 +343,12 @@ class PolicySnapshot(SQLModel, table=True):
     imported_at: datetime = Field(default_factory=utc_now)
 
 
-class Company(SQLModel, table=True):
+class Company(WorkspaceOwned, table=True):
     __tablename__ = "companies"
+    __table_args__ = (UniqueConstraint("workspace_id", "company_id", name="uq_companies_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    company_id: str = Field(index=True, unique=True)
+    company_id: str = Field(index=True)
     name: str = Field(index=True)
     raw_domain: Optional[str] = None
     normalized_domain: Optional[str] = Field(default=None, index=True)
@@ -138,11 +369,12 @@ class Company(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
-class Contact(SQLModel, table=True):
+class Contact(WorkspaceOwned, table=True):
     __tablename__ = "contacts"
+    __table_args__ = (UniqueConstraint("workspace_id", "contact_id", name="uq_contacts_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    contact_id: str = Field(index=True, unique=True)
+    contact_id: str = Field(index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     external_company_id: str = Field(index=True)
     name: Optional[str] = None
@@ -160,11 +392,12 @@ class Contact(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
-class FitEvaluation(SQLModel, table=True):
+class FitEvaluation(WorkspaceOwned, table=True):
     __tablename__ = "fit_evaluations"
+    __table_args__ = (UniqueConstraint("workspace_id", "evaluation_id", name="uq_fit_evaluations_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    evaluation_id: str = Field(index=True, unique=True)
+    evaluation_id: str = Field(index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     external_company_id: str = Field(index=True)
     user_profile_snapshot_id: Optional[int] = Field(default=None, foreign_key="user_profile_snapshots.id", index=True)
@@ -181,11 +414,12 @@ class FitEvaluation(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class EmailDraft(SQLModel, table=True):
+class EmailDraft(WorkspaceOwned, table=True):
     __tablename__ = "email_drafts"
+    __table_args__ = (UniqueConstraint("workspace_id", "draft_id", name="uq_email_drafts_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    draft_id: str = Field(index=True, unique=True)
+    draft_id: str = Field(index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     external_company_id: str = Field(index=True)
     contact_id: Optional[int] = Field(default=None, foreign_key="contacts.id", index=True)
@@ -204,11 +438,12 @@ class EmailDraft(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class SendIntent(SQLModel, table=True):
+class SendIntent(WorkspaceOwned, table=True):
     __tablename__ = "send_intents"
+    __table_args__ = (UniqueConstraint("workspace_id", "intent_id", name="uq_send_intents_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    intent_id: str = Field(index=True, unique=True)
+    intent_id: str = Field(index=True)
     run_id: str = Field(index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     external_company_id: str = Field(index=True)
@@ -242,11 +477,12 @@ class SendIntent(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
-class ImportedGateResult(SQLModel, table=True):
+class ImportedGateResult(WorkspaceOwned, table=True):
     __tablename__ = "imported_gate_results"
+    __table_args__ = (UniqueConstraint("workspace_id", "gate_result_id", name="uq_gate_results_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    gate_result_id: str = Field(index=True, unique=True)
+    gate_result_id: str = Field(index=True)
     send_intent_id: Optional[int] = Field(default=None, foreign_key="send_intents.id", index=True)
     external_intent_id: str = Field(index=True)
     status: str = Field(index=True)
@@ -261,11 +497,12 @@ class ImportedGateResult(SQLModel, table=True):
     imported_at: datetime = Field(default_factory=utc_now)
 
 
-class SendReservation(SQLModel, table=True):
+class SendReservation(WorkspaceOwned, table=True):
     __tablename__ = "send_reservations"
     __table_args__ = (
         Index(
             "uq_send_reservations_active_recipient",
+            text("coalesce(workspace_id, 0)"),
             "normalized_recipient_email",
             unique=True,
             postgresql_where=text(
@@ -277,6 +514,7 @@ class SendReservation(SQLModel, table=True):
         ),
         Index(
             "uq_send_reservations_active_company",
+            text("coalesce(workspace_id, 0)"),
             "company_policy_key",
             unique=True,
             postgresql_where=text(
@@ -286,10 +524,11 @@ class SendReservation(SQLModel, table=True):
                 "dedupe_company = 1 AND status IN ('active', 'reserved', 'attempting_provider_send', 'outcome_uncertain')"
             ),
         ),
+        UniqueConstraint("workspace_id", "reservation_id", name="uq_send_reservations_workspace_external_id"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    reservation_id: str = Field(index=True, unique=True)
+    reservation_id: str = Field(index=True)
     send_intent_id: Optional[int] = Field(default=None, foreign_key="send_intents.id", index=True)
     normalized_recipient_email: str = Field(index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
@@ -304,11 +543,12 @@ class SendReservation(SQLModel, table=True):
     notes_json: str = Field(default="{}", sa_column=Column(Text))
 
 
-class OutreachRecord(SQLModel, table=True):
+class OutreachRecord(WorkspaceOwned, table=True):
     __tablename__ = "outreach_records"
+    __table_args__ = (UniqueConstraint("workspace_id", "outreach_record_id", name="uq_outreach_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    outreach_record_id: str = Field(index=True, unique=True)
+    outreach_record_id: str = Field(index=True)
     send_intent_id: Optional[int] = Field(default=None, foreign_key="send_intents.id", index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     contact_id: Optional[int] = Field(default=None, foreign_key="contacts.id", index=True)
@@ -324,12 +564,16 @@ class OutreachRecord(SQLModel, table=True):
     notes_json: str = Field(default="{}", sa_column=Column(Text))
 
 
-class CompanyIdentity(SQLModel, table=True):
+class CompanyIdentity(WorkspaceOwned, table=True):
     __tablename__ = "company_identities"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "identity_id", name="uq_company_identities_workspace_external_id"),
+        UniqueConstraint("workspace_id", "canonical_company_policy_key", name="uq_company_identities_workspace_policy_key"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    identity_id: str = Field(index=True, unique=True)
-    canonical_company_policy_key: str = Field(index=True, unique=True)
+    identity_id: str = Field(index=True)
+    canonical_company_policy_key: str = Field(index=True)
     display_name: str
     normalized_name: str = Field(index=True)
     primary_domain: Optional[str] = Field(default=None, index=True)
@@ -341,11 +585,12 @@ class CompanyIdentity(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
-class CompanyIdentityAlias(SQLModel, table=True):
+class CompanyIdentityAlias(WorkspaceOwned, table=True):
     __tablename__ = "company_identity_aliases"
+    __table_args__ = (UniqueConstraint("workspace_id", "alias_id", name="uq_company_aliases_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    alias_id: str = Field(index=True, unique=True)
+    alias_id: str = Field(index=True)
     identity_id: Optional[int] = Field(default=None, foreign_key="company_identities.id", index=True)
     alias_type: str = Field(index=True)
     alias_value: str = Field(index=True)
@@ -357,11 +602,12 @@ class CompanyIdentityAlias(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class SendApprovalSnapshot(SQLModel, table=True):
+class SendApprovalSnapshot(WorkspaceOwned, table=True):
     __tablename__ = "send_approval_snapshots"
+    __table_args__ = (UniqueConstraint("workspace_id", "approval_id", name="uq_send_approvals_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    approval_id: str = Field(index=True, unique=True)
+    approval_id: str = Field(index=True)
     batch_id: str = Field(index=True)
     send_intent_id: Optional[int] = Field(default=None, foreign_key="send_intents.id", index=True)
     external_intent_id: str = Field(index=True)
@@ -387,11 +633,12 @@ class SendApprovalSnapshot(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class SentMessage(SQLModel, table=True):
+class SentMessage(WorkspaceOwned, table=True):
     __tablename__ = "sent_messages"
+    __table_args__ = (UniqueConstraint("workspace_id", "sent_message_id", name="uq_sent_messages_workspace_external_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    sent_message_id: str = Field(index=True, unique=True)
+    sent_message_id: str = Field(index=True)
     approval_snapshot_id: Optional[int] = Field(default=None, foreign_key="send_approval_snapshots.id", index=True)
     send_intent_id: Optional[int] = Field(default=None, foreign_key="send_intents.id", index=True)
     reservation_id: Optional[int] = Field(default=None, foreign_key="send_reservations.id", index=True)

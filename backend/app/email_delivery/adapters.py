@@ -75,8 +75,9 @@ class FakeDryRunEmailAdapter:
 class GmailEmailAdapter:
     provider = "gmail"
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, credentials_json: str | None = None) -> None:
         self.settings = settings
+        self.credentials_json = credentials_json
 
     def send(self, message: EmailMessage) -> EmailDeliveryResult:
         service = self._service()
@@ -102,7 +103,9 @@ class GmailEmailAdapter:
         )
 
     def _service(self) -> Any:
-        if self.settings.gmail_oauth_client_secrets_path is None or self.settings.gmail_oauth_token_path is None:
+        if self.credentials_json is None and (
+            self.settings.gmail_oauth_client_secrets_path is None or self.settings.gmail_oauth_token_path is None
+        ):
             raise GmailPreSendError("Gmail OAuth paths are not configured.")
 
         try:
@@ -114,7 +117,11 @@ class GmailEmailAdapter:
             token_path = self.settings.gmail_oauth_token_path
             scopes = self.settings.gmail_oauth_scopes
             credentials = None
-            if token_path.exists():
+            if self.credentials_json:
+                import json
+
+                credentials = Credentials.from_authorized_user_info(json.loads(self.credentials_json), scopes)
+            elif token_path is not None and token_path.exists():
                 credentials = Credentials.from_authorized_user_file(str(token_path), scopes)
             if credentials is None or not credentials.valid:
                 if credentials is not None and credentials.expired and credentials.refresh_token:
@@ -123,10 +130,15 @@ class GmailEmailAdapter:
                     except Exception:
                         credentials = None
                 if credentials is None or not credentials.valid:
+                    if self.credentials_json:
+                        raise GmailPreSendError("The connected Gmail account must be reconnected.")
+                    if self.settings.gmail_oauth_client_secrets_path is None or token_path is None:
+                        raise GmailPreSendError("Gmail OAuth paths are not configured.")
                     flow = InstalledAppFlow.from_client_secrets_file(str(self.settings.gmail_oauth_client_secrets_path), scopes)
                     credentials = flow.run_local_server(port=0)
-                token_path.parent.mkdir(parents=True, exist_ok=True)
-                token_path.write_text(credentials.to_json(), encoding="utf-8")
+                if not self.credentials_json and token_path is not None:
+                    token_path.parent.mkdir(parents=True, exist_ok=True)
+                    token_path.write_text(credentials.to_json(), encoding="utf-8")
             return build("gmail", "v1", credentials=credentials)
         except GmailPreSendError:
             raise

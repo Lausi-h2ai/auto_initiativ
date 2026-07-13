@@ -11,7 +11,7 @@ from backend.app.core.config import get_settings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CURRENT_HEAD = "20260525_0003"
+CURRENT_HEAD = "20260713_0004"
 EXPECTED_TABLES = {
     "alembic_version",
     "runs",
@@ -33,6 +33,19 @@ EXPECTED_TABLES = {
     "company_identity_aliases",
     "send_approval_snapshots",
     "sent_messages",
+    "users",
+    "workspaces",
+    "invitations",
+    "auth_sessions",
+    "oauth_states",
+    "gmail_connections",
+    "admin_access_audits",
+    "campaigns",
+    "onboarding_sessions",
+    "campaign_companies",
+    "agent_tasks",
+    "review_exceptions",
+    "documents",
 }
 
 

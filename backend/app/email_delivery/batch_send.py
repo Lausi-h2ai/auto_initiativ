@@ -9,12 +9,15 @@ from uuid import uuid4
 
 from sqlmodel import Session, select
 
+from backend.app.auth.context import current_identity
+from backend.app.auth.service import CredentialVault
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.models import (
     AuditLog,
     Company,
     Contact,
     EmailDraft,
+    GmailConnection,
     ImportedFile,
     OutreachRecord,
     SendApprovalSnapshot,
@@ -476,6 +479,18 @@ class SendBatchService:
             raise KnownUnsentEmailError("Real-recipient Gmail sending requires EMAIL_ALLOW_REAL_RECIPIENTS=true.")
         if self.settings.email_provider not in {"gmail", "gmail_sandbox"}:
             raise KnownUnsentEmailError(f"Unsupported email provider: {self.settings.email_provider}")
+        identity = current_identity()
+        if identity is not None:
+            connection = self.session.exec(
+                select(GmailConnection).where(
+                    GmailConnection.user_id == identity.user_id,
+                    GmailConnection.status == "connected",
+                )
+            ).first()
+            if connection is None:
+                raise KnownUnsentEmailError("Connect Gmail before enabling campaign delivery.")
+            credentials_json = CredentialVault(self.settings).decrypt(connection.encrypted_credentials)
+            return GmailEmailAdapter(self.settings, credentials_json=credentials_json)
         return GmailEmailAdapter(self.settings)
 
     def _sent_message(

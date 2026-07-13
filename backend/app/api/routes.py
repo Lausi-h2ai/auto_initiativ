@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
+from backend.app.auth.context import current_identity
 from backend.app.agents.codex_tmux import TmuxCodexBridge, TmuxCodexError, TmuxTarget
 from backend.app.agents.company_research import (
     COMPANY_RESEARCH_INSTRUCTIONS,
@@ -46,6 +47,7 @@ from backend.app.db.models import (
     Contact,
     EmailDraft,
     FitEvaluation,
+    GmailConnection,
     ImportedFile,
     ImportedGateResult,
     MasterCvProfileSnapshot,
@@ -2087,11 +2089,23 @@ def dashboard_summary(session: Session = Depends(get_session)) -> DashboardSumma
 
 
 @router.get("/email-delivery/settings", response_model=EmailDeliverySettingsResponse)
-def email_delivery_settings(settings: Settings = Depends(get_settings)) -> EmailDeliverySettingsResponse:
-    gmail_configured = (
-        settings.gmail_oauth_client_secrets_path is not None
-        and settings.gmail_oauth_token_path is not None
-    )
+def email_delivery_settings(
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(get_session),
+) -> EmailDeliverySettingsResponse:
+    identity = current_identity()
+    if identity is not None:
+        gmail_configured = session.exec(
+            select(GmailConnection).where(
+                GmailConnection.user_id == identity.user_id,
+                GmailConnection.status == "connected",
+            )
+        ).first() is not None
+    else:
+        gmail_configured = (
+            settings.gmail_oauth_client_secrets_path is not None
+            and settings.gmail_oauth_token_path is not None
+        )
     if not settings.email_sending_enabled:
         mode = "disabled"
     elif settings.email_provider == "gmail_sandbox":

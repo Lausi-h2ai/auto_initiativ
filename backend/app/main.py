@@ -6,6 +6,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.app.auth.middleware import AuthWorkspaceMiddleware
+from backend.app.auth.routes import router as auth_router
 from backend.app.api.routes import router
 from backend.app.db.session import init_db
 
@@ -21,6 +23,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Auto Initiativ Backend", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(AuthWorkspaceMiddleware)
+    app.include_router(auth_router)
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

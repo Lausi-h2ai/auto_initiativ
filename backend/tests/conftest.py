@@ -27,6 +27,7 @@ def runs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("EMAIL_SENDING_ENABLED", "false")
     monkeypatch.setenv("EMAIL_PROVIDER", "gmail_sandbox")
     monkeypatch.setenv("EMAIL_ALLOW_REAL_RECIPIENTS", "false")
+    monkeypatch.setenv("AUTH_REQUIRED", "false")
     monkeypatch.delenv("GMAIL_SANDBOX_RECIPIENT", raising=False)
     return root
 
