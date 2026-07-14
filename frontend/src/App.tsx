@@ -688,7 +688,19 @@ function CompaniesPage() {
         />
       )}
       {selected && (
-        <CompanyDrawer company={selected} onClose={() => setSelected(null)} />
+        <CompanyDrawer
+          company={selected}
+          onClose={() => setSelected(null)}
+          onCompanyChange={(nextCompany) => {
+            const normalized = normalizeCompany(nextCompany);
+            setSelected(normalized);
+            setCompanies((items) =>
+              items.map((item) =>
+                item.company_id === normalized.company_id ? normalized : item,
+              ),
+            );
+          }}
+        />
       )}
     </div>
   );
@@ -741,10 +753,65 @@ function CompanyCard({
 function CompanyDrawer({
   company,
   onClose,
+  onCompanyChange,
 }: {
   company: Company;
   onClose: () => void;
+  onCompanyChange: (company: Company) => void;
 }) {
+  const { refresh } = useWorkspace();
+  const [actionError, setActionError] = useState("");
+  const [starting, setStarting] = useState(false);
+  const preparationActive = ["queued", "retry", "running"].includes(
+    company.application_preparation_status || "",
+  );
+
+  useEffect(() => {
+    if (!preparationActive || !company.company_id) return;
+    const poll = async () => {
+      try {
+        const next = await request<Company>(
+          `/companies/${encodeURIComponent(company.company_id!)}`,
+        );
+        onCompanyChange(next);
+        if (
+          !["queued", "retry", "running"].includes(
+            next.application_preparation_status || "",
+          )
+        ) {
+          await refresh();
+        }
+      } catch (cause) {
+        setActionError(messageOf(cause));
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 5000);
+    return () => window.clearInterval(timer);
+  }, [company.company_id, preparationActive]);
+
+  const prepareDocuments = async () => {
+    if (!company.company_id) return;
+    setStarting(true);
+    setActionError("");
+    try {
+      const result = await mutate<{ status: string }>(
+        `/companies/${encodeURIComponent(company.company_id)}/prepare`,
+        "POST",
+      );
+      onCompanyChange({
+        ...company,
+        application_preparation_status: result.status,
+        can_draft_application: false,
+        application_draft_block_reason: "application_preparation_in_progress",
+      });
+      await refresh();
+    } catch (cause) {
+      setActionError(messageOf(cause));
+    } finally {
+      setStarting(false);
+    }
+  };
+
   return (
     <div
       className="drawer-backdrop"
@@ -797,17 +864,40 @@ function CompanyDrawer({
             <RoleBadge role="CV" />
             <RoleBadge role="Writing" />
           </div>
+          {!company.has_application_draft ? (
+            <p>
+              {preparationActive
+                ? "The CV and writing specialists are preparing tailored company-outreach documents now."
+                : "Create a tailored CV and outreach email for this company when you want to pursue it outside a specific vacancy."}
+            </p>
+          ) : null}
         </DrawerSection>
+        {actionError ? <InlineError message={actionError} /> : null}
         <div className="drawer-actions">
-          <Link
-            className="secondary-button"
-            to={`/documents?company=${encodeURIComponent(String(company.id ?? company.company_id ?? ""))}&companyName=${encodeURIComponent(company.name)}`}
-          >
-            View documents
-          </Link>
-          <button className="primary-button" onClick={onClose}>
-            Keep moving forward
-          </button>
+          {company.has_application_draft ? (
+            <Link
+              className="primary-button"
+              to={`/documents?company=${encodeURIComponent(String(company.id ?? company.company_id ?? ""))}&companyName=${encodeURIComponent(company.name)}`}
+            >
+              View application documents
+            </Link>
+          ) : preparationActive ? (
+            <button className="primary-button" disabled>
+              Preparing outreach documents…
+            </button>
+          ) : company.can_draft_application !== false ? (
+            <button
+              className="primary-button"
+              disabled={starting}
+              onClick={() => void prepareDocuments()}
+            >
+              {starting ? "Starting application team…" : "Prepare outreach documents"}
+            </button>
+          ) : (
+            <button className="primary-button" disabled>
+              Document preparation unavailable
+            </button>
+          )}
         </div>
       </aside>
     </div>
@@ -2308,7 +2398,9 @@ function ProfilePresentation({
   );
   const exclusions = policy.exclusions || {};
   const reviewItems = Array.isArray(userProfile.review_items)
-    ? userProfile.review_items
+    ? userProfile.review_items.filter((item: any) =>
+        profileReviewItemNeedsAttention(userProfile, item),
+      )
     : [];
   const needsReviewClaims = claims.filter(
     (claim: any) =>
@@ -3712,6 +3804,43 @@ function toStrings(values: unknown[] | undefined) {
           : "",
     )
     .filter(Boolean);
+}
+function profileReviewItemNeedsAttention(
+  userProfile: Record<string, any>,
+  item: any,
+) {
+  const field = typeof item?.field === "string" ? item.field : "";
+  const parts = field.split("/").filter(Boolean);
+  if (!parts.length) return true;
+  let current: any = userProfile;
+  for (const part of parts) {
+    if (Array.isArray(current)) {
+      const index = Number(part);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length)
+        return true;
+      current = current[index];
+      continue;
+    }
+    if (!current || typeof current !== "object") return true;
+    const normalizedPart = normalizeProfileField(part);
+    const key = Object.keys(current).find(
+      (candidate) => normalizeProfileField(candidate) === normalizedPart,
+    );
+    if (!key) return true;
+    current = current[key];
+  }
+  const provenance = current?.provenance;
+  if (!provenance || typeof provenance !== "object") return true;
+  return (
+    provenance.needs_review === true ||
+    !["verified_document", "user_claim"].includes(provenance.source_type)
+  );
+}
+function normalizeProfileField(value: string) {
+  return value
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
 }
 function normalizeCompany(company: Company): Company {
   return {

@@ -43,6 +43,7 @@ from backend.app.core.config import Settings
 from backend.app.core.config import get_settings
 from backend.app.db.models import (
     AuditLog,
+    AgentTask,
     Company,
     Contact,
     EmailDraft,
@@ -50,6 +51,8 @@ from backend.app.db.models import (
     GmailConnection,
     ImportedFile,
     ImportedGateResult,
+    JobFitEvaluation,
+    JobPosting,
     MasterCvProfileSnapshot,
     OnboardingSession,
     OutreachRecord,
@@ -447,6 +450,17 @@ def _latest_company_fit(session: Session, company: Company) -> FitEvaluation | N
     ).first()
 
 
+def _latest_job_company_fit(session: Session, company: Company) -> JobFitEvaluation | None:
+    job_ids = session.exec(select(JobPosting.id).where(JobPosting.company_id == company.id)).all()
+    if not job_ids:
+        return None
+    return session.exec(
+        select(JobFitEvaluation)
+        .where(JobFitEvaluation.job_posting_id.in_(job_ids))
+        .order_by(JobFitEvaluation.created_at.desc(), JobFitEvaluation.id.desc())
+    ).first()
+
+
 def _company_response(
     company: Company,
     *,
@@ -458,15 +472,28 @@ def _company_response(
     latest_gate = _latest_gate_result(session, send_intent.intent_id) if send_intent is not None else None
     outreach = _latest_company_outreach(session, company)
     fit = _latest_company_fit(session, company)
+    job_fit = _latest_job_company_fit(session, company) if fit is None else None
+    preparation_task = session.exec(
+        select(AgentTask)
+        .where(
+            AgentTask.company_id == company.id,
+            AgentTask.task_type.in_(["contact_research", "application_draft"]),
+        )
+        .order_by(AgentTask.updated_at.desc(), AgentTask.id.desc())
+    ).first()
     is_active_profile_scope = company.id in (active_profile_company_ids or set())
     has_application_draft = company.company_id in (drafted_company_ids or set())
     has_policy_conflicts = _json_has_items(company.policy_conflicts_json)
-    can_draft_application = not has_application_draft and not has_policy_conflicts
+    preparation_status = preparation_task.status if preparation_task is not None else None
+    preparation_active = preparation_status in {"queued", "retry", "running"}
+    can_draft_application = not has_application_draft and not has_policy_conflicts and not preparation_active
     block_reason = None
     if has_application_draft:
         block_reason = "draft_already_exists"
     elif has_policy_conflicts:
         block_reason = "policy_conflict_present"
+    elif preparation_active:
+        block_reason = "application_preparation_in_progress"
     return CompanyResponse(
         id=company.id or 0,
         company_id=company.company_id,
@@ -487,15 +514,16 @@ def _company_response(
         is_active_profile_scope=is_active_profile_scope,
         can_draft_application=can_draft_application,
         application_draft_block_reason=block_reason,
+        application_preparation_status=preparation_status,
         has_application_draft=has_application_draft,
         has_send_intent=send_intent is not None,
         send_intent_status=send_intent.status if send_intent is not None else None,
         send_gate_status=latest_gate.status if latest_gate is not None else None,
         has_been_contacted=outreach is not None,
         outreach_status=outreach.status if outreach is not None else None,
-        fit_score=fit.fit_score if fit is not None else None,
-        fit_decision=fit.decision if fit is not None else None,
-        fit_reasons=_json_loads(fit.reasons_json, []) if fit is not None else [],
+        fit_score=fit.fit_score if fit is not None else job_fit.company_fit_score if job_fit is not None else None,
+        fit_decision=fit.decision if fit is not None else job_fit.decision if job_fit is not None else None,
+        fit_reasons=_json_loads(fit.reasons_json, []) if fit is not None else _json_loads(job_fit.reasons_json, []) if job_fit is not None else [],
         raw=_json_loads(company.raw_json, {}),
         imported_file_id=company.imported_file_id,
         created_at=company.created_at,

@@ -21,6 +21,7 @@ from backend.app.db.models import (
     EmailDraft,
     ImportedFile,
     Invitation,
+    JobFitEvaluation,
     JobPosting,
     MasterCvProfileSnapshot,
     PolicySnapshot,
@@ -507,6 +508,88 @@ def test_verified_job_queues_tailored_application_agent(authenticated_app):
         assert task.agent_role == "resume_and_email_team"
 
 
+def test_job_discovered_company_reuses_fit_and_can_queue_outreach_documents(authenticated_app):
+    client = authenticated_app["client"]
+    token = authenticated_app["user_token"]
+    headers = {"X-CSRF-Token": csrf_token(token, authenticated_app["settings"])}
+    identity = RequestIdentity(
+        user_id=authenticated_app["user_id"],
+        workspace_id=authenticated_app["user_workspace_id"],
+    )
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.company_id == "company-shared")).one()
+        campaign = Campaign(
+            campaign_id="campaign-job-company-documents",
+            name="Job-discovered companies",
+            campaign_type="listed_job_search",
+            status="active",
+            sending_mode="prepare_only",
+        )
+        session.add(campaign)
+        session.flush()
+        job = JobPosting(
+            job_id="job-company-fit",
+            company_id=company.id,
+            external_company_id=company.company_id,
+            title="Public Administration Specialist",
+            source_url="https://example.com/jobs/company-fit",
+            canonical_url="https://example.com/jobs/company-fit",
+            application_url="https://example.com/jobs/company-fit/apply",
+            source_domain="example.com",
+            source_kind="employer",
+            fingerprint="job-company-fit",
+        )
+        session.add(job)
+        session.flush()
+        session.add_all(
+            [
+                CampaignJob(campaign_id=campaign.id, job_posting_id=job.id),
+                JobFitEvaluation(
+                    evaluation_id="job-company-fit-evaluation",
+                    job_posting_id=job.id,
+                    external_job_id=job.job_id,
+                    company_fit_score=0.94,
+                    role_fit_score=0.81,
+                    decision="promising",
+                    reasons_json=json.dumps([{"text": "Strong public-sector alignment."}]),
+                    confidence=0.9,
+                ),
+            ]
+        )
+        session.commit()
+        company_pk = company.id
+        campaign_pk = campaign.id
+
+    companies = client.get("/companies", cookies={"ai_session": token}).json()
+    company_response = next(item for item in companies if item["company_id"] == "company-shared")
+    assert company_response["fit_score"] == 0.94
+    assert company_response["fit_decision"] == "promising"
+    assert company_response["fit_reasons"] == [{"text": "Strong public-sector alignment."}]
+
+    response = client.post(
+        "/companies/company-shared/prepare",
+        cookies={"ai_session": token},
+        headers=headers,
+    )
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        task = session.exec(
+            select(AgentTask).where(
+                AgentTask.company_id == company_pk,
+                AgentTask.task_type == "contact_research",
+            )
+        ).one()
+        assert task.campaign_id == campaign_pk
+        assert task.agent_role == "contact_researcher"
+
+    refreshed = client.get("/companies", cookies={"ai_session": token}).json()
+    refreshed_company = next(item for item in refreshed if item["company_id"] == "company-shared")
+    assert refreshed_company["application_preparation_status"] == "queued"
+    assert refreshed_company["can_draft_application"] is False
+    assert refreshed_company["application_draft_block_reason"] == "application_preparation_in_progress"
+
+
 def test_listed_job_application_language_prefers_listing_language_and_supports_legacy_records():
     from backend.app.jobs.application_packages import _listed_job_application_language
 
@@ -551,6 +634,56 @@ def test_workflow_worker_reconciles_running_job_research(authenticated_app, monk
     monkeypatch.setattr(WorkflowEngine, "reconcile", fake_reconcile)
     assert WorkflowWorker(settings=authenticated_app["settings"]).run_once() is True
     assert reconciled == ["job_research"]
+
+
+def test_company_application_reconcile_indexes_documents_without_job_context(authenticated_app, monkeypatch):
+    from backend.app.workflow.engine import WorkflowEngine
+
+    identity = RequestIdentity(
+        user_id=authenticated_app["user_id"],
+        workspace_id=authenticated_app["user_workspace_id"],
+    )
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.company_id == "company-shared")).one()
+        campaign = Campaign(
+            campaign_id="campaign-company-reconcile",
+            name="Company document preparation",
+            campaign_type="initiative_outreach",
+            status="preparing",
+            sending_mode="prepare_only",
+        )
+        session.add(campaign)
+        session.flush()
+        task = AgentTask(
+            task_id="task-company-draft-reconcile",
+            campaign_id=campaign.id,
+            company_id=company.id,
+            agent_role="resume_and_email_team",
+            task_type="application_draft",
+            status="running",
+            run_id="application-draft-company-reconcile",
+        )
+        draft = EmailDraft(
+            draft_id="draft-company-reconcile",
+            company_id=company.id,
+            external_company_id=company.company_id,
+            external_contact_id="contact-company-reconcile",
+            subject="Tailored outreach",
+            body_text="Hello",
+            confidence=0.9,
+            raw_json="{}",
+        )
+        session.add_all([task, draft])
+        session.commit()
+
+        indexed: list[dict[str, object]] = []
+        engine = WorkflowEngine(session, authenticated_app["settings"])
+        monkeypatch.setattr(engine, "_index_documents", lambda _task, _company, **kwargs: indexed.append(kwargs))
+        engine._reconcile_draft(task, {"status": "imported"})
+
+        assert indexed == [{}]
+        assert task.status == "completed"
+        assert task.progress == 100
 
 
 def test_workflow_worker_reconciles_running_job_application_draft(authenticated_app, monkeypatch):

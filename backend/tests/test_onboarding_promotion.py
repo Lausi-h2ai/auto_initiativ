@@ -137,8 +137,13 @@ def test_profile_confirmation_resolves_direct_user_claim_provenance(db_session, 
     user_profile = db_session.exec(select(UserProfileSnapshot)).one()
     _rewrite_raw(
         user_profile,
-        lambda data: data["work_authorization"][0]["provenance"].update(
-            {"source_type": "user_claim", "needs_review": True, "confidence": 0.5}
+        lambda data: (
+            data["work_authorization"][0]["provenance"].update(
+                {"source_type": "user_claim", "needs_review": True, "confidence": 0.5}
+            ),
+            data["review_items"].append(
+                {"field": "/Work Authorization/0", "reason": "Authorization must be confirmed."}
+            ),
         ),
     )
     db_session.add(user_profile)
@@ -153,6 +158,7 @@ def test_profile_confirmation_resolves_direct_user_claim_provenance(db_session, 
     assert provenance["needs_review"] is False
     assert provenance["confidence"] == 1.0
     assert "profile_review:user_confirmation" in provenance["source_refs"]
+    assert approved["review_items"] == []
 
 
 def test_promotion_blocks_duplicate_master_cv_claim_ids(db_session, runs_root):

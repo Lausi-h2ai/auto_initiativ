@@ -331,6 +331,64 @@ def campaign_pipeline(campaign_id: str, session: Session = Depends(get_session))
     return result
 
 
+@router.post("/companies/{company_id}/prepare", status_code=202)
+def prepare_company_application(company_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    company = session.exec(select(Company).where(Company.company_id == company_id)).first()
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found.")
+    if json.loads(company.policy_conflicts_json or "[]"):
+        raise HTTPException(status_code=409, detail="Application preparation is blocked by a company policy conflict.")
+    if session.exec(select(EmailDraft).where(EmailDraft.company_id == company.id)).first() is not None:
+        raise HTTPException(status_code=409, detail="Application documents already exist for this company.")
+    existing = session.exec(
+        select(AgentTask).where(
+            AgentTask.company_id == company.id,
+            AgentTask.task_type.in_(["contact_research", "application_draft"]),
+            AgentTask.status.in_(["queued", "retry", "running"]),
+        )
+    ).first()
+    if existing is not None:
+        return {"company_id": company.company_id, "task_id": existing.task_id, "status": existing.status}
+
+    company_link = session.exec(
+        select(CampaignCompany)
+        .where(CampaignCompany.company_id == company.id)
+        .order_by(CampaignCompany.updated_at.desc())
+    ).first()
+    campaign = session.get(Campaign, company_link.campaign_id) if company_link is not None else None
+    if campaign is None:
+        job_ids = session.exec(select(JobPosting.id).where(JobPosting.company_id == company.id)).all()
+        job_link = (
+            session.exec(
+                select(CampaignJob)
+                .where(CampaignJob.job_posting_id.in_(job_ids))
+                .order_by(CampaignJob.updated_at.desc())
+            ).first()
+            if job_ids
+            else None
+        )
+        campaign = session.get(Campaign, job_link.campaign_id) if job_link is not None else None
+    if campaign is None:
+        raise HTTPException(status_code=409, detail="This company is not attached to a campaign that can prepare documents.")
+
+    contact = session.exec(
+        select(Contact).where(Contact.company_id == company.id).order_by(Contact.created_at.desc())
+    ).first()
+    task_type = "application_draft" if contact is not None else "contact_research"
+    task = WorkflowEngine(session).enqueue(
+        campaign=campaign,
+        company=company,
+        task_type=task_type,
+        agent_role="resume_and_email_team" if contact is not None else "contact_researcher",
+        narrative=(
+            f"Preparing tailored outreach documents for {company.name}."
+            if contact is not None
+            else f"Finding a suitable public contact before preparing documents for {company.name}."
+        ),
+    )
+    return {"company_id": company.company_id, "task_id": task.task_id, "status": task.status}
+
+
 @router.get("/agent-activity")
 def agent_activity(campaign_id: str | None = None, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
     statement = select(AgentTask).order_by(AgentTask.updated_at.desc()).limit(100)

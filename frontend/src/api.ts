@@ -101,6 +101,9 @@ export type Company = {
   confidence?: number;
   has_draft?: boolean;
   has_application_draft?: boolean;
+  can_draft_application?: boolean;
+  application_draft_block_reason?: string | null;
+  application_preparation_status?: string | null;
   has_been_contacted?: boolean;
 };
 

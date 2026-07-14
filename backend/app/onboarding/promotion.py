@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any
@@ -217,6 +218,21 @@ class OnboardingPromotionService:
                 }
             )
             changed = True
+        review_items = data.get("review_items")
+        approved_fields = {
+            field_key
+            for path, provenance in _iter_provenance(data)
+            if not _provenance_requires_review(provenance) and (field_key := _profile_field_key(path))
+        }
+        if isinstance(review_items, list) and approved_fields:
+            retained_items = [
+                item
+                for item in review_items
+                if not isinstance(item, dict) or _profile_field_key(str(item.get("field") or "")) not in approved_fields
+            ]
+            if len(retained_items) != len(review_items):
+                data["review_items"] = retained_items
+                changed = True
         if not changed:
             return
         raw_json = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -364,3 +380,13 @@ def _provenance_requires_review(provenance: Any) -> bool:
     if not isinstance(provenance, dict):
         return True
     return provenance.get("needs_review") is True or provenance.get("source_type") not in APPROVED_PROVENANCE_TYPES
+
+
+def _profile_field_key(path: str) -> tuple[str, ...]:
+    normalized_path = path.strip().removeprefix("$.").removeprefix("/").removesuffix(".provenance")
+    parts = re.split(r"[./\[\]]+", normalized_path)
+    return tuple(
+        normalized
+        for part in parts
+        if (normalized := re.sub(r"[^a-z0-9]+", "_", part.strip().lower()).strip("_"))
+    )

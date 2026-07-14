@@ -443,6 +443,7 @@ class CompanyResponse(BaseModel):
     is_active_profile_scope: bool = False
     can_draft_application: bool = False
     application_draft_block_reason: str | None = None
+    application_preparation_status: str | None = None
     has_application_draft: bool = False
     has_send_intent: bool = False
     send_intent_status: str | None = None

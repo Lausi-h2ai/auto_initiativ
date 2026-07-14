@@ -467,7 +467,7 @@ class WorkflowEngine:
             link.entered_stage_at = utc_now()
             link.updated_at = utc_now()
             self.session.add(link)
-        self._index_documents(task, company, job_id=job.job_id, job_title=job.title)
+        self._index_documents(task, company)
         if campaign.sending_mode == "gated_autosend":
             self.enqueue(
                 campaign=campaign,
