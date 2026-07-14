@@ -11,8 +11,16 @@ from sqlmodel import Session
 
 from backend.app.auth.context import scoped_runs_root
 from backend.app.core.config import Settings
-from backend.app.db.models import Campaign, CampaignJob, Document, JobApplicationPackage, JobPosting, MasterCvProfileSnapshot, UserProfileSnapshot, utc_now
+from backend.app.db.models import Campaign, CampaignJob, Document, JobApplicationPackage, JobPosting, MasterCvProfileSnapshot, PolicySnapshot, UserProfileSnapshot, utc_now
 from backend.app.imports.schema_registry import SchemaRegistry
+from backend.app.agents.application_draft import (
+    APPLICATION_DRAFT_INSTRUCTIONS,
+    ApplicationDraftBrief,
+    build_application_draft_inputs,
+    build_application_draft_task,
+    slugify,
+)
+from backend.app.agents.run_folder import RunFolderGenerator, RunFolderSpec, RunInputFile
 
 
 class JobPackageError(ValueError):
@@ -80,6 +88,89 @@ class JobApplicationPackageService:
         self.session.commit()
         self.session.refresh(package)
         return package
+
+    def prepare_agent_run(self, *, campaign: Campaign, job: JobPosting, company: object) -> str:
+        """Prepare a real application-drafting run for a verified listed job."""
+        self._assert_fresh_verified(job)
+        master = self.session.get(MasterCvProfileSnapshot, campaign.master_cv_profile_snapshot_id)
+        profile = self.session.get(UserProfileSnapshot, campaign.user_profile_snapshot_id)
+        if master is None or profile is None:
+            raise JobPackageError("Approved profile snapshots are unavailable.")
+        run_id = f"job-application-{slugify(job.title, fallback=job.job_id)}-{uuid4().hex[:8]}"
+        company_id = getattr(company, "company_id", None) or job.external_company_id
+        company_name = getattr(company, "name", None) or job.external_company_id
+        company_raw = json.loads(getattr(company, "raw_json", "{}") or "{}")
+        company_raw.update({"company_id": company_id, "name": company_name})
+        brief = ApplicationDraftBrief(
+            run_id=run_id,
+            draft_id=f"draft-{run_id}",
+            company_id=company_id,
+            contact_id=f"application-portal-{job.job_id}",
+            company_slug=slugify(company_name, fallback="employer"),
+            language="auto",
+            notes="This is a response to a published vacancy, not an unsolicited application.",
+        )
+        master_data = json.loads(master.raw_json)
+        profile_data = json.loads(profile.raw_json)
+        policy = self.session.get(PolicySnapshot, campaign.policy_snapshot_id)
+        inputs = build_application_draft_inputs(
+            brief=brief,
+            user_profile=profile_data,
+            master_cv_profile=master_data,
+            policy=json.loads(policy.raw_json) if policy is not None else {},
+            company=company_raw,
+            contact={"contact_id": brief.contact_id, "company_id": company_id, "status": "application_portal"},
+            fit_evaluation=None,
+            email_draft_schema=(self.settings.schemas_root / "email_draft.schema.json").read_text(encoding="utf-8"),
+            contact_schema="{}",
+            master_cv_html=Path(self.settings.application_draft_master_cv_html_path).read_text(encoding="utf-8"),
+            handoff_docs={},
+        )
+        job_payload = {
+            "job_id": job.job_id, "title": job.title, "company_name": company_name,
+            "description": job.description or "", "requirements": json.loads(job.requirements_json or "[]"),
+            "responsibilities": json.loads(job.responsibilities_json or "[]"),
+            "languages": json.loads(job.languages_json or "[]"), "locations": json.loads(job.locations_json or "[]"),
+            "canonical_url": job.canonical_url, "source_refs": json.loads(job.source_refs_json or "[]"),
+        }
+        context = json.loads(inputs["draft_context.json"])
+        context["job_posting"] = job_payload
+        context["workflow"]["tone"] = "specific, credible, concise, and matched to the vacancy; never generic"
+        inputs["draft_context.json"] = json.dumps(context, indent=2, ensure_ascii=False)
+        inputs["job_posting.json"] = json.dumps(job_payload, indent=2, ensure_ascii=False)
+        task = build_application_draft_task(brief) + """
+
+Listed-job requirements:
+- This is a response to the published vacancy in `job_posting` inside `draft_context.json`.
+- Detect the listing's primary language from its actual title, description, requirements, and responsibilities. Write the cover letter/email and CV in that language unless the profile explicitly makes that inappropriate.
+- Perform deliberate keyword matching: identify the role's important skills, tools, responsibilities, seniority, and domain terms; prioritize only approved claims that truthfully support them; reuse natural employer terminology without keyword stuffing.
+- Tailor the summary, skills ordering, project/experience bullets, and cover letter to the vacancy and available company evidence. The letter must name concrete role needs and matching evidence. Never use generic filler such as 'my approved profile contains relevant experience'.
+- Treat `email_draft.body_text` as the application cover letter. Address a hiring team when no named recipient exists; do not research or guess a recipient.
+"""
+        folder = RunFolderGenerator(settings=self.settings, session=self.session).prepare(
+            RunFolderSpec(
+                run_id=run_id, task=task, instructions=APPLICATION_DRAFT_INSTRUCTIONS,
+                inputs=tuple(RunInputFile(path, content) for path, content in sorted(inputs.items())),
+                expected_output_files=("email_draft.json", f"attachments/{brief.html_filename}", f"attachments/{brief.pdf_filename}"),
+                metadata={"task_type": "job_application_draft", "job_id": job.job_id, "campaign_id": campaign.campaign_id,
+                          "profile_snapshot_id": profile.id, "master_cv_snapshot_id": master.id},
+            )
+        )
+        from backend.app.db.models import Run
+        from sqlmodel import select
+        run = self.session.exec(select(Run).where(Run.run_id == folder.run_id)).first()
+        if run is not None:
+            run.agent_type = "application_draft"
+            self.session.add(run)
+            self.session.commit()
+        return run_id
+
+    def _assert_fresh_verified(self, job: JobPosting) -> None:
+        if job.vacancy_status != "verified_open" or job.last_verified_at is None:
+            raise JobPackageError("Application preparation requires a verified-open vacancy.")
+        verified = job.last_verified_at if job.last_verified_at.tzinfo else job.last_verified_at.replace(tzinfo=timezone.utc)
+        if utc_now() - verified > timedelta(hours=24):
+            raise JobPackageError("The vacancy must be revalidated because its verification is older than 24 hours.")
 
     def _cover_letter(self, name: str, job: JobPosting, evidence: list[str]) -> str:
         body = "\n\n".join(evidence) if evidence else "My approved profile contains relevant experience for this opportunity."

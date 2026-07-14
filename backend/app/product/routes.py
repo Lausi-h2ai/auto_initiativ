@@ -893,7 +893,7 @@ def update_job_application_status(campaign_id: str, job_id: str, payload: JobApp
     return _job_response(job, session, campaign_job=link)
 
 
-@router.post("/campaigns/{campaign_id}/jobs/{job_id}/prepare", status_code=201)
+@router.post("/campaigns/{campaign_id}/jobs/{job_id}/prepare", status_code=202)
 def prepare_job_application(campaign_id: str, job_id: str, session: Session = Depends(get_session), settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     campaign = _campaign(session, campaign_id)
     if campaign.campaign_type != "listed_job_search":
@@ -904,10 +904,27 @@ def prepare_job_application(campaign_id: str, job_id: str, session: Session = De
     link = session.exec(select(CampaignJob).where(CampaignJob.campaign_id == campaign.id, CampaignJob.job_posting_id == job.id)).first()
     if link is None:
         raise HTTPException(status_code=404, detail="Job is not part of this campaign.")
+    existing = session.exec(select(AgentTask).where(
+        AgentTask.campaign_id == campaign.id,
+        AgentTask.task_type == "job_application_draft",
+        AgentTask.status.in_(["queued", "running", "retry"]),
+    )).all()
+    if any(json.loads(item.input_json or "{}").get("job_id") == job.job_id for item in existing):
+        raise HTTPException(status_code=409, detail="Application preparation is already running for this job.")
     try:
-        JobApplicationPackageService(session, settings).prepare(campaign=campaign, link=link, job=job)
+        JobApplicationPackageService(session, settings)._assert_fresh_verified(job)
     except JobPackageError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    task = AgentTask(
+        task_id=f"task-{uuid4()}", campaign_id=campaign.id, company_id=job.company_id,
+        agent_role="resume_and_email_team", task_type="job_application_draft",
+        narrative=f"Tailoring the CV and cover letter to {job.title}.",
+        input_json=json.dumps({"job_id": job.job_id}), workspace_id=campaign.workspace_id,
+    )
+    link.application_status = "preparing"
+    link.updated_at = utc_now()
+    session.add_all([task, link])
+    session.commit()
     return _job_response(job, session, campaign_job=link)
 
 

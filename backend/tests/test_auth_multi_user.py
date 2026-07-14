@@ -476,7 +476,7 @@ def test_listed_job_campaign_is_separate_and_manual_submit_only(authenticated_ap
     assert refresh.json()["status"] == "queued"
 
 
-def test_verified_job_prepares_manual_application_package(authenticated_app):
+def test_verified_job_queues_tailored_application_agent(authenticated_app):
     client = authenticated_app["client"]
     token = authenticated_app["user_token"]
     headers = {"X-CSRF-Token": csrf_token(token, authenticated_app["settings"])}
@@ -494,10 +494,13 @@ def test_verified_job_prepares_manual_application_package(authenticated_app):
         session.add(CampaignJob(campaign_id=campaign.id, job_posting_id=job.id))
         session.commit()
     response = client.post("/campaigns/campaign-job-package/jobs/job-package-test/prepare", cookies={"ai_session": token}, headers=headers)
-    assert response.status_code == 201
-    assert response.json()["application_status"] == "ready"
-    assert response.json()["package_ready"] is True
-    assert any(item["needs_user_input"] for item in response.json()["answer_kit"])
+    assert response.status_code == 202
+    assert response.json()["application_status"] == "preparing"
+    assert response.json()["package_ready"] is False
+    with workspace_context(RequestIdentity(user_id=authenticated_app["user_id"], workspace_id=authenticated_app["user_workspace_id"])), Session(authenticated_app["engine"]) as session:
+        task = session.exec(select(AgentTask).where(AgentTask.task_type == "job_application_draft")).one()
+        assert json.loads(task.input_json)["job_id"] == "job-package-test"
+        assert task.agent_role == "resume_and_email_team"
 
 
 def test_workflow_worker_reconciles_running_job_research(authenticated_app, monkeypatch):

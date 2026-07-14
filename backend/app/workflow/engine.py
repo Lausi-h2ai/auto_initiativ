@@ -24,6 +24,7 @@ from backend.app.db.models import (
     EmailDraft,
     FitEvaluation,
     JobPosting,
+    JobApplicationPackage,
     ImportedFile,
     ReviewException,
     SendIntent,
@@ -106,6 +107,8 @@ class WorkflowEngine:
                 self._launch_contact_research(task)
             elif task.task_type == "application_draft":
                 self._launch_application_draft(task)
+            elif task.task_type == "job_application_draft":
+                self._launch_job_application_draft(task)
             elif task.task_type == "gated_send":
                 self._send_application(task)
             else:
@@ -133,6 +136,9 @@ class WorkflowEngine:
 
                 status = ApplicationDraftRuntime(settings=self.settings).status(task.run_id or "")
                 self._reconcile_draft(task, status)
+            elif task.task_type == "job_application_draft":
+                from backend.app.agents.application_draft_runtime import ApplicationDraftRuntime
+                self._reconcile_job_application_draft(task, ApplicationDraftRuntime(settings=self.settings).status(task.run_id or ""))
         except Exception as exc:
             self._fail(task, exc)
 
@@ -210,6 +216,28 @@ class WorkflowEngine:
             link.entered_stage_at = utc_now()
             link.updated_at = utc_now()
             self.session.add(link)
+        self.session.add(task)
+        self.session.commit()
+
+    def _launch_job_application_draft(self, task: AgentTask) -> None:
+        from backend.app.agents.application_draft_runtime import ApplicationDraftRuntime
+        from backend.app.jobs.application_packages import JobApplicationPackageService
+
+        payload = json_object(task.input_json)
+        campaign = self.session.get(Campaign, task.campaign_id)
+        job = self.session.exec(select(JobPosting).where(JobPosting.job_id == payload.get("job_id"))).first()
+        company = self.session.get(Company, task.company_id) if task.company_id else None
+        if campaign is None or job is None or company is None:
+            raise ValueError("Listed-job application context no longer exists.")
+        run_id = JobApplicationPackageService(self.session, self.settings).prepare_agent_run(
+            campaign=campaign, job=job, company=company
+        )
+        ApplicationDraftRuntime(settings=self.settings).launch(run_id)
+        task.run_id = run_id
+        task.progress = 20
+        task.narrative = f"The CV and writing specialists are tailoring the application to {job.title}."
+        task.output_json = json.dumps({"run_id": run_id, "job_id": job.job_id})
+        task.updated_at = utc_now()
         self.session.add(task)
         self.session.commit()
 
@@ -449,6 +477,50 @@ class WorkflowEngine:
                 narrative=f"Running final deterministic checks for {company.name}.",
             )
         self._complete(task, f"The tailored CV and email for {company.name} are ready.")
+
+    def _reconcile_job_application_draft(self, task: AgentTask, status: dict[str, Any]) -> None:
+        state = str(status.get("status") or "running")
+        task.progress = 70 if state not in TERMINAL_RUNTIME_STATUSES else task.progress
+        task.updated_at = utc_now()
+        self.session.add(task)
+        if state not in TERMINAL_RUNTIME_STATUSES:
+            self.session.commit()
+            return
+        if state in FAILED_RUNTIME_STATUSES:
+            raise ValueError(f"Listed-job application preparation ended with {state}.")
+        payload = json_object(task.input_json)
+        job = self.session.exec(select(JobPosting).where(JobPosting.job_id == payload.get("job_id"))).first()
+        campaign = self.session.get(Campaign, task.campaign_id)
+        company = self.session.get(Company, task.company_id) if task.company_id else None
+        if campaign is None or job is None or company is None:
+            raise ValueError("Listed-job application context no longer exists.")
+        link = self.session.exec(select(CampaignJob).where(
+            CampaignJob.campaign_id == campaign.id, CampaignJob.job_posting_id == job.id
+        )).first()
+        if link is None:
+            raise ValueError("Job is no longer part of the campaign.")
+        file_ids = self.session.exec(select(ImportedFile.id).where(ImportedFile.run_id == task.run_id)).all()
+        draft = self.session.exec(select(EmailDraft).where(EmailDraft.imported_file_id.in_(file_ids)).order_by(EmailDraft.created_at.desc())).first() if file_ids else None
+        if draft is None:
+            raise ValueError("The drafting agent completed without a schema-valid cover letter.")
+        self._index_documents(task, company)
+        self.session.flush()
+        cv_document = self.session.exec(select(Document).where(
+            Document.run_id == task.run_id, Document.document_type == "tailored_cv", Document.mime_type == "application/pdf"
+        )).first()
+        review_flags = json.loads(draft.review_flags_json or "[]")
+        package = JobApplicationPackage(
+            package_id=f"package-{uuid4()}", campaign_job_id=link.id, run_id=task.run_id,
+            status="ready_with_review" if review_flags else "ready",
+            cv_document_id=cv_document.id if cv_document else None,
+            cover_letter_text=draft.body_text,
+            answer_kit_json="[]", claim_refs_json=draft.claim_refs_json,
+            review_flags_json=draft.review_flags_json, workspace_id=campaign.workspace_id,
+        )
+        link.application_status = "ready"
+        link.updated_at = utc_now()
+        self.session.add_all([package, link])
+        self._complete(task, f"The vacancy-tailored CV and cover letter for {job.title} are ready.")
 
     def _index_documents(self, task: AgentTask, company: Company) -> None:
         if not task.run_id:
