@@ -18,6 +18,7 @@
     "source_kind": {"type": "string", "enum": ["employer", "ats", "trusted_portal", "other_portal"]},
     "external_listing_id": {"type": "string"},
     "description": {"type": "string"},
+    "listing_language": {"type": "string", "minLength": 1},
     "locations": {"type": "array", "items": {"type": "string"}},
     "remote_policy": {"type": "string"},
     "employment_types": {"type": "array", "items": {"type": "string"}},

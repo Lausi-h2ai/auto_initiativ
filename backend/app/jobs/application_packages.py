@@ -31,6 +31,23 @@ def _tokens(value: str) -> set[str]:
     return {token for token in re.findall(r"[a-zA-ZÀ-ÿ0-9+#.-]{3,}", value.casefold())}
 
 
+def _listed_job_application_language(job: JobPosting) -> str:
+    """Return an explicit drafting language, including a fallback for legacy job records."""
+    try:
+        raw = json.loads(job.raw_json or "{}")
+    except json.JSONDecodeError:
+        raw = {}
+    listing_language = raw.get("listing_language") if isinstance(raw, dict) else None
+    if isinstance(listing_language, str) and listing_language.strip():
+        return listing_language.strip()
+    try:
+        languages = json.loads(job.languages_json or "[]")
+    except json.JSONDecodeError:
+        languages = []
+    first_language = next((item.strip() for item in languages if isinstance(item, str) and item.strip()), None)
+    return first_language or "auto"
+
+
 class JobApplicationPackageService:
     def __init__(self, session: Session, settings: Settings) -> None:
         self.session = session
@@ -101,13 +118,14 @@ class JobApplicationPackageService:
         company_name = getattr(company, "name", None) or job.external_company_id
         company_raw = json.loads(getattr(company, "raw_json", "{}") or "{}")
         company_raw.update({"company_id": company_id, "name": company_name})
+        application_language = _listed_job_application_language(job)
         brief = ApplicationDraftBrief(
             run_id=run_id,
             draft_id=f"draft-{run_id}",
             company_id=company_id,
             contact_id=f"application-portal-{job.job_id}",
             company_slug=slugify(company_name, fallback="employer"),
-            language="auto",
+            language=application_language,
             notes="This is a response to a published vacancy, not an unsolicited application.",
         )
         master_data = json.loads(master.raw_json)
@@ -128,6 +146,7 @@ class JobApplicationPackageService:
         )
         job_payload = {
             "job_id": job.job_id, "title": job.title, "company_name": company_name,
+            "listing_language": application_language,
             "description": job.description or "", "requirements": json.loads(job.requirements_json or "[]"),
             "responsibilities": json.loads(job.responsibilities_json or "[]"),
             "languages": json.loads(job.languages_json or "[]"), "locations": json.loads(job.locations_json or "[]"),
@@ -142,7 +161,7 @@ class JobApplicationPackageService:
 
 Listed-job requirements:
 - This is a response to the published vacancy in `job_posting` inside `draft_context.json`.
-- Detect the listing's primary language from its actual title, description, requirements, and responsibilities. Write the cover letter/email and CV in that language unless the profile explicitly makes that inappropriate.
+- Write the cover letter/email and CV in the explicit `run.language` / `job_posting.listing_language`. Do not switch languages merely because normalized vacancy fields or technical terms are in English.
 - Perform deliberate keyword matching: identify the role's important skills, tools, responsibilities, seniority, and domain terms; prioritize only approved claims that truthfully support them; reuse natural employer terminology without keyword stuffing.
 - Tailor the summary, skills ordering, project/experience bullets, and cover letter to the vacancy and available company evidence. The letter must name concrete role needs and matching evidence. Never use generic filler such as 'my approved profile contains relevant experience'.
 - Treat `email_draft.body_text` as the application cover letter. Address a hiring team when no named recipient exists; do not research or guess a recipient.

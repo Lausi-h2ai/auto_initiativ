@@ -503,6 +503,28 @@ def test_verified_job_queues_tailored_application_agent(authenticated_app):
         assert task.agent_role == "resume_and_email_team"
 
 
+def test_listed_job_application_language_prefers_listing_language_and_supports_legacy_records():
+    from backend.app.jobs.application_packages import _listed_job_application_language
+
+    explicit = JobPosting(
+        job_id="explicit-language", external_company_id="company", title="Engineer",
+        source_url="https://example.com/1", canonical_url="https://example.com/1",
+        application_url="https://example.com/1/apply", source_domain="example.com",
+        source_kind="employer", fingerprint="explicit-language",
+        languages_json=json.dumps(["English", "German"]), raw_json=json.dumps({"listing_language": "German"}),
+    )
+    legacy = JobPosting(
+        job_id="legacy-language", external_company_id="company", title="Engineer",
+        source_url="https://example.com/2", canonical_url="https://example.com/2",
+        application_url="https://example.com/2/apply", source_domain="example.com",
+        source_kind="employer", fingerprint="legacy-language",
+        languages_json=json.dumps(["German", "English"]),
+    )
+
+    assert _listed_job_application_language(explicit) == "German"
+    assert _listed_job_application_language(legacy) == "German"
+
+
 def test_workflow_worker_reconciles_running_job_research(authenticated_app, monkeypatch):
     from backend.app.workflow.engine import WorkflowEngine, WorkflowWorker
 
