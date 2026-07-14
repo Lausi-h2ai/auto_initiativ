@@ -131,6 +131,7 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
       return route.fulfill({ json: { sending_enabled: false, provider: "gmail_sandbox", allow_real_recipients: false, sandbox_recipient: null, gmail_configured: false, mode: "disabled" } });
     }
     if (pathname === "/companies") return route.fulfill({ json: withCompanies ? [company] : [] });
+    if (pathname === "/jobs") return route.fulfill({ json: [] });
     if (pathname === "/fit-evaluations") return route.fulfill({ json: withCompanies ? [fit] : [] });
     if (["/contacts", "/email-drafts", "/outbox/drafts", "/outbox/sent", "/send-intents", "/gate-results", "/outreach-records", "/sent-messages"].includes(pathname)) {
       return route.fulfill({ json: [] });
@@ -353,4 +354,13 @@ test("approved profile has a readable viewer with expandable source JSON", async
   await expect(page.getByText("Approved for tailoring", { exact: true })).toBeVisible();
   await page.getByText("View source JSON").first().click();
   await expect(page.getByText('"display_name": "Alex Morgan"')).toBeVisible();
+});
+
+test("listed jobs have a separate empty-state workspace", async ({ page }) => {
+  await mockApi(page, { withCompanies: true });
+  await page.goto(`${baseURL}/dashboard`);
+  await page.getByRole("link", { name: /Open positions/ }).click();
+  await expect(page.getByRole("heading", { name: "Open positions" })).toBeVisible();
+  await expect(page.getByText(/Vacancies stay separate from initiative outreach/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No verified positions yet" })).toBeVisible();
 });
