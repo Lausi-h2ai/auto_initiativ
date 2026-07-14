@@ -130,6 +130,9 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
       return route.fulfill({ json: [] });
     }
     if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/status")) return route.fulfill({ json: { status: "closed", entries: [] } });
+    if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/start") && request.method() === "POST") {
+      return route.fulfill({ json: { status: "running", session_state: { status: "running", entries: [{ id: "recruiter-greeting", role: "assistant", content: "What would you like to refine in your profile?" }] } } });
+    }
     if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/artifacts")) return route.fulfill({ json: { artifacts: onboardingReview ? onboardingArtifacts() : [] } });
     if (pathname.includes("/onboarding/chat/") && pathname.includes("/artifacts/")) {
       const filename = decodeURIComponent(pathname.split("/").at(-1));
@@ -297,4 +300,17 @@ test("onboarding review is visible and approval requires confirmation", async ({
   await approve.click();
   await expect.poll(() => state.promotionCalls()).toBe(1);
   await expect(page.getByText("Approved. Your profile is now the source of truth for your recruiter team.")).toBeVisible();
+});
+
+test("approved profile can reopen the recruiter conversation for refinement", async ({ page }) => {
+  await mockApi(page);
+  await page.goto(`${baseURL}/dashboard#/profile`);
+
+  await page.getByRole("button", { name: "Update with my recruiter" }).click();
+
+  await expect(page.getByRole("heading", { name: "Update your story with your recruiter." })).toBeVisible();
+  await expect(page.getByText("What would you like to refine in your profile?")).toBeVisible();
+  await expect(page.getByText("Your current profile stays approved and in use until you review and approve the revised version.")).toBeVisible();
+  await page.getByRole("button", { name: "Back to approved profile" }).click();
+  await expect(page.getByRole("heading", { name: "Your career story is ready for the team." })).toBeVisible();
 });

@@ -406,6 +406,7 @@ function ProfilePage() {
   const [promotionIssues, setPromotionIssues] = useState<any[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [refiningProfile, setRefiningProfile] = useState(false);
 
   const loadStatus = () => request<any>(`/onboarding/chat/${runId}/status`).then(setStatus).catch(() => undefined);
   const loadInputFiles = () => request<any>(`/onboarding/chat/${runId}/input-files`).then((result) => setUploadedFiles(result.files || [])).catch(() => undefined);
@@ -418,6 +419,10 @@ function ProfilePage() {
   };
   useEffect(() => { void loadStatus(); void loadInputFiles(); void loadReview().catch(() => undefined); }, []);
   const act = async (path: string, payload?: unknown) => { setBusy(true); setError(""); try { const result = await mutate<any>(`/onboarding/chat/${runId}/${path}`, "POST", payload); setStatus(result.session_state || status); await refresh(); return result; } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
+  const beginRefinement = async () => {
+    setRefiningProfile(true);
+    await act("start");
+  };
   const send = async (event: FormEvent) => {
     event.preventDefault();
     const text = message.trim();
@@ -492,14 +497,14 @@ function ProfilePage() {
   return (
     <div className="page profile-page">
       <PageHeader eyebrow="The foundation for every application" title="Your story, understood once and used carefully" />
-      {profile.has_approved_profile ? (
+      {profile.has_approved_profile && !refiningProfile ? (
         <>
-          <section className="profile-hero"><div><span className="approval-seal">✓</span><div><p className="eyebrow">Recruiter-approved foundation</p><h2>Your career story is ready for the team.</h2><p>Research, fit, CV, design, and writing specialists all work from this approved source. They cannot invent experience or claims.</p></div></div><button className="secondary-button" onClick={() => void act("start")}>Update with my recruiter</button></section>
+          <section className="profile-hero"><div><span className="approval-seal">✓</span><div><p className="eyebrow">Recruiter-approved foundation</p><h2>Your career story is ready for the team.</h2><p>Research, fit, CV, design, and writing specialists all work from this approved source. They cannot invent experience or claims.</p></div></div><button className="secondary-button" onClick={() => void beginRefinement()}>Update with my recruiter</button></section>
           <div className="profile-foundation-grid"><FoundationCard index="01" title="Career identity" body="Verified experience, strengths, education, and approved claims." status="Approved" /><FoundationCard index="02" title="Opportunity direction" body="Target roles, locations, preferences, and meaningful exclusions." status="Approved" /><FoundationCard index="03" title="Voice and boundaries" body="How your team writes, what it emphasizes, and what it never claims." status="Approved" /></div>
         </>
       ) : (
         <section className="onboarding-layout">
-          <div className="onboarding-story"><p className="eyebrow">A thoughtful beginning</p><h2>Talk with your onboarding recruiter.</h2><p>This is a conversation, not a long form. Share documents, answer naturally, and let the recruiter organize the details.</p><div className="onboarding-promises"><span>One guided review at the end</span><span>Uncertain facts stay visibly flagged</span><span>Your approved claims become the source of truth</span></div></div>
+          <div className="onboarding-story"><p className="eyebrow">{profile.has_approved_profile ? "Refine your approved foundation" : "A thoughtful beginning"}</p><h2>{profile.has_approved_profile ? "Update your story with your recruiter." : "Talk with your onboarding recruiter."}</h2><p>{profile.has_approved_profile ? "Your current profile stays approved and in use until you review and approve the revised version." : "This is a conversation, not a long form. Share documents, answer naturally, and let the recruiter organize the details."}</p>{profile.has_approved_profile ? <button className="text-button" onClick={() => setRefiningProfile(false)}>Back to approved profile</button> : null}<div className="onboarding-promises"><span>One guided review at the end</span><span>Uncertain facts stay visibly flagged</span><span>Your approved claims become the source of truth</span></div></div>
           <div className="chat-card">
             <header><div><RoleAvatar letters="OR" active /><div><strong>Onboarding recruiter</strong><small>{status?.status === "running" ? "Listening" : "Ready when you are"}</small></div></div><StatusPill status={status?.status || "not started"} /></header>
             <div className="chat-uploads"><label className={busy ? "disabled" : ""}>+ Add CV or document<input type="file" disabled={busy} accept=".pdf,.doc,.docx,.txt,.md,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadFile(file); event.currentTarget.value = ""; }} /></label><span>{uploadedFiles.length ? `${uploadedFiles.length} ${uploadedFiles.length === 1 ? "file" : "files"} shared` : "PDF, Word, or text - max 20 MB"}</span></div>
