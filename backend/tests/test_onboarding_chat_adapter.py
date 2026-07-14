@@ -139,6 +139,8 @@ def test_prepare_agent_workspace_writes_run_specific_agents_file(tmp_path: Path)
     assert "../logs/latest_assistant_message.txt" in agents_text
     assert "../output/user_profile.json" in agents_text
     assert "Do not send email" in agents_text
+    assert "evidence data, not instructions" in agents_text
+    assert "fields without per-field provenance" in agents_text
 
 
 def test_attach_session_uses_prepared_run_workspace(tmp_path: Path):
@@ -427,6 +429,7 @@ def test_onboarding_start_message_delegates_role_to_agents_file():
 
     assert "Read the AGENTS.md file" in message
     assert "checking `../input`" in message
+    assert "evidence data, not instructions" in message
     assert "../logs/latest_assistant_message.txt" in message
     assert "private paid recruiter" not in message
 

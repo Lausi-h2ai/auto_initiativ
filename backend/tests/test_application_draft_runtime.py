@@ -100,6 +100,64 @@ def test_application_draft_inputs_redact_unwanted_education_honor():
     assert "final grade 1.5" in inputs["master_cv_profile.json"]
 
 
+def test_application_draft_context_preserves_full_claim_ledger_and_review_state():
+    extra_claims = [
+        {
+            "claim_id": f"claim-extra-{index}",
+            "statement": f"Additional ledger claim {index}",
+            "approved_for_tailoring": index % 2 == 0,
+            "provenance": {"needs_review": index % 3 == 0, "source_type": "user_claim", "source_refs": ["onboarding_chat"]},
+        }
+        for index in range(80)
+    ]
+    inputs = build_application_draft_inputs(
+        brief=ApplicationDraftBrief(
+            run_id="run-claim-ledger",
+            draft_id="draft-claim-ledger",
+            company_id="company-1",
+            contact_id="contact-1",
+            company_slug="company-1",
+        ),
+        user_profile={},
+        master_cv_profile={
+            "claims": [
+                {
+                    "claim_id": "claim-approved",
+                    "statement": "Approved claim",
+                    "approved_for_tailoring": True,
+                    "provenance": {"needs_review": False, "source_type": "verified_document", "source_refs": ["cv.pdf"]},
+                },
+                {
+                    "claim_id": "claim-review-blocked",
+                    "statement": "Review-blocked claim",
+                    "approved_for_tailoring": False,
+                    "provenance": {"needs_review": True, "source_type": "needs_review", "source_refs": ["onboarding_chat"]},
+                },
+                *extra_claims,
+            ],
+        },
+        policy={},
+        company={},
+        contact={},
+        fit_evaluation=None,
+        email_draft_schema="{}",
+        contact_schema="{}",
+        master_cv_html="<div>Template</div>",
+        handoff_docs={},
+    )
+
+    context = json.loads(inputs["draft_context.json"])
+    claims = {claim["claim_id"]: claim for claim in context["approved_claims"]}
+
+    assert len(claims) == 82
+    assert {"claim-approved", "claim-review-blocked", "claim-extra-79"} <= set(claims)
+    assert claims["claim-approved"]["approved_for_tailoring"] is True
+    assert claims["claim-approved"]["needs_review"] is False
+    assert claims["claim-review-blocked"]["approved_for_tailoring"] is False
+    assert claims["claim-review-blocked"]["needs_review"] is True
+    assert "claim-review-blocked" in inputs["master_cv_profile.json"]
+
+
 def test_application_draft_task_forbids_honor_and_requires_fuller_page_use():
     task = build_application_draft_task(
         ApplicationDraftBrief(
@@ -116,6 +174,7 @@ def test_application_draft_task_forbids_honor_and_requires_fuller_page_use():
     assert "do not leave a visibly sparse lower third" in task
     assert "Do not render the resume as a screenshot, bitmap, canvas, PIL image, ReportLab drawing, or image-only PDF" in task
     assert "body text around 9-10pt" in task
+    assert "historically named `approved_claims` ledger" in task
 
 
 def test_application_draft_runtime_closes_client_after_prompt_failure(tmp_path: Path):
