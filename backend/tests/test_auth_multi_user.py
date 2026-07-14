@@ -145,7 +145,18 @@ def test_unauthenticated_api_is_rejected(authenticated_app):
     assert response.status_code == 401
 
 
-def test_local_registration_lists_and_switches_fresh_workspaces(client):
+def test_local_registration_lists_and_switches_fresh_workspaces(client, db_session):
+    legacy_user = User(
+        google_subject="bootstrap:legacy",
+        email="legacy@local.invalid",
+        display_name="Legacy administrator",
+        status="pending",
+        role="admin",
+    )
+    db_session.add(legacy_user)
+    db_session.flush()
+    db_session.add(Workspace(workspace_id="workspace-legacy", owner_user_id=legacy_user.id, name="Legacy workspace"))
+    db_session.commit()
     capabilities = client.get("/auth/local/capabilities")
     assert capabilities.status_code == 200
     assert capabilities.json() == {"registration_enabled": True}
@@ -177,6 +188,7 @@ def test_local_registration_lists_and_switches_fresh_workspaces(client):
     accounts = client.get("/auth/local/accounts")
     assert accounts.status_code == 200
     account_rows = {item["email"]: item for item in accounts.json()}
+    assert account_rows["legacy@local.invalid"]["workspace"]["name"] == "Legacy workspace"
     assert account_rows["fresh-two@example.com"]["is_current"] is True
     assert account_rows["fresh-one@example.com"]["is_current"] is False
     assert account_rows["fresh-one@example.com"]["workspace"]["id"] == first_me.json()["workspace"]["id"]
@@ -184,6 +196,10 @@ def test_local_registration_lists_and_switches_fresh_workspaces(client):
     switched_back = client.post("/auth/local/switch", json={"user_id": first_me.json()["id"]})
     assert switched_back.status_code == 200
     assert client.get("/me").json()["id"] == first_me.json()["id"]
+
+    legacy = client.post("/auth/local/switch", json={"user_id": account_rows["legacy@local.invalid"]["id"]})
+    assert legacy.status_code == 200
+    assert client.get("/me").json()["workspace"]["name"] == "Legacy workspace"
 
 
 def test_local_registration_is_disabled_in_authenticated_mode(authenticated_app):

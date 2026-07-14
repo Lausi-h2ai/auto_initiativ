@@ -119,9 +119,14 @@ def local_accounts(
     settings: Settings = Depends(get_settings),
 ) -> list[dict[str, object]]:
     _require_local_auth(settings)
-    users = session.exec(select(User).where(User.status == "active").order_by(User.display_name, User.id)).all()
+    users = session.exec(select(User).order_by(User.display_name, User.id)).all()
     workspaces = {item.owner_user_id: item for item in session.exec(select(Workspace).where(Workspace.status == "active")).all()}
-    switchable = [user for user in users if user.google_subject == "bootstrap:legacy" or user.google_subject.startswith(("dev:", "local:"))]
+    switchable = [
+        user
+        for user in users
+        if user.google_subject == "bootstrap:legacy"
+        or (user.status == "active" and user.google_subject.startswith(("dev:", "local:")))
+    ]
     return [
         {
             "id": user.id,
@@ -144,8 +149,9 @@ def local_switch(
 ) -> dict[str, object]:
     _require_local_auth(settings)
     user = session.get(User, payload.user_id)
-    if user is None or user.status != "active" or not (
-        user.google_subject == "bootstrap:legacy" or user.google_subject.startswith(("dev:", "local:"))
+    if user is None or not (
+        user.google_subject == "bootstrap:legacy"
+        or (user.status == "active" and user.google_subject.startswith(("dev:", "local:")))
     ):
         raise HTTPException(status_code=404, detail="Local account not found.")
     workspace = session.exec(select(Workspace).where(Workspace.owner_user_id == user.id, Workspace.status == "active")).first()

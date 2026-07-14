@@ -45,7 +45,7 @@ class AuthWorkspaceMiddleware(BaseHTTPMiddleware):
                 user = None
                 if auth_session is not None and auth_session.revoked_at is None and not _is_expired(auth_session.expires_at):
                     user = session.get(User, auth_session.user_id)
-                    if user is None or user.status != "active":
+                    if user is None or (user.status != "active" and user.google_subject != "bootstrap:legacy"):
                         user = None
                     else:
                         auth_session.last_seen_at = utc_now()
