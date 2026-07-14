@@ -181,3 +181,18 @@ def test_onboarding_promotion_api_promotes_without_send_endpoint(client, runs_ro
     assert body["status"] == "approved"
     assert {snapshot["status"] for snapshot in body["promoted"]} == {"approved"}
     assert client.post("/send").status_code == 404
+
+    approved = client.get("/profile/approved")
+    assert approved.status_code == 200
+    bundle = approved.json()
+    assert bundle["user_profile"]["snapshot"]["status"] == "approved"
+    assert bundle["user_profile"]["content"]["identity"]["display_name"]
+    assert bundle["master_cv_profile"]["content"]["claims"]
+    assert bundle["policy"]["content"]["limits"]["daily_send_limit"] >= 0
+
+
+def test_approved_profile_bundle_requires_all_three_approved_documents(client):
+    response = client.get("/profile/approved")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "A complete approved profile is not available yet."

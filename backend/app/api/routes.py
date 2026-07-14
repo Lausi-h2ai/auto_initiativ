@@ -128,6 +128,8 @@ from backend.app.schemas.api import (
     OutboxSentResponse,
     ProfileSnapshotSummaryResponse,
     ProfileSummaryResponse,
+    ProfileDocumentResponse,
+    ApprovedProfileBundleResponse,
     QueueDraftForSendRequest,
     QueueDraftForSendResponse,
     OutreachRecordResponse,
@@ -1289,6 +1291,27 @@ def profile_summary(session: Session = Depends(get_session)) -> ProfileSummaryRe
             _profile_snapshot_summary("master_cv_profile", approved_master_cv) if approved_master_cv is not None else None
         ),
         approved_policy=_profile_snapshot_summary("policy", approved_policy) if approved_policy is not None else None,
+    )
+
+
+@router.get("/profile/approved", response_model=ApprovedProfileBundleResponse)
+def approved_profile_bundle(session: Session = Depends(get_session)) -> ApprovedProfileBundleResponse:
+    user_profile = _latest_snapshot(session, UserProfileSnapshot, "approved")
+    master_cv = _latest_snapshot(session, MasterCvProfileSnapshot, "approved")
+    policy = _latest_snapshot(session, PolicySnapshot, "approved")
+    if user_profile is None or master_cv is None or policy is None:
+        raise HTTPException(status_code=404, detail="A complete approved profile is not available yet.")
+
+    def document(snapshot_type: str, snapshot: Any) -> ProfileDocumentResponse:
+        return ProfileDocumentResponse(
+            snapshot=_profile_snapshot_summary(snapshot_type, snapshot),
+            content=_raw_json_object(snapshot),
+        )
+
+    return ApprovedProfileBundleResponse(
+        user_profile=document("user_profile", user_profile),
+        master_cv_profile=document("master_cv_profile", master_cv),
+        policy=document("policy", policy),
     )
 
 

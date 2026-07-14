@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, createContext, useContext, useEffect, useMemo, us
 import { Link, NavLink, Navigate, Route, Routes, useNavigate, useSearchParams } from "react-router-dom";
 import {
   AgentTask,
+  ApprovedProfileBundle,
   Campaign,
   Company,
   DocumentItem,
@@ -168,6 +169,7 @@ function Shell() {
           <Route path="/companies" element={<CompaniesPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/profile/view" element={<ProfileViewerPage />} />
           <Route path="/exceptions" element={<ExceptionsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/admin" element={<AdminPage />} />
@@ -391,6 +393,7 @@ function CampaignWizard() {
 
 function ProfilePage() {
   const { profile, me, refresh } = useWorkspace();
+  const [profileParams] = useSearchParams();
   const runId = `onboarding-${me.workspace.id}`.replace(/[^a-zA-Z0-9_-]/g, "-");
   const [status, setStatus] = useState<any>(null);
   const [message, setMessage] = useState("");
@@ -406,7 +409,7 @@ function ProfilePage() {
   const [promotionIssues, setPromotionIssues] = useState<any[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [refiningProfile, setRefiningProfile] = useState(false);
+  const [refiningProfile, setRefiningProfile] = useState(profileParams.get("refine") === "1");
 
   const loadStatus = () => request<any>(`/onboarding/chat/${runId}/status`).then(setStatus).catch(() => undefined);
   const loadInputFiles = () => request<any>(`/onboarding/chat/${runId}/input-files`).then((result) => setUploadedFiles(result.files || [])).catch(() => undefined);
@@ -499,8 +502,8 @@ function ProfilePage() {
       <PageHeader eyebrow="The foundation for every application" title="Your story, understood once and used carefully" />
       {profile.has_approved_profile && !refiningProfile ? (
         <>
-          <section className="profile-hero"><div><span className="approval-seal">✓</span><div><p className="eyebrow">Recruiter-approved foundation</p><h2>Your career story is ready for the team.</h2><p>Research, fit, CV, design, and writing specialists all work from this approved source. They cannot invent experience or claims.</p></div></div><button className="secondary-button" onClick={() => void beginRefinement()}>Update with my recruiter</button></section>
-          <div className="profile-foundation-grid"><FoundationCard index="01" title="Career identity" body="Verified experience, strengths, education, and approved claims." status="Approved" /><FoundationCard index="02" title="Opportunity direction" body="Target roles, locations, preferences, and meaningful exclusions." status="Approved" /><FoundationCard index="03" title="Voice and boundaries" body="How your team writes, what it emphasizes, and what it never claims." status="Approved" /></div>
+          <section className="profile-hero"><div><span className="approval-seal">✓</span><div><p className="eyebrow">Recruiter-approved foundation</p><h2>Your career story is ready for the team.</h2><p>Research, fit, CV, design, and writing specialists all work from this approved source. They cannot invent experience or claims.</p></div></div><div className="profile-hero-actions"><Link className="primary-button" to="/profile/view">View my profile</Link><button className="secondary-button" onClick={() => void beginRefinement()}>Update with my recruiter</button></div></section>
+          <div className="profile-foundation-grid"><Link className="foundation-link" to="/profile/view?section=career"><FoundationCard index="01" title="Career identity" body="Verified experience, strengths, education, and approved claims." status="Approved" /></Link><Link className="foundation-link" to="/profile/view?section=direction"><FoundationCard index="02" title="Opportunity direction" body="Target roles, locations, preferences, and meaningful exclusions." status="Approved" /></Link><Link className="foundation-link" to="/profile/view?section=boundaries"><FoundationCard index="03" title="Voice and boundaries" body="How your team writes, what it emphasizes, and what it never claims." status="Approved" /></Link></div>
         </>
       ) : (
         <section className="onboarding-layout">
@@ -526,7 +529,8 @@ function ProfilePage() {
             <header><div><p className="eyebrow">Step 2 · Review</p><h2 id="onboarding-review-title">Review what your recruiter prepared</h2><p>These drafts are not used for tailoring until you approve them.</p></div><span className={`review-readiness ${reviewReady && candidatesReady ? "ready" : "blocked"}`}>{reviewReady && candidatesReady ? "Ready for your review" : "Needs correction"}</span></header>
             <div className="artifact-status-grid">{artifacts.map((artifact: any) => <article className={artifact.error_count ? "invalid" : "valid"} key={artifact.filename}><span>{artifact.error_count ? "!" : "✓"}</span><div><strong>{artifactLabel(artifact.filename)}</strong><small>{artifact.error_count ? `${artifact.error_count} validation ${artifact.error_count === 1 ? "issue" : "issues"}` : artifact.exists ? "Validated" : "Missing"}</small></div></article>)}</div>
             {artifacts.flatMap((artifact: any) => (artifact.errors || []).map((issue: any, index: number) => <div className="review-issue" key={`${artifact.filename}-${index}`}><strong>{artifactLabel(artifact.filename)}</strong><span>{issue.path ? `${issue.path}: ` : ""}{issue.message}</span></div>))}
-            <div className="review-documents">{artifacts.filter((artifact: any) => artifact.exists).map((artifact: any) => <details key={artifact.filename} open={artifact.filename === "onboarding_review.json"}><summary><span>{artifactLabel(artifact.filename)}</span><small>{artifact.filename === "onboarding_review.json" ? "Open questions and review flags" : "Prepared source data"}</small></summary><pre>{JSON.stringify(artifactContents[artifact.filename] || {}, null, 2)}</pre></details>)}</div>
+            {artifactContents["user_profile.json"] && artifactContents["master_cv_profile.json"] && artifactContents["policy.json"] ? <ProfilePresentation userProfile={artifactContents["user_profile.json"]} masterCv={artifactContents["master_cv_profile.json"]} policy={artifactContents["policy.json"]} mode="candidate" /> : null}
+            {artifactContents["onboarding_review.json"] ? <div className="review-documents"><details open><summary><span>Open questions</span><small>Items to resolve before or after approval</small></summary><pre>{JSON.stringify(artifactContents["onboarding_review.json"], null, 2)}</pre></details></div> : null}
             <div className="review-approval"><div><p className="eyebrow">Step 3 · Approve</p><h3>Make this your approved profile foundation</h3><p>Approval makes the validated profile, CV claims, and policy available to the recruiter team. Review flags remain visible and unapproved CV claims remain unavailable for tailoring.</p></div><label><input type="checkbox" checked={reviewConfirmed} disabled={!reviewReady || !candidatesReady || busy} onChange={(event) => setReviewConfirmed(event.target.checked)} /><span>I reviewed the prepared profile, CV claims, policy, and open questions.</span></label><button className="primary-button" disabled={!canApprove} onClick={() => void approve()}>{approving ? "Approving..." : "Approve my profile"}</button>{!reviewReady || !candidatesReady ? <small>Approval unlocks after all four files pass validation and the three candidate snapshots are ready.</small> : null}</div>
             {promotionIssues.map((issue: any, index: number) => <div className="review-issue" key={`${issue.code}-${index}`}><strong>{issue.snapshot_type ? artifactLabel(`${issue.snapshot_type}.json`) : "Approval"}</strong><span>{issue.field ? `${issue.field}: ` : ""}{issue.message}</span></div>)}
           </section> : null}
@@ -539,6 +543,75 @@ function ProfilePage() {
 function artifactLabel(filename: string) {
   return ({ "user_profile.json": "Career profile", "master_cv_profile.json": "Master CV claims", "policy.json": "Search and outreach policy", "onboarding_review.json": "Open questions" } as Record<string, string>)[filename] || filename.replaceAll("_", " ").replace(".json", "");
 }
+
+function ProfileViewerPage() {
+  const [bundle, setBundle] = useState<ApprovedProfileBundle | null>(null);
+  const [error, setError] = useState("");
+  const [params] = useSearchParams();
+  useEffect(() => {
+    request<ApprovedProfileBundle>("/profile/approved").then(setBundle).catch((cause) => setError(messageOf(cause)));
+  }, []);
+  useEffect(() => {
+    if (!bundle) return;
+    const section = params.get("section");
+    if (section) document.getElementById(`profile-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [bundle, params]);
+
+  if (error) return <div className="page"><PageHeader eyebrow="Your approved foundation" title="Your profile could not be opened" /><InlineError message={error} /><Link className="secondary-button" to="/profile">Back to My story</Link></div>;
+  if (!bundle) return <InlineLoading />;
+  const updatedAt = [bundle.user_profile.snapshot.created_at, bundle.master_cv_profile.snapshot.created_at, bundle.policy.snapshot.created_at].sort().at(-1);
+  return (
+    <div className="page profile-viewer-page">
+      <PageHeader eyebrow="Your approved foundation" title="The story your recruiter team works from" aside={<div className="profile-viewer-actions"><Link className="secondary-button" to="/profile">Back to My story</Link><Link className="primary-button" to="/profile?refine=1">Update with my recruiter</Link></div>} />
+      <div className="profile-viewer-meta"><span>✓ Approved source of truth</span>{updatedAt ? <small>Last prepared {new Date(updatedAt).toLocaleDateString()}</small> : null}</div>
+      <ProfilePresentation userProfile={bundle.user_profile.content} masterCv={bundle.master_cv_profile.content} policy={bundle.policy.content} mode="approved" />
+    </div>
+  );
+}
+
+function ProfilePresentation({ userProfile, masterCv, policy, mode }: { userProfile: Record<string, any>; masterCv: Record<string, any>; policy: Record<string, any>; mode: "approved" | "candidate" }) {
+  const identity = userProfile.identity || {};
+  const preferences = userProfile.preferences || {};
+  const claims = Array.isArray(masterCv.claims) ? masterCv.claims : [];
+  const claimGroups = claims.reduce((groups: Record<string, any[]>, claim: any) => {
+    (groups[claim.category || "other"] ||= []).push(claim);
+    return groups;
+  }, {});
+  const exclusions = policy.exclusions || {};
+  const reviewItems = Array.isArray(userProfile.review_items) ? userProfile.review_items : [];
+  const needsReviewClaims = claims.filter((claim: any) => claim.provenance?.needs_review || !claim.approved_for_tailoring);
+  return (
+    <div className={`profile-presentation ${mode}`}>
+      <section className="profile-identity" id="profile-career">
+        <div><p className="eyebrow">Career identity</p><h2>{identity.display_name || "Your career profile"}</h2>{identity.headline ? <p className="profile-headline">{identity.headline}</p> : null}<div className="identity-details">{identity.location ? <span>Location · {identity.location}</span> : null}{identity.email ? <span>{identity.email}</span> : null}{identity.phone ? <span>{identity.phone}</span> : null}</div>{Array.isArray(identity.links) && identity.links.length ? <div className="profile-links">{identity.links.map((link: string) => <a href={link} target="_blank" rel="noreferrer" key={link}>{link.replace(/^https?:\/\//, "")}</a>)}</div> : null}</div>
+        <SourceJson title="Career profile source JSON" value={userProfile} />
+      </section>
+
+      <section className="profile-section" id="profile-direction"><SectionHeading eyebrow="Direction" title="What you want next" body="The preferences your recruiter uses when deciding where to look and how to represent you." /><div className="profile-fact-grid"><ProfileValues title="Target roles" values={preferences.target_roles} /><ProfileValues title="Target locations" values={preferences.target_locations} /><ProfileValues title="Remote preferences" values={preferences.remote_preferences} /><ProfileValues title="Relocation" values={preferences.relocation_preferences} /><ProfileValues title="Work authorization" values={userProfile.work_authorization} /><ProfileValues title="Languages" values={userProfile.languages} language /><ProfileValues title="Availability" values={preferences.availability ? [preferences.availability] : []} /><ProfileValues title="Communication tone" values={preferences.communication_tone ? [preferences.communication_tone] : []} /></div></section>
+
+      <section className="profile-section"><SectionHeading eyebrow="Approved evidence" title="Career claims your team can use" body="Claims are grouped for quick reading. Tailoring status determines whether a claim may appear in applications." />{Object.keys(claimGroups).length ? <div className="claim-groups">{Object.entries(claimGroups).map(([category, items]) => <div className="claim-group" key={category}><h3>{human(category)}</h3>{(items as any[]).map((claim: any) => <article className="claim-card" key={claim.claim_id}><div className="claim-card-top"><div>{claim.role ? <strong>{claim.role}</strong> : null}{claim.organization ? <span>{claim.organization}</span> : null}</div><span className={claim.approved_for_tailoring ? "tailoring-status approved" : "tailoring-status blocked"}>{claim.approved_for_tailoring ? "Usable in applications" : "Not approved for tailoring"}</span></div><p>{claim.statement}</p>{claim.start_date || claim.end_date ? <small>{[claim.start_date, claim.end_date || "Present"].filter(Boolean).join(" – ")}</small> : null}{Array.isArray(claim.tags) && claim.tags.length ? <div className="tag-row">{claim.tags.map((tag: string) => <span key={tag}>{tag}</span>)}</div> : null}<Evidence provenance={claim.provenance} /></article>)}</div>)}</div> : <p className="profile-empty-copy">No career claims are recorded yet.</p>}<SourceJson title="Master CV source JSON" value={masterCv} /></section>
+
+      <section className="profile-section" id="profile-boundaries"><SectionHeading eyebrow="Boundaries and safeguards" title="How your recruiter must work" body="Exclusions and deterministic outreach limits remain in force for every campaign." /><div className="boundary-grid"><div className="boundary-card"><h3>Meaningful exclusions</h3>{["industries", "company_names", "domains", "keywords"].map((group) => <PolicyItems key={group} title={human(group)} items={exclusions[group]} />)}</div><div className="boundary-card"><h3>Outreach rules</h3><PolicyRule label="Daily send limit" value={policy.limits?.daily_send_limit} /><PolicyRule label="Weekly send limit" value={policy.limits?.weekly_send_limit} /><PolicyRule label="Company repeat" value={policy.outreach?.allow_company_repeat ? "Allowed within policy" : `Blocked for ${policy.outreach?.company_dedupe_window_days ?? 0} days`} /><PolicyRule label="Recipient repeat" value={policy.outreach?.allow_recipient_repeat ? "Allowed within policy" : `Blocked for ${policy.outreach?.recipient_dedupe_window_days ?? 0} days`} /><PolicyRule label="Manual review before send" value={policy.outreach?.require_manual_review_before_send ? "Required" : "Not required"} /><PolicyRule label="Minimum confidence" value={policy.review_thresholds?.minimum_required_confidence !== undefined ? `${Math.round(policy.review_thresholds.minimum_required_confidence * 100)}%` : undefined} /></div>{Array.isArray(policy.forbidden_claims) && policy.forbidden_claims.length ? <div className="boundary-card wide"><h3>Claims your team must never make</h3><ul>{policy.forbidden_claims.map((claim: string) => <li key={claim}>{claim}</li>)}</ul></div> : null}</div><SourceJson title="Policy source JSON" value={policy} /></section>
+
+      {reviewItems.length || needsReviewClaims.length ? <section className="profile-attention"><p className="eyebrow">Needs attention</p><h2>Details that remain visible for review</h2>{reviewItems.map((item: any, index: number) => <div key={`${item.field}-${index}`}><strong>{human(item.field || "Profile item")}</strong><span>{item.reason}</span></div>)}{needsReviewClaims.map((claim: any) => <div key={claim.claim_id}><strong>{human(claim.category || "Claim")}</strong><span>{claim.statement}</span></div>)}</section> : null}
+    </div>
+  );
+}
+
+function SectionHeading({ eyebrow, title, body }: { eyebrow: string; title: string; body: string }) { return <header className="profile-section-heading"><p className="eyebrow">{eyebrow}</p><h2>{title}</h2><p>{body}</p></header>; }
+function SourceJson({ title, value }: { title: string; value: unknown }) { return <details className="source-json"><summary>View source JSON</summary><div><strong>{title}</strong><pre>{JSON.stringify(value, null, 2)}</pre></div></details>; }
+function ProfileValues({ title, values, language = false }: { title: string; values: any; language?: boolean }) {
+  const list = Array.isArray(values) ? values : [];
+  if (!list.length) return null;
+  return <article className="profile-fact"><h3>{title}</h3>{list.map((item: any, index: number) => <div className="profile-fact-value" key={`${item?.value || item?.language || item}-${index}`}><span>{language ? `${item.language}${item.level ? ` · ${item.level}` : ""}` : typeof item === "string" ? item : item.value}</span><Evidence provenance={item?.provenance} /></div>)}</article>;
+}
+function Evidence({ provenance }: { provenance?: any }) {
+  if (!provenance) return null;
+  const labels: Record<string, string> = { verified_document: "Verified", user_claim: "User-provided", inferred: "Inferred", needs_review: "Needs review" };
+  return <details className={`evidence ${provenance.needs_review ? "review" : ""}`}><summary>{labels[provenance.source_type] || human(provenance.source_type || "Evidence")}</summary><div><span>Confidence {Math.round(Number(provenance.confidence || 0) * 100)}%</span>{Array.isArray(provenance.source_refs) && provenance.source_refs.length ? <ul>{provenance.source_refs.map((source: string) => <li key={source}>{source}</li>)}</ul> : <span>No source reference recorded</span>}</div></details>;
+}
+function PolicyItems({ title, items }: { title: string; items: any }) { if (!Array.isArray(items) || !items.length) return null; return <div className="policy-items"><strong>{title}</strong>{items.map((item: any, index: number) => <div key={`${item.value}-${index}`}><span>{item.value}</span>{item.reason ? <small>{item.reason}</small> : null}<Evidence provenance={item.provenance} /></div>)}</div>; }
+function PolicyRule({ label, value }: { label: string; value: unknown }) { if (value === undefined || value === null) return null; return <div className="policy-rule"><span>{label}</span><strong>{String(value)}</strong></div>; }
 
 function DocumentsPage() {
   const { documents } = useWorkspace();

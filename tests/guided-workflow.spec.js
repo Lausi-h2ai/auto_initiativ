@@ -121,6 +121,7 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
         },
       });
     }
+    if (pathname === "/profile/approved") return route.fulfill({ json: approvedProfileBundle() });
     if (pathname === "/email-delivery/settings") {
       return route.fulfill({ json: { sending_enabled: false, provider: "gmail_sandbox", allow_real_recipients: false, sandbox_recipient: null, gmail_configured: false, mode: "disabled" } });
     }
@@ -136,7 +137,9 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
     if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/artifacts")) return route.fulfill({ json: { artifacts: onboardingReview ? onboardingArtifacts() : [] } });
     if (pathname.includes("/onboarding/chat/") && pathname.includes("/artifacts/")) {
       const filename = decodeURIComponent(pathname.split("/").at(-1));
-      return route.fulfill({ json: { filename, exists: true, json_content: filename === "onboarding_review.json" ? { run_id: "onboarding-review", items: [{ item_id: "missing-phone", item_type: "missing_information", summary: "Phone number will be added later." }] } : { schema_version: "1.0", prepared_for_review: true } } });
+      const bundle = approvedProfileBundle();
+      const contents = { "user_profile.json": bundle.user_profile.content, "master_cv_profile.json": bundle.master_cv_profile.content, "policy.json": bundle.policy.content };
+      return route.fulfill({ json: { filename, exists: true, json_content: filename === "onboarding_review.json" ? { run_id: "onboarding-review", items: [{ item_id: "missing-phone", item_type: "missing_information", summary: "Phone number will be added later." }] } : contents[filename] } });
     }
     if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/input-files")) return route.fulfill({ json: { files: [] } });
     if (pathname.includes("/onboarding/runs/") && pathname.endsWith("/snapshots")) return route.fulfill({ json: [] });
@@ -170,6 +173,16 @@ function onboardingArtifacts() {
     error_count: 0, errors: [], reason_codes: [], snapshot_type: snapshotType,
     snapshot_id: snapshotType ? index + 11 : null, snapshot_status: snapshotType ? "candidate" : null,
   }));
+}
+
+function approvedProfileBundle() {
+  const provenance = { source_type: "verified_document", confidence: 0.96, needs_review: false, source_refs: ["cv.pdf"] };
+  const snapshot = { snapshot_type: "user_profile", id: 1, external_id: "profile-1", status: "approved", created_at: "2026-07-03T08:00:00Z" };
+  return {
+    user_profile: { snapshot, content: { schema_version: "1.0", profile_id: "profile-1", created_at: snapshot.created_at, identity: { display_name: "Alex Morgan", headline: "Applied AI product engineer", location: "Berlin, Germany", email: "alex@example.com", links: ["https://example.com"] }, preferences: { target_roles: [{ value: "Applied AI Engineer", provenance }], target_locations: [{ value: "Berlin", provenance }], remote_preferences: ["Hybrid"], relocation_preferences: [], communication_tone: { value: "Direct and thoughtful", provenance }, availability: { value: "Within one month", provenance } }, work_authorization: [{ value: "Germany", provenance }], languages: [{ language: "English", level: "Fluent", provenance }], provenance_summary: { source_documents: ["cv.pdf"], interview_notes: [] } } },
+    master_cv_profile: { snapshot: { ...snapshot, snapshot_type: "master_cv_profile", external_id: "cv-1" }, content: { schema_version: "1.0", profile_id: "cv-1", created_at: snapshot.created_at, claims: [{ claim_id: "claim-1", category: "experience", statement: "Built reliable AI product workflows.", role: "Product Engineer", organization: "Example Labs", tags: ["AI", "Python"], approved_for_tailoring: true, provenance }] } },
+    policy: { snapshot: { ...snapshot, snapshot_type: "policy", external_id: "policy-1" }, content: { schema_version: "1.0", policy_id: "policy-1", created_at: snapshot.created_at, exclusions: { industries: [{ value: "Gambling", reason: "Personal preference", provenance }], company_names: [], domains: [], keywords: [] }, outreach: { allow_company_repeat: false, allow_recipient_repeat: false, company_dedupe_window_days: 90, recipient_dedupe_window_days: 180, require_manual_review_before_send: true }, limits: { daily_send_limit: 5, weekly_send_limit: 20 }, review_thresholds: { minimum_required_confidence: 0.8, block_needs_review_required_fields: true }, forbidden_claims: ["Unverified revenue impact"] } },
+  };
 }
 
 function emptySummary() {
@@ -291,6 +304,8 @@ test("onboarding review is visible and approval requires confirmation", async ({
 
   await expect(page.getByRole("heading", { name: "Review what your recruiter prepared" })).toBeVisible();
   await expect(page.getByText("Ready for your review", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Alex Morgan" })).toBeVisible();
+  await expect(page.getByText("Built reliable AI product workflows.", { exact: true })).toBeVisible();
   await expect(page.getByText("Phone number will be added later.")).toBeVisible();
 
   const approve = page.getByRole("button", { name: "Approve my profile" });
@@ -313,4 +328,18 @@ test("approved profile can reopen the recruiter conversation for refinement", as
   await expect(page.getByText("Your current profile stays approved and in use until you review and approve the revised version.")).toBeVisible();
   await page.getByRole("button", { name: "Back to approved profile" }).click();
   await expect(page.getByRole("heading", { name: "Your career story is ready for the team." })).toBeVisible();
+});
+
+test("approved profile has a readable viewer with expandable source JSON", async ({ page }) => {
+  await mockApi(page);
+  await page.goto(`${baseURL}/dashboard#/profile`);
+  await page.getByRole("link", { name: "View my profile" }).click();
+
+  await expect(page).toHaveURL(/#\/profile\/view/);
+  await expect(page.getByRole("heading", { name: "Alex Morgan" })).toBeVisible();
+  await expect(page.getByText("Applied AI Engineer", { exact: true })).toBeVisible();
+  await expect(page.getByText("Built reliable AI product workflows.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Gambling", { exact: true })).toBeVisible();
+  await page.getByText("View source JSON").first().click();
+  await expect(page.getByText('"display_name": "Alex Morgan"')).toBeVisible();
 });

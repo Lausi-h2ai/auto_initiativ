@@ -200,6 +200,16 @@ def test_workspace_queries_and_duplicate_ids_are_isolated(authenticated_app):
     assert [item["name"] for item in user.json()] == ["User Company"]
 
 
+def test_approved_profile_bundle_is_workspace_isolated(authenticated_app):
+    client = authenticated_app["client"]
+    admin = client.get("/profile/approved", cookies={"ai_session": authenticated_app["admin_token"]})
+    user = client.get("/profile/approved", cookies={"ai_session": authenticated_app["user_token"]})
+
+    assert admin.status_code == 200
+    assert user.status_code == 200
+    assert admin.json()["user_profile"]["snapshot"]["id"] != user.json()["user_profile"]["snapshot"]["id"]
+
+
 def test_admin_can_inspect_other_workspace_read_only_and_access_is_audited(authenticated_app):
     client = authenticated_app["client"]
     target = authenticated_app["user_workspace_public_id"]

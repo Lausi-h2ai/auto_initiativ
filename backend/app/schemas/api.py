@@ -216,6 +216,17 @@ class ProfileSummaryResponse(BaseModel):
     approved_policy: ProfileSnapshotSummaryResponse | None = None
 
 
+class ProfileDocumentResponse(BaseModel):
+    snapshot: ProfileSnapshotSummaryResponse
+    content: dict[str, Any]
+
+
+class ApprovedProfileBundleResponse(BaseModel):
+    user_profile: ProfileDocumentResponse
+    master_cv_profile: ProfileDocumentResponse
+    policy: ProfileDocumentResponse
+
+
 class OnboardingPromotionResponse(BaseModel):
     run_id: str
     status: str

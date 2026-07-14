@@ -98,6 +98,21 @@ export type ProfileSummary = {
   candidate_user_profiles?: unknown[];
 };
 
+export type Provenance = {
+  source_type: "verified_document" | "user_claim" | "inferred" | "needs_review";
+  confidence: number;
+  needs_review: boolean;
+  source_refs: string[];
+};
+
+export type ProvenancedText = { value: string; provenance: Provenance };
+
+export type ApprovedProfileBundle = {
+  user_profile: { snapshot: { created_at: string; status: string }; content: Record<string, any> };
+  master_cv_profile: { snapshot: { created_at: string; status: string }; content: Record<string, any> };
+  policy: { snapshot: { created_at: string; status: string }; content: Record<string, any> };
+};
+
 export type Delivery = {
   sending_enabled: boolean;
   provider: string;
