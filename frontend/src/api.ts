@@ -53,6 +53,7 @@ export type JobPosting = {
   role_fit_score?: number | null;
   fit_reasons: unknown[];
   fit_gaps: unknown[];
+  campaign_id?: string | null;
   application_status?: string | null;
   package_ready: boolean;
   answer_kit: Array<{

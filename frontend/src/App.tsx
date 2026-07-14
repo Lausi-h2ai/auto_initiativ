@@ -831,6 +831,7 @@ function JobsPage() {
   const [selected, setSelected] = useState<JobPosting | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const selectedCampaignId = selected?.campaign_id || activeCampaign?.id;
   useEffect(() => {
     setSelected(null);
     setError("");
@@ -1035,7 +1036,17 @@ function JobsPage() {
                   ))}
                 </DrawerSection>
               </>
-            ) : null}
+            ) : (
+              <DrawerSection title="Application documents">
+                <p>
+                  {selected.application_status === "preparing"
+                    ? "Your application team is tailoring the CV and cover letter now. The finished documents will appear here automatically."
+                    : selected.vacancy_status === "verified_open"
+                      ? "No documents have been created yet. Start the application team to tailor the CV and cover letter for this position."
+                      : "No documents have been created yet. Revalidate this vacancy first; once it is confirmed open, you can start the application team."}
+                </p>
+              </DrawerSection>
+            )}
             <div className="drawer-actions">
               <a
                 className="secondary-button"
@@ -1045,34 +1056,42 @@ function JobsPage() {
               >
                 View listing
               </a>
-              <Link
-                className="secondary-button"
-                to={`/documents?company=${encodeURIComponent(String(selected.company_id))}&companyName=${encodeURIComponent(selected.company_name || selected.company_id)}&job=${encodeURIComponent(selected.id)}&jobTitle=${encodeURIComponent(selected.title)}`}
-              >
-                View application documents
-              </Link>
-              {activeCampaign &&
+              {selected.package_ready ? (
+                <Link
+                  className="secondary-button"
+                  to={`/documents?company=${encodeURIComponent(String(selected.company_id))}&companyName=${encodeURIComponent(selected.company_name || selected.company_id)}&job=${encodeURIComponent(selected.id)}&jobTitle=${encodeURIComponent(selected.title)}`}
+                >
+                  View application documents
+                </Link>
+              ) : null}
+              {selectedCampaignId &&
               selected.vacancy_status === "verified_open" &&
-              !selected.package_ready ? (
+              !selected.package_ready &&
+              selected.application_status !== "preparing" ? (
                 <button
                   className="primary-button"
                   disabled={busy}
                   onClick={() =>
                     void act(
-                      `/campaigns/${activeCampaign.id}/jobs/${selected.id}/prepare`,
+                      `/campaigns/${selectedCampaignId}/jobs/${selected.id}/prepare`,
                     )
                   }
                 >
                   Prepare application
                 </button>
               ) : null}
-              {activeCampaign && selected.package_ready ? (
+              {selected.application_status === "preparing" ? (
+                <button className="primary-button" disabled>
+                  Preparing application…
+                </button>
+              ) : null}
+              {selectedCampaignId && selected.package_ready ? (
                 <button
                   className="primary-button"
                   disabled={busy}
                   onClick={() =>
                     void act(
-                      `/campaigns/${activeCampaign.id}/jobs/${selected.id}/application-status`,
+                      `/campaigns/${selectedCampaignId}/jobs/${selected.id}/application-status`,
                       "PATCH",
                       { status: "applied" },
                     )
@@ -1087,7 +1106,7 @@ function JobsPage() {
                   disabled={busy}
                   onClick={() => void act(`/jobs/${selected.id}/revalidate`)}
                 >
-                  Revalidate
+                  Revalidate to prepare
                 </button>
               ) : null}
               <a

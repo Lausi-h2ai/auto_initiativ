@@ -495,8 +495,12 @@ def test_verified_job_queues_tailored_application_agent(authenticated_app):
         session.commit()
     response = client.post("/campaigns/campaign-job-package/jobs/job-package-test/prepare", cookies={"ai_session": token}, headers=headers)
     assert response.status_code == 202
+    assert response.json()["campaign_id"] == "campaign-job-package"
     assert response.json()["application_status"] == "preparing"
     assert response.json()["package_ready"] is False
+    combined_job = next(item for item in client.get("/jobs", cookies={"ai_session": token}).json() if item["id"] == "job-package-test")
+    assert combined_job["campaign_id"] == "campaign-job-package"
+    assert combined_job["application_status"] == "preparing"
     with workspace_context(RequestIdentity(user_id=authenticated_app["user_id"], workspace_id=authenticated_app["user_workspace_id"])), Session(authenticated_app["engine"]) as session:
         task = session.exec(select(AgentTask).where(AgentTask.task_type == "job_application_draft")).one()
         assert json.loads(task.input_json)["job_id"] == "job-package-test"

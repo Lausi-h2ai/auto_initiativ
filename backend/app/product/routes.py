@@ -790,6 +790,7 @@ def product_summary(
 
 def _job_response(job: JobPosting, session: Session, *, campaign_job: CampaignJob | None = None) -> dict[str, Any]:
     company = session.get(Company, job.company_id) if job.company_id else None
+    campaign = session.get(Campaign, campaign_job.campaign_id) if campaign_job else None
     fit = session.exec(
         select(JobFitEvaluation).where(JobFitEvaluation.job_posting_id == job.id).order_by(JobFitEvaluation.created_at.desc())
     ).first()
@@ -830,6 +831,7 @@ def _job_response(job: JobPosting, session: Session, *, campaign_job: CampaignJo
         "fit_decision": fit.decision if fit else None,
         "fit_reasons": json.loads(fit.reasons_json or "[]") if fit else [],
         "fit_gaps": json.loads(fit.gaps_json or "[]") if fit else [],
+        "campaign_id": campaign.campaign_id if campaign else None,
         "application_status": campaign_job.application_status if campaign_job else None,
         "application_note": campaign_job.status_note if campaign_job else None,
         "package_ready": package is not None,
@@ -840,7 +842,16 @@ def _job_response(job: JobPosting, session: Session, *, campaign_job: CampaignJo
 
 @router.get("/jobs")
 def list_jobs(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
-    return [_job_response(job, session) for job in session.exec(select(JobPosting).order_by(JobPosting.updated_at.desc())).all()]
+    jobs = session.exec(select(JobPosting).order_by(JobPosting.updated_at.desc())).all()
+    responses = []
+    for job in jobs:
+        campaign_job = session.exec(
+            select(CampaignJob)
+            .where(CampaignJob.job_posting_id == job.id)
+            .order_by(CampaignJob.updated_at.desc())
+        ).first()
+        responses.append(_job_response(job, session, campaign_job=campaign_job))
+    return responses
 
 
 @router.get("/jobs/{job_id}")
