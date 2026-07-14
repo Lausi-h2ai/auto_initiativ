@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     )
     pi_rpc_research_thinking: str = Field(default="medium", validation_alias="PI_RPC_RESEARCH_THINKING")
     pi_rpc_research_timeout_seconds: float = Field(default=3600, validation_alias="PI_RPC_RESEARCH_TIMEOUT_SECONDS")
+    pi_rpc_job_verification_model: str = Field(
+        default=agent_model_for("job_verification"),
+        validation_alias="PI_RPC_JOB_VERIFICATION_MODEL",
+    )
     onboarding_artifact_repair_attempts: int = Field(default=2, validation_alias="ONBOARDING_ARTIFACT_REPAIR_ATTEMPTS")
     pi_rpc_extension_path: Path = Field(
         default=REPO_ROOT / "backend" / "pi_extensions" / "onboarding_artifacts.ts",
@@ -61,6 +65,10 @@ class Settings(BaseSettings):
     pi_rpc_research_extension_path: Path = Field(
         default=REPO_ROOT / "backend" / "pi_extensions" / "company_research.ts",
         validation_alias="PI_RPC_RESEARCH_EXTENSION_PATH",
+    )
+    pi_rpc_job_verification_extension_path: Path = Field(
+        default=REPO_ROOT / "backend" / "pi_extensions" / "job_verification.ts",
+        validation_alias="PI_RPC_JOB_VERIFICATION_EXTENSION_PATH",
     )
     pi_rpc_application_draft_extension_path: Path = Field(
         default=REPO_ROOT / "backend" / "pi_extensions" / "application_draft.ts",

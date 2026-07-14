@@ -104,16 +104,24 @@ class JobNormalizationService:
 
     def _verification_status(self, job: JobPosting, evidence: dict[str, Any], flags: list[str]) -> str:
         now = datetime.now(timezone.utc)
-        if job.valid_through and job.valid_through < now:
+        valid_through = job.valid_through
+        if valid_through is not None and valid_through.tzinfo is None:
+            valid_through = valid_through.replace(tzinfo=timezone.utc)
+        if valid_through and valid_through < now:
             return "expired"
         if evidence.get("http_status") in {404, 410} or evidence.get("closed_signal_found"):
             return "closed"
         if not evidence.get("page_accessible") or not evidence.get("apply_route_available"):
             return "apply_unavailable"
-        if job.date_posted is None:
+        has_future_deadline = valid_through is not None and valid_through >= now
+        if job.date_posted is None and not has_future_deadline:
             flags.append("missing_date_posted")
             return "needs_review"
-        trusted = job.source_kind == "employer"
+        if job.date_posted is None:
+            flags.append("missing_date_posted")
+        trusted = job.source_kind == "employer" or (
+            job.source_kind == "ats" and evidence.get("employer_identity_match", False)
+        )
         source = next((item for item in self.session.exec(select(JobSourceTrust).where(JobSourceTrust.enabled == True)).all() if job.source_domain == item.domain or job.source_domain.endswith(f".{item.domain}")), None)  # noqa: E712
         if source and source.trust_level == "blocked":
             flags.append("blocked_source")

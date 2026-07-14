@@ -28,6 +28,11 @@ AGENT_MODEL_POLICIES: Final = (
         default_model="gpt-5.6-terra",
     ),
     AgentModelPolicy(
+        workload="job_verification",
+        setting_name="pi_rpc_job_verification_model",
+        default_model="gpt-5.6-terra",
+    ),
+    AgentModelPolicy(
         workload="application_draft",
         setting_name="pi_rpc_application_draft_model",
         default_model="gpt-5.6-terra",

@@ -21,6 +21,7 @@ ONBOARDING_CHAT_RUN_TYPE = "onboarding_chat"
 COMPANY_RESEARCH_RUN_TYPE = "company_research"
 APPLICATION_DRAFT_RUN_TYPE = "application_draft"
 JOB_RESEARCH_RUN_TYPE = "job_research"
+JOB_VERIFICATION_RUN_TYPE = "job_verification"
 ONBOARDING_CHAT_FILENAMES = (
     "user_profile.json",
     "master_cv_profile.json",
@@ -34,6 +35,7 @@ COMPANY_RESEARCH_FILENAMES = (
 )
 APPLICATION_DRAFT_FILENAMES = ("email_draft.json",)
 JOB_RESEARCH_FILENAMES = ("companies/*.json", "jobs/*.json", "job_fit_evaluations/*.json")
+JOB_VERIFICATION_FILENAMES = ("jobs/*.json", "job_fit_evaluations/*.json")
 PASSING_VALIDATION_STATUSES = {"schema_validation_passed", "artifact_validation_passed"}
 LEGACY_COMPANY_RESEARCH_FILENAMES = (
     "company_candidate.json",
@@ -46,6 +48,7 @@ SUPPORTED_RUN_TYPES = {
     COMPANY_RESEARCH_RUN_TYPE: COMPANY_RESEARCH_FILENAMES,
     APPLICATION_DRAFT_RUN_TYPE: APPLICATION_DRAFT_FILENAMES,
     JOB_RESEARCH_RUN_TYPE: JOB_RESEARCH_FILENAMES,
+    JOB_VERIFICATION_RUN_TYPE: JOB_VERIFICATION_FILENAMES,
 }
 
 
@@ -110,7 +113,7 @@ class RunImportService:
                 return ImportResult(run=run, validation_results=[])
 
             expected_filenames = SUPPORTED_RUN_TYPES[run_type]
-            if run_type in {COMPANY_RESEARCH_RUN_TYPE, JOB_RESEARCH_RUN_TYPE}:
+            if run_type in {COMPANY_RESEARCH_RUN_TYPE, JOB_RESEARCH_RUN_TYPE, JOB_VERIFICATION_RUN_TYPE}:
                 expected_filenames = ()
             elif run_type == APPLICATION_DRAFT_RUN_TYPE:
                 expected_filenames = self._application_draft_expected_json_files(run_id) or expected_filenames
@@ -154,7 +157,7 @@ class RunImportService:
 
             results: list[ValidationResult] = []
             discovered_json_files = self._discover_json_files(resolved_output_path, run_type=run_type)
-            if run_type in {COMPANY_RESEARCH_RUN_TYPE, JOB_RESEARCH_RUN_TYPE} and not discovered_json_files:
+            if run_type in {COMPANY_RESEARCH_RUN_TYPE, JOB_RESEARCH_RUN_TYPE, JOB_VERIFICATION_RUN_TYPE} and not discovered_json_files:
                 for filename in SUPPORTED_RUN_TYPES[run_type]:
                     results.append(self._record_missing_expected_file(run_id, resolved_output_path / filename, filename=filename))
 
@@ -178,7 +181,7 @@ class RunImportService:
             normalization_result = None
             normalization_metadata: dict[str, Any] | None = None
             should_normalize = run.status == "imported" or (
-                run_type in {COMPANY_RESEARCH_RUN_TYPE, JOB_RESEARCH_RUN_TYPE}
+                run_type in {COMPANY_RESEARCH_RUN_TYPE, JOB_RESEARCH_RUN_TYPE, JOB_VERIFICATION_RUN_TYPE}
                 and any(result.status == "schema_validation_passed" for result in results)
             )
             if should_normalize:
@@ -190,7 +193,7 @@ class RunImportService:
                 }
                 if normalization_result.reason_codes:
                     run.status = "imported_with_errors"
-                if run_type == JOB_RESEARCH_RUN_TYPE:
+                if run_type in {JOB_RESEARCH_RUN_TYPE, JOB_VERIFICATION_RUN_TYPE}:
                     from backend.app.imports.job_normalizer import JobNormalizationService
                     job_result = JobNormalizationService(self.session).normalize_run(run_id)
                     normalization_metadata["job_counts"] = job_result.counts
@@ -259,7 +262,7 @@ class RunImportService:
         self.session.flush()
 
     def _discover_json_files(self, output_path: Path, *, run_type: str | None) -> list[tuple[Path, str]]:
-        if run_type in {COMPANY_RESEARCH_RUN_TYPE, JOB_RESEARCH_RUN_TYPE}:
+        if run_type in {COMPANY_RESEARCH_RUN_TYPE, JOB_RESEARCH_RUN_TYPE, JOB_VERIFICATION_RUN_TYPE}:
             files = [
                 path
                 for path in output_path.rglob("*.json")

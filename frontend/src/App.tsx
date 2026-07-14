@@ -921,9 +921,11 @@ function JobsPage() {
   const [selected, setSelected] = useState<JobPosting | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [manualConfirming, setManualConfirming] = useState(false);
   const selectedCampaignId = selected?.campaign_id || activeCampaign?.id;
   useEffect(() => {
     setSelected(null);
+    setManualConfirming(false);
     setError("");
     if (!activeCampaign) setJobs(initialJobs);
     else
@@ -951,8 +953,10 @@ function JobsPage() {
       await mutate(path, method, payload);
       await reload();
       await refresh();
+      return true;
     } catch (cause) {
       setError(messageOf(cause));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1010,7 +1014,10 @@ function JobsPage() {
           <button
             className="job-card"
             key={job.id}
-            onClick={() => setSelected(job)}
+            onClick={() => {
+              setSelected(job);
+              setManualConfirming(false);
+            }}
           >
             <div className="job-card-top">
               <StatusPill status={job.vacancy_status} />
@@ -1040,11 +1047,7 @@ function JobsPage() {
               </span>
             </div>
             <footer>
-              <span>
-                {job.date_posted
-                  ? `Posted ${relativeDate(job.date_posted)}`
-                  : "Posting date needs review"}
-              </span>
+              <span>{jobDateLabel(job)}</span>
               <span>
                 {job.application_status
                   ? human(job.application_status)
@@ -1062,7 +1065,13 @@ function JobsPage() {
           }
         >
           <aside className="company-drawer job-drawer">
-            <button className="drawer-close" onClick={() => setSelected(null)}>
+            <button
+              className="drawer-close"
+              onClick={() => {
+                setSelected(null);
+                setManualConfirming(false);
+              }}
+            >
               ×
             </button>
             <p className="eyebrow">{human(selected.vacancy_status)}</p>
@@ -1133,10 +1142,40 @@ function JobsPage() {
                     ? "Your application team is tailoring the CV and cover letter now. The finished documents will appear here automatically."
                     : selected.vacancy_status === "verified_open"
                       ? "No documents have been created yet. Start the application team to tailor the CV and cover letter for this position."
-                      : "No documents have been created yet. Revalidate this vacancy first; once it is confirmed open, you can start the application team."}
+                      : `No documents have been created yet. ${jobVerificationMessage(selected)} Revalidate it, or confirm it manually after checking the listing and application route yourself.`}
                 </p>
               </DrawerSection>
             )}
+            {manualConfirming && selected.vacancy_status !== "verified_open" ? (
+              <DrawerSection title="Confirm your manual check">
+                <p>
+                  Confirm only after opening the listing and its application route and checking that neither says the position is closed, filled, or expired. Your confirmation is timestamped and audited.
+                </p>
+                <div className="drawer-actions">
+                  <button
+                    className="primary-button"
+                    disabled={busy}
+                    onClick={async () => {
+                      const confirmed = await act(
+                        `/jobs/${selected.id}/manual-validation`,
+                        "POST",
+                        { confirmed_open: true },
+                      );
+                      if (confirmed) setManualConfirming(false);
+                    }}
+                  >
+                    I checked: listing is open
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => setManualConfirming(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </DrawerSection>
+            ) : null}
             <div className="drawer-actions">
               <a
                 className="secondary-button"
@@ -1191,13 +1230,22 @@ function JobsPage() {
                 </button>
               ) : null}
               {selected.vacancy_status !== "verified_open" ? (
-                <button
-                  className="primary-button"
-                  disabled={busy}
-                  onClick={() => void act(`/jobs/${selected.id}/revalidate`)}
-                >
-                  Revalidate to prepare
-                </button>
+                <>
+                  <button
+                    className="primary-button"
+                    disabled={busy}
+                    onClick={() => void act(`/jobs/${selected.id}/revalidate`)}
+                  >
+                    Revalidate this listing
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => setManualConfirming(true)}
+                  >
+                    Validate manually
+                  </button>
+                </>
               ) : null}
               <a
                 className="primary-button"
@@ -3754,6 +3802,8 @@ function roleName(role: string) {
     email_writer: "Email writer",
     delivery_coordinator: "Delivery coordinator",
     onboarding_recruiter: "Onboarding recruiter",
+    vacancy_scout: "Vacancy scout",
+    vacancy_verifier: "Vacancy verifier",
   };
   return names[role] || human(role);
 }
@@ -3774,6 +3824,28 @@ function human(value: string) {
 function relativeDate(value: string) {
   const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
   return days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+}
+function jobDateLabel(job: JobPosting) {
+  if (job.date_posted) return `Posted ${relativeDate(job.date_posted)}`;
+  if (job.valid_through) {
+    return `Apply by ${new Date(job.valid_through).toLocaleDateString()}`;
+  }
+  return job.vacancy_status === "verified_open"
+    ? "Posting date not published"
+    : "Posting date needs review";
+}
+function jobVerificationMessage(job: JobPosting) {
+  const flags = job.review_flags || [];
+  if (flags.includes("missing_date_posted") && job.valid_through) {
+    return `The source does not publish a posting date, but it shows an application deadline of ${new Date(job.valid_through).toLocaleDateString()}.`;
+  }
+  if (flags.includes("missing_date_posted")) {
+    return "The source does not publish a posting date or another reliable freshness date.";
+  }
+  if (flags.includes("untrusted_verification_source")) {
+    return "The listing has not yet been confirmed from an employer or trusted application source.";
+  }
+  return "The current source evidence is not sufficient for automatic open-status verification.";
 }
 function sumValues(values: Record<string, number>) {
   return Object.values(values).reduce(

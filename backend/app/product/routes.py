@@ -45,6 +45,7 @@ from backend.app.db.session import get_session
 from backend.app.workflow.engine import WorkflowEngine
 from backend.app.jobs.application_packages import JobApplicationPackageService, JobPackageError
 from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
+from backend.app.imports.job_normalizer import JobNormalizationService
 
 
 router = APIRouter(tags=["product"])
@@ -76,6 +77,11 @@ class CampaignModeUpdate(BaseModel):
 class JobApplicationStatusUpdate(BaseModel):
     status: Literal["discovered", "saved", "preparing", "ready", "applied", "interview", "offer", "rejected", "withdrawn"]
     note: str | None = Field(default=None, max_length=2000)
+
+
+class JobManualValidation(BaseModel):
+    confirmed_open: Literal[True]
+    note: str | None = Field(default=None, max_length=1000)
 
 
 class JobSourceTrustUpdate(BaseModel):
@@ -1008,10 +1014,97 @@ def revalidate_job(job_id: str, session: Session = Depends(get_session)) -> dict
     campaign = session.get(Campaign, link.campaign_id) if link else None
     if campaign is None:
         raise HTTPException(status_code=409, detail="The job is not attached to an active campaign.")
-    task = AgentTask(task_id=f"task-{uuid4()}", campaign_id=campaign.id, company_id=job.company_id, agent_role="vacancy_scout", task_type="job_research", narrative=f"Revalidating {job.title} at its canonical source.", input_json=json.dumps({"job_id": job.job_id, "canonical_url": job.canonical_url, "targeted_revalidation": True}), workspace_id=campaign.workspace_id)
+    last_verified = job.last_verified_at
+    if last_verified is not None:
+        if last_verified.tzinfo is None:
+            last_verified = last_verified.replace(tzinfo=timezone.utc)
+        if utc_now() - last_verified <= timedelta(hours=24):
+            flags = [
+                flag
+                for flag in json.loads(job.review_flags_json or "[]")
+                if flag not in {"missing_date_posted", "untrusted_verification_source"}
+            ]
+            status = JobNormalizationService(session)._verification_status(
+                job,
+                json.loads(job.verification_evidence_json or "{}"),
+                flags,
+            )
+            if status == "verified_open":
+                job.vacancy_status = status
+                job.review_flags_json = json.dumps(sorted(set(flags)))
+                job.updated_at = utc_now()
+                session.add(job)
+                session.add(
+                    AuditLog(
+                        actor_type="user",
+                        action="job_listing_reassessed_from_current_evidence",
+                        entity_type="job_posting",
+                        entity_id=job.job_id,
+                        result_status=status,
+                        metadata_json=json.dumps(
+                            {"campaign_id": campaign.campaign_id, "evidence_observed_at": last_verified.isoformat()},
+                            sort_keys=True,
+                        ),
+                    )
+                )
+                session.commit()
+                return {"job_id": job.job_id, "status": status, "reassessed_existing_evidence": True}
+    task = AgentTask(task_id=f"task-{uuid4()}", campaign_id=campaign.id, company_id=job.company_id, agent_role="vacancy_verifier", task_type="job_verification", narrative=f"Verifying only {job.title} at its supplied source.", input_json=json.dumps({"job_id": job.job_id}), workspace_id=campaign.workspace_id)
     session.add(task)
     session.commit()
     return {"job_id": job.job_id, "task_id": task.task_id, "status": "queued"}
+
+
+@router.post("/jobs/{job_id}/manual-validation")
+def manually_validate_job(
+    job_id: str,
+    payload: JobManualValidation,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    job = session.exec(select(JobPosting).where(JobPosting.job_id == job_id)).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job posting not found.")
+    if not job.canonical_url or not job.application_url:
+        raise HTTPException(status_code=409, detail="Manual validation requires a listing URL and application route.")
+    identity = current_identity()
+    confirmed_at = utc_now()
+    evidence = json.loads(job.verification_evidence_json or "{}")
+    signals = evidence.get("signals") if isinstance(evidence.get("signals"), list) else []
+    evidence["signals"] = list(dict.fromkeys([*signals, "The user manually confirmed that the listing and application route are currently open."]))
+    evidence["manual_confirmation"] = {
+        "confirmed_at": confirmed_at.isoformat(),
+        "user_id": identity.user_id if identity is not None else None,
+        "note": payload.note,
+    }
+    job.verification_evidence_json = json.dumps(evidence, sort_keys=True)
+    job.vacancy_status = "verified_open"
+    job.last_verified_at = confirmed_at
+    job.last_seen_at = confirmed_at
+    job.updated_at = confirmed_at
+    session.add(job)
+    link = session.exec(
+        select(CampaignJob).where(CampaignJob.job_posting_id == job.id).order_by(CampaignJob.updated_at.desc())
+    ).first()
+    campaign = session.get(Campaign, link.campaign_id) if link is not None else None
+    session.add(
+        AuditLog(
+            actor_type="user",
+            action="job_listing_manually_validated",
+            entity_type="job_posting",
+            entity_id=job.job_id,
+            result_status="verified_open",
+            metadata_json=json.dumps(
+                {
+                    "campaign_id": campaign.campaign_id if campaign is not None else None,
+                    "note": payload.note,
+                    "previous_review_flags": json.loads(job.review_flags_json or "[]"),
+                },
+                sort_keys=True,
+            ),
+        )
+    )
+    session.commit()
+    return _job_response(job, session, campaign_job=link)
 
 
 @router.get("/settings/job-sources")

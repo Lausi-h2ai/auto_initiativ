@@ -14,11 +14,13 @@ from backend.app.core.config import Settings
 def test_agent_model_policy_centralizes_gpt_5_6_defaults_by_workload(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("PI_RPC_ONBOARDING_MODEL", raising=False)
     monkeypatch.delenv("PI_RPC_RESEARCH_MODEL", raising=False)
+    monkeypatch.delenv("PI_RPC_JOB_VERIFICATION_MODEL", raising=False)
     monkeypatch.delenv("PI_RPC_APPLICATION_DRAFT_MODEL", raising=False)
     settings = Settings(_env_file=None)
 
     assert agent_model_for("onboarding") == "gpt-5.6-sol"
     assert agent_model_for("company_research") == "gpt-5.6-terra"
+    assert agent_model_for("job_verification") == "gpt-5.6-terra"
     assert agent_model_for("application_draft") == "gpt-5.6-terra"
     assert {
         policy.setting_name: getattr(settings, policy.setting_name)

@@ -103,6 +103,8 @@ class WorkflowEngine:
                 self._launch_research(task)
             elif task.task_type == "job_research":
                 self._launch_job_research(task)
+            elif task.task_type == "job_verification":
+                self._launch_job_verification(task)
             elif task.task_type == "contact_research":
                 self._launch_contact_research(task)
             elif task.task_type == "application_draft":
@@ -126,6 +128,9 @@ class WorkflowEngine:
             elif task.task_type == "job_research":
                 from backend.app.agents.job_research_runtime import JobResearchRuntime
                 self._reconcile_job_research(task, JobResearchRuntime(settings=self.settings).status(task.run_id or ""))
+            elif task.task_type == "job_verification":
+                from backend.app.agents.job_verification_runtime import JobVerificationRuntime
+                self._reconcile_job_verification(task, JobVerificationRuntime(settings=self.settings).status(task.run_id or ""))
             elif task.task_type == "contact_research":
                 from backend.app.agents.company_research_runtime import CompanyResearchRuntime
 
@@ -179,7 +184,11 @@ class WorkflowEngine:
         campaign = self.session.get(Campaign, task.campaign_id)
         if campaign is None or campaign.campaign_type != "listed_job_search":
             raise ValueError("Job research requires a listed-job campaign.")
-        run_id = prepare_job_research_run(campaign=campaign, session=self.session, settings=self.settings)
+        run_id = prepare_job_research_run(
+            campaign=campaign,
+            session=self.session,
+            settings=self.settings,
+        )
         JobResearchRuntime(settings=self.settings).launch(run_id)
         task.run_id = run_id
         task.progress = 15
@@ -189,6 +198,26 @@ class WorkflowEngine:
         campaign.status = "researching"
         campaign.updated_at = utc_now()
         self.session.add_all([task, campaign])
+        self.session.commit()
+
+    def _launch_job_verification(self, task: AgentTask) -> None:
+        from backend.app.agents.job_verification_runtime import JobVerificationRuntime, prepare_job_verification_run
+
+        campaign = self.session.get(Campaign, task.campaign_id)
+        if campaign is None or campaign.campaign_type != "listed_job_search":
+            raise ValueError("Job verification requires a listed-job campaign.")
+        payload = json_object(task.input_json)
+        job = self.session.exec(select(JobPosting).where(JobPosting.job_id == payload.get("job_id"))).first()
+        if job is None:
+            raise ValueError("The vacancy selected for verification no longer exists.")
+        run_id = prepare_job_verification_run(campaign=campaign, job=job, session=self.session, settings=self.settings)
+        JobVerificationRuntime(settings=self.settings).launch(run_id)
+        task.run_id = run_id
+        task.progress = 15
+        task.narrative = f"The vacancy verifier is checking only {job.title} and its supplied application route."
+        task.output_json = json.dumps({"run_id": run_id, "job_id": job.job_id})
+        task.updated_at = utc_now()
+        self.session.add(task)
         self.session.commit()
 
     def _launch_application_draft(self, task: AgentTask) -> None:
@@ -377,6 +406,24 @@ class WorkflowEngine:
         campaign.updated_at = utc_now()
         self.session.add(campaign)
         self._complete(task, f"Vacancy research completed with {len(jobs)} listings retained with verification evidence.")
+
+    def _reconcile_job_verification(self, task: AgentTask, status: dict[str, Any]) -> None:
+        state = str(status.get("status") or "running")
+        task.progress = 70 if state not in TERMINAL_RUNTIME_STATUSES else task.progress
+        task.narrative = "The vacancy verifier is checking the selected listing and application route; no discovery is running."
+        task.updated_at = utc_now()
+        self.session.add(task)
+        if state not in TERMINAL_RUNTIME_STATUSES:
+            self.session.commit()
+            return
+        if state in FAILED_RUNTIME_STATUSES:
+            raise ValueError(f"Job verification ended with {state}.")
+        payload = json_object(task.input_json)
+        file_ids = self.session.exec(select(ImportedFile.id).where(ImportedFile.run_id == task.run_id)).all()
+        jobs = self.session.exec(select(JobPosting).where(JobPosting.imported_file_id.in_(file_ids))).all() if file_ids else []
+        if len(jobs) != 1 or jobs[0].job_id != payload.get("job_id"):
+            raise ValueError("Vacancy verification completed without updating exactly the selected vacancy.")
+        self._complete(task, "The selected vacancy was verified from its current source evidence; no other jobs were searched or imported.")
 
     def _reconcile_contact_research(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")
@@ -639,6 +686,7 @@ class WorkflowWorker:
                     AgentTask.task_type.in_([
                         "company_research",
                         "job_research",
+                        "job_verification",
                         "contact_research",
                         "application_draft",
                         "job_application_draft",

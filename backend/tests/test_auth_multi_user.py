@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Generator
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from backend.app.core.config import get_settings
 from backend.app.db.models import (
     AdminAccessAudit,
     AgentTask,
+    AuditLog,
     Campaign,
     CampaignCompany,
     CampaignJob,
@@ -506,6 +508,196 @@ def test_verified_job_queues_tailored_application_agent(authenticated_app):
         task = session.exec(select(AgentTask).where(AgentTask.task_type == "job_application_draft")).one()
         assert json.loads(task.input_json)["job_id"] == "job-package-test"
         assert task.agent_role == "resume_and_email_team"
+
+
+def test_revalidation_launches_dedicated_verifier_without_broad_search(authenticated_app, monkeypatch):
+    from backend.app.agents import job_verification_runtime
+    from backend.app.workflow.engine import WorkflowEngine
+
+    identity = RequestIdentity(
+        user_id=authenticated_app["user_id"],
+        workspace_id=authenticated_app["user_workspace_id"],
+    )
+    captured: list[str | None] = []
+
+    def fake_prepare(*, campaign, job, session, settings):
+        captured.append(job.job_id)
+        return "job-revalidation-test-run"
+
+    monkeypatch.setattr(job_verification_runtime, "prepare_job_verification_run", fake_prepare)
+    monkeypatch.setattr(job_verification_runtime.JobVerificationRuntime, "launch", lambda self, run_id: None)
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.company_id == "company-shared")).one()
+        campaign = Campaign(
+            campaign_id="campaign-targeted-revalidation",
+            name="Targeted revalidation",
+            campaign_type="listed_job_search",
+            status="active",
+            sending_mode="prepare_only",
+        )
+        session.add(campaign)
+        session.flush()
+        job = JobPosting(
+            job_id="job-targeted-revalidation",
+            company_id=company.id,
+            external_company_id=company.company_id,
+            title="One listing only",
+            source_url="https://example.com/jobs/target",
+            canonical_url="https://example.com/jobs/target",
+            application_url="https://example.com/jobs/target/apply",
+            source_domain="example.com",
+            source_kind="employer",
+            fingerprint="job-targeted-revalidation",
+        )
+        session.add(job)
+        session.flush()
+        task = AgentTask(
+            task_id="task-targeted-revalidation",
+            campaign_id=campaign.id,
+            company_id=company.id,
+            agent_role="vacancy_verifier",
+            task_type="job_verification",
+            input_json=json.dumps({"job_id": job.job_id}),
+        )
+        session.add(task)
+        session.commit()
+
+        WorkflowEngine(session, authenticated_app["settings"]).process(task)
+
+        assert captured == ["job-targeted-revalidation"]
+        assert task.run_id == "job-revalidation-test-run"
+        assert "checking only One listing only" in task.narrative
+
+
+def test_user_can_manually_validate_a_job_with_audited_confirmation(authenticated_app):
+    client = authenticated_app["client"]
+    token = authenticated_app["user_token"]
+    headers = {"X-CSRF-Token": csrf_token(token, authenticated_app["settings"])}
+    identity = RequestIdentity(
+        user_id=authenticated_app["user_id"],
+        workspace_id=authenticated_app["user_workspace_id"],
+    )
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.company_id == "company-shared")).one()
+        campaign = Campaign(
+            campaign_id="campaign-manual-job-validation",
+            name="Manual job validation",
+            campaign_type="listed_job_search",
+            status="active",
+            sending_mode="prepare_only",
+        )
+        session.add(campaign)
+        session.flush()
+        job = JobPosting(
+            job_id="job-manual-validation",
+            company_id=company.id,
+            external_company_id=company.company_id,
+            title="Manually checked role",
+            source_url="https://example.com/jobs/manual",
+            canonical_url="https://example.com/jobs/manual",
+            application_url="https://example.com/jobs/manual/apply",
+            source_domain="example.com",
+            source_kind="ats",
+            fingerprint="job-manual-validation",
+            vacancy_status="needs_review",
+            review_flags_json=json.dumps(["missing_date_posted"]),
+            verification_evidence_json=json.dumps(
+                {"page_accessible": True, "apply_route_available": True, "closed_signal_found": False}
+            ),
+        )
+        session.add(job)
+        session.flush()
+        session.add(CampaignJob(campaign_id=campaign.id, job_posting_id=job.id))
+        session.commit()
+
+    response = client.post(
+        "/jobs/job-manual-validation/manual-validation",
+        json={"confirmed_open": True, "note": "Checked the listing and application form."},
+        cookies={"ai_session": token},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["vacancy_status"] == "verified_open"
+    assert response.json()["last_verified_at"] is not None
+    assert response.json()["verification_evidence"]["manual_confirmation"]["note"] == "Checked the listing and application form."
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        audit = session.exec(
+            select(AuditLog).where(AuditLog.action == "job_listing_manually_validated")
+        ).one()
+        assert audit.entity_id == "job-manual-validation"
+        assert audit.result_status == "verified_open"
+
+
+def test_revalidate_reassesses_recent_evidence_before_launching_an_agent(authenticated_app):
+    client = authenticated_app["client"]
+    token = authenticated_app["user_token"]
+    headers = {"X-CSRF-Token": csrf_token(token, authenticated_app["settings"])}
+    identity = RequestIdentity(
+        user_id=authenticated_app["user_id"],
+        workspace_id=authenticated_app["user_workspace_id"],
+    )
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.company_id == "company-shared")).one()
+        campaign = Campaign(
+            campaign_id="campaign-reassess-job-evidence",
+            name="Reassess job evidence",
+            campaign_type="listed_job_search",
+            status="active",
+            sending_mode="prepare_only",
+        )
+        session.add(campaign)
+        session.flush()
+        job = JobPosting(
+            job_id="job-reassess-evidence",
+            company_id=company.id,
+            external_company_id=company.company_id,
+            title="Role with a future deadline",
+            source_url="https://example.com/jobs/reassess",
+            canonical_url="https://example.com/jobs/reassess",
+            application_url="https://example.com/jobs/reassess/apply",
+            source_domain="example.com",
+            source_kind="ats",
+            fingerprint="job-reassess-evidence",
+            vacancy_status="needs_review",
+            valid_through=utc_now() + timedelta(days=14),
+            last_verified_at=utc_now(),
+            review_flags_json=json.dumps(["missing_date_posted", "untrusted_verification_source"]),
+            verification_evidence_json=json.dumps(
+                {
+                    "page_accessible": True,
+                    "apply_route_available": True,
+                    "closed_signal_found": False,
+                    "employer_identity_match": True,
+                    "http_status": 200,
+                }
+            ),
+        )
+        session.add(job)
+        session.flush()
+        session.add(CampaignJob(campaign_id=campaign.id, job_posting_id=job.id))
+        session.commit()
+
+    response = client.post(
+        "/jobs/job-reassess-evidence/revalidate",
+        cookies={"ai_session": token},
+        headers=headers,
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "job_id": "job-reassess-evidence",
+        "status": "verified_open",
+        "reassessed_existing_evidence": True,
+    }
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        job = session.exec(select(JobPosting).where(JobPosting.job_id == "job-reassess-evidence")).one()
+        assert job.vacancy_status == "verified_open"
+        assert json.loads(job.review_flags_json) == ["missing_date_posted"]
+        tasks = session.exec(
+            select(AgentTask).where(AgentTask.input_json.contains("job-reassess-evidence"))
+        ).all()
+        assert tasks == []
 
 
 def test_job_discovered_company_reuses_fit_and_can_queue_outreach_documents(authenticated_app):

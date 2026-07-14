@@ -49,6 +49,8 @@ export type JobPosting = {
   first_seen_at: string;
   last_verified_at?: string | null;
   vacancy_status: string;
+  review_flags?: string[];
+  verification_evidence?: Record<string, unknown>;
   company_fit_score?: number | null;
   role_fit_score?: number | null;
   fit_reasons: unknown[];
