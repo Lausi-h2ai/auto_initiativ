@@ -97,9 +97,10 @@ async function waitForServer(url) {
   throw new Error(`Server did not start at ${url}`);
 }
 
-async function mockApi(page, { withCompanies = false, activeResearch = false, failLaunch = false } = {}) {
+async function mockApi(page, { withCompanies = false, activeResearch = false, failLaunch = false, onboardingReview = false } = {}) {
   const forbidden = [];
   let launchCalls = 0;
+  let promotionCalls = 0;
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -112,11 +113,11 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
     if (pathname === "/profile/summary") {
       return route.fulfill({
         json: {
-          has_approved_profile: true,
-          approved_user_profile: { snapshot_type: "user_profile", id: 1, external_id: "profile-1", status: "approved", created_at: "2026-07-03T08:00:00Z" },
-          candidate_user_profiles: [],
-          approved_master_cv_profile: { snapshot_type: "master_cv_profile", id: 2, external_id: "cv-1", status: "approved", created_at: "2026-07-03T08:00:00Z" },
-          approved_policy: { snapshot_type: "policy", id: 3, external_id: "policy-1", status: "approved", created_at: "2026-07-03T08:00:00Z" },
+          has_approved_profile: !onboardingReview,
+          approved_user_profile: onboardingReview ? null : { snapshot_type: "user_profile", id: 1, external_id: "profile-1", status: "approved", created_at: "2026-07-03T08:00:00Z" },
+          candidate_user_profiles: onboardingReview ? [{ snapshot_type: "user_profile", id: 11, external_id: "profile-review", status: "candidate", created_at: "2026-07-03T08:00:00Z" }] : [],
+          approved_master_cv_profile: onboardingReview ? null : { snapshot_type: "master_cv_profile", id: 2, external_id: "cv-1", status: "approved", created_at: "2026-07-03T08:00:00Z" },
+          approved_policy: onboardingReview ? null : { snapshot_type: "policy", id: 3, external_id: "policy-1", status: "approved", created_at: "2026-07-03T08:00:00Z" },
         },
       });
     }
@@ -129,9 +130,17 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
       return route.fulfill({ json: [] });
     }
     if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/status")) return route.fulfill({ json: { status: "closed", entries: [] } });
-    if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/artifacts")) return route.fulfill({ json: { artifacts: [] } });
+    if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/artifacts")) return route.fulfill({ json: { artifacts: onboardingReview ? onboardingArtifacts() : [] } });
+    if (pathname.includes("/onboarding/chat/") && pathname.includes("/artifacts/")) {
+      const filename = decodeURIComponent(pathname.split("/").at(-1));
+      return route.fulfill({ json: { filename, exists: true, json_content: filename === "onboarding_review.json" ? { run_id: "onboarding-review", items: [{ item_id: "missing-phone", item_type: "missing_information", summary: "Phone number will be added later." }] } : { schema_version: "1.0", prepared_for_review: true } } });
+    }
     if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/input-files")) return route.fulfill({ json: { files: [] } });
     if (pathname.includes("/onboarding/runs/") && pathname.endsWith("/snapshots")) return route.fulfill({ json: [] });
+    if (pathname.includes("/onboarding/runs/") && pathname.endsWith("/promote") && request.method() === "POST") {
+      promotionCalls += 1;
+      return route.fulfill({ json: { run_id: "onboarding-review", status: "approved", promoted: [], issues: [] } });
+    }
     if (pathname === "/campaigns/company-research" && request.method() === "POST") {
       if (failLaunch) return route.fulfill({ status: 409, json: { detail: "approved profile required" } });
       return route.fulfill({ json: { run_id: "research-safe-1", status: "prepared", run_path: "", input_path: "", output_path: "", prompt_path: "", import_endpoint: "", expected_output_files: [], next_action: "" } });
@@ -144,7 +153,20 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
     if (pathname === "/campaigns/company-research/research-safe-1/import") return route.fulfill({ json: { run_id: "research-safe-1", import_result: {}, status: researchStatus(false) } });
     return route.continue();
   });
-  return { forbidden, launchCalls: () => launchCalls };
+  return { forbidden, launchCalls: () => launchCalls, promotionCalls: () => promotionCalls };
+}
+
+function onboardingArtifacts() {
+  return [
+    ["user_profile.json", "user_profile"],
+    ["master_cv_profile.json", "master_cv_profile"],
+    ["policy.json", "policy"],
+    ["onboarding_review.json", null],
+  ].map(([filename, snapshotType], index) => ({
+    filename, exists: true, status: "ready_for_review", review_state: snapshotType ? "candidate" : "review_items_available",
+    error_count: 0, errors: [], reason_codes: [], snapshot_type: snapshotType,
+    snapshot_id: snapshotType ? index + 11 : null, snapshot_status: snapshotType ? "candidate" : null,
+  }));
 }
 
 function emptySummary() {
@@ -258,4 +280,21 @@ test("failed launch is understandable", async ({ page }) => {
   await page.getByRole("button", { name: "Start company search" }).click();
   await page.getByRole("button", { name: "Start company search" }).last().click();
   await expect(page.getByText("Approve your profile before starting company search.")).toBeVisible();
+});
+
+test("onboarding review is visible and approval requires confirmation", async ({ page }) => {
+  const state = await mockApi(page, { onboardingReview: true });
+  await page.goto(`${baseURL}/dashboard#/profile`);
+
+  await expect(page.getByRole("heading", { name: "Review what your recruiter prepared" })).toBeVisible();
+  await expect(page.getByText("Ready for your review", { exact: true })).toBeVisible();
+  await expect(page.getByText("Phone number will be added later.")).toBeVisible();
+
+  const approve = page.getByRole("button", { name: "Approve my profile" });
+  await expect(approve).toBeDisabled();
+  await page.getByLabel("I reviewed the prepared profile, CV claims, policy, and open questions.").check();
+  await expect(approve).toBeEnabled();
+  await approve.click();
+  await expect.poll(() => state.promotionCalls()).toBe(1);
+  await expect(page.getByText("Approved. Your profile is now the source of truth for your recruiter team.")).toBeVisible();
 });

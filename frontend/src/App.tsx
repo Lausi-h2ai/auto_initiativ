@@ -398,11 +398,25 @@ function ProfilePage() {
   const [responding, setResponding] = useState(false);
   const [pendingMessage, setPendingMessage] = useState("");
   const [uploadedFiles, setUploadedFiles] = useState<Array<{ filename: string; size_bytes: number }>>([]);
+  const [artifacts, setArtifacts] = useState<any[]>([]);
+  const [artifactContents, setArtifactContents] = useState<Record<string, any>>({});
+  const [preparing, setPreparing] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
+  const [promotionIssues, setPromotionIssues] = useState<any[]>([]);
+  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
   const loadStatus = () => request<any>(`/onboarding/chat/${runId}/status`).then(setStatus).catch(() => undefined);
   const loadInputFiles = () => request<any>(`/onboarding/chat/${runId}/input-files`).then((result) => setUploadedFiles(result.files || [])).catch(() => undefined);
-  useEffect(() => { void loadStatus(); void loadInputFiles(); }, []);
+  const loadReview = async (nextArtifacts?: any[]) => {
+    const reviewArtifacts = nextArtifacts || (await request<any>(`/onboarding/chat/${runId}/artifacts`)).artifacts || [];
+    setArtifacts(reviewArtifacts);
+    const available = reviewArtifacts.filter((artifact: any) => artifact.exists);
+    const contents = await Promise.all(available.map((artifact: any) => request<any>(`/onboarding/chat/${runId}/artifacts/${encodeURIComponent(artifact.filename)}`)));
+    setArtifactContents(Object.fromEntries(contents.map((content: any) => [content.filename, content.json_content])));
+  };
+  useEffect(() => { void loadStatus(); void loadInputFiles(); void loadReview().catch(() => undefined); }, []);
   const act = async (path: string, payload?: unknown) => { setBusy(true); setError(""); try { const result = await mutate<any>(`/onboarding/chat/${runId}/${path}`, "POST", payload); setStatus(result.session_state || status); await refresh(); return result; } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
   const send = async (event: FormEvent) => {
     event.preventDefault();
@@ -438,7 +452,40 @@ function ProfilePage() {
       setBusy(false);
     }
   };
-  const approve = async () => { setBusy(true); try { await mutate(`/onboarding/chat/${runId}/import-artifacts`, "POST"); await mutate(`/onboarding/runs/${runId}/promote`, "POST", { reviewer_id: String(me.id), confirm_user_profile: true, confirm_master_cv_profile: true, confirm_policy: true }); await refresh(); } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); } };
+  const prepareReview = async () => {
+    setPreparing(true); setBusy(true); setError(""); setNotice(""); setPromotionIssues([]); setReviewConfirmed(false);
+    try {
+      const result = await mutate<any>(`/onboarding/chat/${runId}/finish`, "POST");
+      setStatus(result.session_state || status);
+      await loadReview(result.artifacts || []);
+      if (result.import_result?.run?.status !== "imported") {
+        setError("Your recruiter prepared the files, but backend validation found problems. Review the details below and continue the conversation to correct them.");
+      } else {
+        setNotice("Your review is ready. Check the summary and unresolved items below before approving it.");
+      }
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setPreparing(false); setBusy(false); }
+  };
+  const requiredSnapshots = ["user_profile", "master_cv_profile", "policy"];
+  const reviewReady = artifacts.length === 4 && artifacts.every((artifact: any) => artifact.exists && artifact.error_count === 0 && ["ready_for_review", "approved"].includes(artifact.status));
+  const candidatesReady = requiredSnapshots.every((type) => artifacts.some((artifact: any) => artifact.snapshot_type === type && ["candidate", "approved"].includes(artifact.snapshot_status)));
+  const canApprove = reviewReady && candidatesReady && reviewConfirmed && !busy;
+  const approve = async () => {
+    if (!canApprove) return;
+    setApproving(true); setBusy(true); setError(""); setNotice(""); setPromotionIssues([]);
+    try {
+      const result = await mutate<any>(`/onboarding/runs/${runId}/promote`, "POST", { reviewer_id: String(me.id), confirm_user_profile: true, confirm_master_cv_profile: true, confirm_policy: true });
+      if (result.status !== "approved") {
+        setPromotionIssues(result.issues || []);
+        setError("Approval is blocked. Nothing was approved; review the specific issues below.");
+        return;
+      }
+      setNotice("Approved. Your profile is now the source of truth for your recruiter team.");
+      await refresh();
+      await loadReview();
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setApproving(false); setBusy(false); }
+  };
   const entries = (status?.entries || []).filter((entry: any) => entry.role === "user" || entry.role === "assistant");
   const recruiterRunning = status?.status === "running" || status?.status === "waiting";
 
@@ -465,13 +512,27 @@ function ProfilePage() {
               {!entries.length && recruiterRunning && <div className="chat-welcome"><RoleAvatar letters="OR" active /><h3>Your recruiter is connected.</h3><p>If the first greeting has not appeared, reconnect the session or send a short introduction below.</p><button className="secondary-button" disabled={busy} onClick={() => void act("start")}>{busy ? "Reconnecting…" : "Reconnect recruiter"}</button></div>}
             </div>
             {entries.length || recruiterRunning ? <form className="chat-compose" onSubmit={(event) => void send(event)}><textarea rows={2} placeholder="Reply naturally…" value={message} onChange={(e) => setMessage(e.target.value)} /><button disabled={busy || !message.trim()}>Send</button></form> : null}
-            {entries.length ? <footer><button className="text-button" disabled={busy} onClick={() => void act("finish")}>Finish and prepare my review</button><button className="secondary-button" disabled={busy} onClick={() => void approve()}>Approve recruiter summary</button></footer> : null}
-            {error && <InlineError message={error} />}
+            {entries.length ? <footer className="onboarding-actions"><div><strong>1. Prepare</strong><small>The recruiter validates four draft files.</small></div><button className="primary-button" disabled={busy} onClick={() => void prepareReview()}>{preparing ? "Preparing your review..." : reviewReady ? "Prepare review again" : "Finish and prepare review"}</button></footer> : null}
+            {preparing && <div className="onboarding-progress" role="status" aria-live="polite"><i /><div><strong>Preparing and validating your review</strong><span>This can take a few minutes. The review will appear here automatically.</span></div></div>}
+            {notice && <div className="inline-success" role="status">{notice}</div>}
+            {error && <div className="onboarding-error" role="alert"><InlineError message={error} /></div>}
           </div>
+          {artifacts.some((artifact: any) => artifact.exists) ? <section className="onboarding-review" aria-labelledby="onboarding-review-title">
+            <header><div><p className="eyebrow">Step 2 · Review</p><h2 id="onboarding-review-title">Review what your recruiter prepared</h2><p>These drafts are not used for tailoring until you approve them.</p></div><span className={`review-readiness ${reviewReady && candidatesReady ? "ready" : "blocked"}`}>{reviewReady && candidatesReady ? "Ready for your review" : "Needs correction"}</span></header>
+            <div className="artifact-status-grid">{artifacts.map((artifact: any) => <article className={artifact.error_count ? "invalid" : "valid"} key={artifact.filename}><span>{artifact.error_count ? "!" : "✓"}</span><div><strong>{artifactLabel(artifact.filename)}</strong><small>{artifact.error_count ? `${artifact.error_count} validation ${artifact.error_count === 1 ? "issue" : "issues"}` : artifact.exists ? "Validated" : "Missing"}</small></div></article>)}</div>
+            {artifacts.flatMap((artifact: any) => (artifact.errors || []).map((issue: any, index: number) => <div className="review-issue" key={`${artifact.filename}-${index}`}><strong>{artifactLabel(artifact.filename)}</strong><span>{issue.path ? `${issue.path}: ` : ""}{issue.message}</span></div>))}
+            <div className="review-documents">{artifacts.filter((artifact: any) => artifact.exists).map((artifact: any) => <details key={artifact.filename} open={artifact.filename === "onboarding_review.json"}><summary><span>{artifactLabel(artifact.filename)}</span><small>{artifact.filename === "onboarding_review.json" ? "Open questions and review flags" : "Prepared source data"}</small></summary><pre>{JSON.stringify(artifactContents[artifact.filename] || {}, null, 2)}</pre></details>)}</div>
+            <div className="review-approval"><div><p className="eyebrow">Step 3 · Approve</p><h3>Make this your approved profile foundation</h3><p>Approval makes the validated profile, CV claims, and policy available to the recruiter team. Review flags remain visible and unapproved CV claims remain unavailable for tailoring.</p></div><label><input type="checkbox" checked={reviewConfirmed} disabled={!reviewReady || !candidatesReady || busy} onChange={(event) => setReviewConfirmed(event.target.checked)} /><span>I reviewed the prepared profile, CV claims, policy, and open questions.</span></label><button className="primary-button" disabled={!canApprove} onClick={() => void approve()}>{approving ? "Approving..." : "Approve my profile"}</button>{!reviewReady || !candidatesReady ? <small>Approval unlocks after all four files pass validation and the three candidate snapshots are ready.</small> : null}</div>
+            {promotionIssues.map((issue: any, index: number) => <div className="review-issue" key={`${issue.code}-${index}`}><strong>{issue.snapshot_type ? artifactLabel(`${issue.snapshot_type}.json`) : "Approval"}</strong><span>{issue.field ? `${issue.field}: ` : ""}{issue.message}</span></div>)}
+          </section> : null}
         </section>
       )}
     </div>
   );
+}
+
+function artifactLabel(filename: string) {
+  return ({ "user_profile.json": "Career profile", "master_cv_profile.json": "Master CV claims", "policy.json": "Search and outreach policy", "onboarding_review.json": "Open questions" } as Record<string, string>)[filename] || filename.replaceAll("_", " ").replace(".json", "");
 }
 
 function DocumentsPage() {
