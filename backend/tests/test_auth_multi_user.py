@@ -527,6 +527,30 @@ def test_workflow_worker_reconciles_running_job_research(authenticated_app, monk
     assert reconciled == ["job_research"]
 
 
+def test_workflow_worker_reconciles_running_job_application_draft(authenticated_app, monkeypatch):
+    from backend.app.workflow.engine import WorkflowEngine, WorkflowWorker
+
+    with workspace_context(RequestIdentity(user_id=authenticated_app["user_id"], workspace_id=authenticated_app["user_workspace_id"])), Session(authenticated_app["engine"]) as session:
+        campaign = Campaign(campaign_id="campaign-job-draft-reconcile", name="Tailor job", campaign_type="listed_job_search", status="active")
+        session.add(campaign)
+        session.flush()
+        task = AgentTask(task_id="task-job-draft-reconcile", campaign_id=campaign.id, agent_role="resume_and_email_team", task_type="job_application_draft", status="running", run_id="run-job-draft-reconcile")
+        session.add(task)
+        session.commit()
+
+    reconciled: list[str] = []
+
+    def fake_reconcile(self, task):
+        reconciled.append(task.task_type)
+        task.status = "completed"
+        self.session.add(task)
+        self.session.commit()
+
+    monkeypatch.setattr(WorkflowEngine, "reconcile", fake_reconcile)
+    assert WorkflowWorker(settings=authenticated_app["settings"]).run_once() is True
+    assert reconciled == ["job_application_draft"]
+
+
 def test_unresolved_worker_failure_becomes_exception(authenticated_app):
     from backend.app.auth.context import RequestIdentity, workspace_context
     from backend.app.workflow.engine import WorkflowEngine

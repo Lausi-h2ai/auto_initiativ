@@ -634,7 +634,13 @@ class WorkflowWorker:
             running = session.exec(
                 select(AgentTask).where(
                     AgentTask.status == "running",
-                    AgentTask.task_type.in_(["company_research", "job_research", "contact_research", "application_draft"]),
+                    AgentTask.task_type.in_([
+                        "company_research",
+                        "job_research",
+                        "contact_research",
+                        "application_draft",
+                        "job_application_draft",
+                    ]),
                 ).order_by(AgentTask.updated_at)
             ).first()
             task = running or session.exec(
