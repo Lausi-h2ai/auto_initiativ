@@ -34,6 +34,18 @@ Represents a Codex run folder with:
 
 Represents a researched company. Dedupe should include normalized domain and policy-specific company keys.
 
+### JobPosting and CampaignJob
+
+`JobPosting` preserves a sourced vacancy, canonical and application URLs, first/last-seen timestamps, posting and expiry dates, verification evidence, and a backend-owned vacancy status. `CampaignJob` links it to a listed-job campaign and tracks the user's separate application lifecycle.
+
+### JobVerification and JobFitEvaluation
+
+Verification evidence establishes only “verified open as of” a timestamp. Role fit and company fit remain separate scores. Missing dates, untrusted-only sources, stale checks, unavailable application routes, and closure signals must remain explicit.
+
+### JobApplicationPackage
+
+Stores a manual-submit package: selected approved CV claims, cover letter, answer kit, claim references, and review flags. Unsupported answers remain user-input items.
+
 ### Contact
 
 Represents a possible recipient. Dedupe must include normalized recipient email.

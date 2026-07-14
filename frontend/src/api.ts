@@ -12,15 +12,30 @@ export type Me = {
 export type Campaign = {
   id: string;
   name: string;
+  campaign_type: "initiative_outreach" | "listed_job_search";
   status: string;
   sending_mode: "prepare_only" | "gated_autosend";
   brief: Record<string, unknown>;
   stages: Record<string, number>;
   company_count: number;
+  job_count: number;
   active_task_count: number;
   exception_count: number;
   started_at?: string | null;
   updated_at: string;
+};
+
+export type JobPosting = {
+  id: string; title: string; company_id: string; company_name?: string | null;
+  source_url: string; canonical_url: string; application_url: string; employer_website_url?: string | null;
+  source_domain: string; source_kind: string; description?: string | null; locations: string[];
+  remote_policy?: string | null; employment_types: string[]; compensation: Record<string, unknown>;
+  languages: string[]; requirements: string[]; responsibilities: string[]; date_posted?: string | null;
+  valid_through?: string | null; first_seen_at: string; last_verified_at?: string | null; vacancy_status: string;
+  company_fit_score?: number | null; role_fit_score?: number | null; fit_reasons: unknown[]; fit_gaps: unknown[];
+  application_status?: string | null; package_ready: boolean;
+  answer_kit: Array<{ question: string; answer: string; needs_user_input: boolean; reason?: string }>;
+  cover_letter_text?: string | null;
 };
 
 export type AgentTask = {
@@ -157,7 +172,7 @@ export async function loadMe(): Promise<Me> {
 
 export async function loadWorkspace() {
   const me = await loadMe();
-  const [summary, profile, delivery, campaigns, exceptions, documents, agents] = await Promise.all([
+  const [summary, profile, delivery, campaigns, exceptions, documents, agents, jobs] = await Promise.all([
     request<ProductSummary>("/product/summary"),
     request<ProfileSummary>("/profile/summary"),
     request<Delivery>("/email-delivery/settings"),
@@ -165,8 +180,9 @@ export async function loadWorkspace() {
     request<ExceptionItem[]>("/exceptions"),
     request<DocumentItem[]>("/documents"),
     request<AgentTask[]>("/agent-activity"),
+    request<JobPosting[]>("/jobs"),
   ]);
-  return { me, summary, profile, delivery, campaigns, exceptions, documents, agents };
+  return { me, summary, profile, delivery, campaigns, exceptions, documents, agents, jobs };
 }
 
 export function mutate<T>(path: string, method: string, payload?: unknown): Promise<T> {

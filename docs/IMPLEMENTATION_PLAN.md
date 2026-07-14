@@ -159,3 +159,12 @@ Acceptance:
 ## Next Recommended Codex Task
 
 Implement Phase 1: create a minimal FastAPI backend skeleton with Pydantic models generated from or aligned to the schemas, a dry-run configuration default, and an import service that validates JSON files from a run `output/` folder. Persist only minimal run, import, validation, and audit records. Do not implement normalized domain persistence yet. Do not add Gmail sending.
+
+## Listed Job Campaign Extension
+
+Status: implemented as a parallel campaign path.
+
+- `initiative_outreach` remains backward-compatible.
+- `listed_job_search` uses the Vacancy Scout, job-specific schemas, deterministic verification states, manual refresh, and a separate Jobs UI.
+- Employer pages may be discovered dynamically; configured trust affects whether evidence can establish `verified_open`, not whether a source may be searched.
+- Application packages are schema validated, use only approved master-CV claims, require a fresh verified vacancy, and are always submitted manually by the user.

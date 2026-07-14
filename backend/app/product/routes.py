@@ -44,6 +44,7 @@ from backend.app.db.models import (
 from backend.app.db.session import get_session
 from backend.app.workflow.engine import WorkflowEngine
 from backend.app.jobs.application_packages import JobApplicationPackageService, JobPackageError
+from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
 
 
 router = APIRouter(tags=["product"])
@@ -783,21 +784,6 @@ def product_summary(
         "document_count": len(documents),
         "sent_count": len(sent),
     }
-
-
-BUILTIN_JOB_SOURCES = {
-    "greenhouse.io": "verification_capable",
-    "lever.co": "verification_capable",
-    "myworkdayjobs.com": "verification_capable",
-    "smartrecruiters.com": "verification_capable",
-    "jobs.personio.de": "verification_capable",
-    "ashbyhq.com": "verification_capable",
-    "jobs.ch": "verification_capable",
-    "jobup.ch": "verification_capable",
-    "jobscout24.ch": "verification_capable",
-    "arbeitsagentur.de": "verification_capable",
-    "bund.de": "verification_capable",
-}
 
 
 def _job_response(job: JobPosting, session: Session, *, campaign_job: CampaignJob | None = None) -> dict[str, Any]:

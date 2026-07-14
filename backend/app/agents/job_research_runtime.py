@@ -14,6 +14,7 @@ from backend.app.core.config import Settings
 from backend.app.db import session as db_session_module
 from backend.app.db.models import Campaign, Company, JobPosting, JobSourceTrust, MasterCvProfileSnapshot, PolicySnapshot, Run, UserProfileSnapshot
 from backend.app.imports.import_service import JOB_RESEARCH_RUN_TYPE, RunImportService
+from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
 
 
 class JobResearchRuntime(CompanyResearchRuntime):
@@ -85,7 +86,14 @@ def prepare_job_research_run(*, campaign: Campaign, session: Session, settings: 
     spec = JobResearchCampaign(run_id=run_id, role_focus=str(brief.get("role_focus") or "Profile-aligned roles"), locations=[str(value) for value in brief.get("locations") or []], time_budget_minutes=int(brief.get("time_budget_minutes") or 30), max_jobs=int(brief.get("max_jobs") or 30), freshness_days=int(brief.get("freshness_days") or 30), filters={key: brief.get(key) for key in ("seniority", "employment_types", "work_modes", "minimum_salary", "languages")}, notes=brief.get("notes"))
     companies = [{"company_id": item.company_id, "name": item.name, "domain": item.normalized_domain or item.raw_domain} for item in session.exec(select(Company)).all()]
     jobs = [{"job_id": item.job_id, "canonical_url": item.canonical_url, "title": item.title, "company_id": item.external_company_id, "vacancy_status": item.vacancy_status} for item in session.exec(select(JobPosting)).all()]
-    sources = [{"domain": item.domain, "trust_level": item.trust_level, "enabled": item.enabled} for item in session.exec(select(JobSourceTrust)).all()]
+    existing_sources = {item.domain: item for item in session.exec(select(JobSourceTrust)).all()}
+    for domain, trust_level in BUILTIN_JOB_SOURCES.items():
+        if domain not in existing_sources:
+            source = JobSourceTrust(domain=domain, trust_level=trust_level, is_builtin=True, workspace_id=campaign.workspace_id)
+            session.add(source)
+            existing_sources[domain] = source
+    session.flush()
+    sources = [{"domain": item.domain, "trust_level": item.trust_level, "enabled": item.enabled} for item in existing_sources.values()]
     inputs = build_job_research_inputs(campaign=spec, user_profile=json.loads(profile.raw_json), master_cv_profile=json.loads(master_cv.raw_json), policy=json.loads(policy.raw_json), existing_companies=companies, existing_jobs=jobs, trusted_sources=sources, schemas={name: (settings.schemas_root / name).read_text(encoding="utf-8") for name in ("company_candidate.schema.json", "job_posting_candidate.schema.json", "job_fit_evaluation.schema.json")})
     RunFolderGenerator(settings=settings, session=session).prepare(RunFolderSpec(run_id=run_id, task=build_job_research_task(spec), instructions=JOB_RESEARCH_INSTRUCTIONS, inputs=tuple(RunInputFile(path, content) for path, content in sorted(inputs.items())), expected_output_files=("companies/*.json", "jobs/*.json", "job_fit_evaluations/*.json"), metadata={"task_type": JOB_RESEARCH_RUN_TYPE, "campaign_id": campaign.campaign_id, "target_job_count": spec.max_jobs}))
     run = session.exec(select(Run).where(Run.run_id == run_id)).first()

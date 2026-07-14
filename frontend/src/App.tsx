@@ -7,6 +7,7 @@ import {
   Company,
   DocumentItem,
   ExceptionItem,
+  JobPosting,
   loadWorkspace,
   mutate,
   request,
@@ -150,6 +151,7 @@ function Shell() {
           <NavItem to="/companies" label="Companies" icon="◇" count={sumValues(summary.pipeline)} />
           <NavItem to="/documents" label="Documents" icon="▱" count={summary.document_count} />
           <NavItem to="/profile" label="My story" icon="◎" />
+          <NavItem to="/jobs" label="Open positions" icon="J" count={summary.campaigns.reduce((total, campaign) => total + campaign.job_count, 0)} />
           <NavItem to="/exceptions" label="Needs me" icon="!" count={summary.exception_count} accent />
         </nav>
         <div className="sidebar-spacer" />
@@ -167,6 +169,7 @@ function Shell() {
           <Route path="/" element={<Overview />} />
           <Route path="/campaigns/new" element={<CampaignWizard />} />
           <Route path="/companies" element={<CompaniesPage />} />
+          <Route path="/jobs" element={<JobsPage />} />
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/profile/view" element={<ProfileViewerPage />} />
@@ -341,14 +344,48 @@ function CompanyDrawer({ company, onClose }: { company: Company; onClose: () => 
   );
 }
 
+function JobsPage() {
+  const { campaigns, jobs: initialJobs, refresh } = useWorkspace();
+  const jobCampaigns = campaigns.filter((campaign) => campaign.campaign_type === "listed_job_search");
+  const [jobs, setJobs] = useState<JobPosting[]>(initialJobs);
+  const [selected, setSelected] = useState<JobPosting | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { setJobs(initialJobs); }, [initialJobs]);
+  const activeCampaign = jobCampaigns[0];
+  const reload = async () => {
+    const next = activeCampaign ? await request<JobPosting[]>(`/campaigns/${activeCampaign.id}/jobs`) : await request<JobPosting[]>("/jobs");
+    setJobs(next); if (selected) setSelected(next.find((job) => job.id === selected.id) || null);
+  };
+  const act = async (path: string, method = "POST", payload?: unknown) => {
+    setBusy(true); setError("");
+    try { await mutate(path, method, payload); await reload(); await refresh(); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="page jobs-page">
+      <PageHeader eyebrow="Verified opportunities" title="Open positions" aside={activeCampaign ? <button className="secondary-button" disabled={busy} onClick={() => void act(`/campaigns/${activeCampaign.id}/refresh`)}>Refresh search</button> : <Link className="primary-button" to="/campaigns/new">Start a job search</Link>} />
+      <p className="page-intro">Vacancies stay separate from initiative outreach. “Verified open” means the source and application route were checked at the time shown—not that the employer guarantees the role remains unfilled.</p>
+      {error && <InlineError message={error} />}
+      {!jobs.length ? <EmptyState title="No verified positions yet" body="Start a job-listing campaign or refresh an existing one. Your Vacancy Scout will search broad sources and follow promising employers to their career pages." action={<Link className="primary-button" to="/campaigns/new">Create job campaign</Link>} /> : null}
+      <div className="job-grid">
+        {jobs.map((job) => <button className="job-card" key={job.id} onClick={() => setSelected(job)}><div className="job-card-top"><StatusPill status={job.vacancy_status} /><small>{job.last_verified_at ? `Checked ${relativeDate(job.last_verified_at)}` : "Not yet verified"}</small></div><h3>{job.title}</h3><strong>{job.company_name || job.company_id}</strong><p>{job.locations.join(" · ") || job.remote_policy || "Location not published"}</p><div className="job-scores"><span>{job.role_fit_score == null ? "Role fit pending" : `${Math.round(job.role_fit_score * 100)}% role fit`}</span><span>{job.company_fit_score == null ? "Company fit pending" : `${Math.round(job.company_fit_score * 100)}% company fit`}</span></div><footer><span>{job.date_posted ? `Posted ${relativeDate(job.date_posted)}` : "Posting date needs review"}</span><span>{job.application_status ? human(job.application_status) : "Discovered"}</span></footer></button>)}
+      </div>
+      {selected ? <div className="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelected(null)}><aside className="company-drawer job-drawer"><button className="drawer-close" onClick={() => setSelected(null)}>×</button><p className="eyebrow">{human(selected.vacancy_status)}</p><h2>{selected.title}</h2><h3>{selected.company_name || selected.company_id}</h3><p>{selected.description || "The scout retained this vacancy with sourced fit and verification evidence."}</p><DrawerSection title="Fit"><p><strong>{selected.role_fit_score == null ? "Pending" : `${Math.round(selected.role_fit_score * 100)}%`} role fit</strong> · {selected.company_fit_score == null ? "Pending" : `${Math.round(selected.company_fit_score * 100)}%`} company fit</p>{toStrings(selected.fit_reasons).length ? <ul>{toStrings(selected.fit_reasons).map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}</DrawerSection><DrawerSection title="Requirements">{selected.requirements.length ? <ul>{selected.requirements.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No structured requirements were published.</p>}</DrawerSection>{selected.package_ready ? <><DrawerSection title="Cover letter"><p className="prewrap">{selected.cover_letter_text}</p></DrawerSection><DrawerSection title="Application answers">{selected.answer_kit.map((item) => <div className={`answer-item ${item.needs_user_input ? "needs-input" : ""}`} key={item.question}><strong>{item.question}</strong><p>{item.answer || item.reason || "Your input is required."}</p></div>)}</DrawerSection></> : null}<div className="drawer-actions"><a className="secondary-button" href={selected.canonical_url} target="_blank" rel="noreferrer">View listing</a>{activeCampaign && selected.vacancy_status === "verified_open" && !selected.package_ready ? <button className="primary-button" disabled={busy} onClick={() => void act(`/campaigns/${activeCampaign.id}/jobs/${selected.id}/prepare`)}>Prepare application</button> : null}{activeCampaign && selected.package_ready ? <button className="primary-button" disabled={busy} onClick={() => void act(`/campaigns/${activeCampaign.id}/jobs/${selected.id}/application-status`, "PATCH", { status: "applied" })}>Mark applied</button> : null}{selected.vacancy_status !== "verified_open" ? <button className="primary-button" disabled={busy} onClick={() => void act(`/jobs/${selected.id}/revalidate`)}>Revalidate</button> : null}<a className="primary-button" href={selected.application_url} target="_blank" rel="noreferrer">Open application</a></div></aside></div> : null}
+    </div>
+  );
+}
+
 function CampaignWizard() {
   const navigate = useNavigate();
   const { delivery, profile, refresh } = useWorkspace();
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ name: "My next opportunity", role_focus: "", locations: "", company_preferences: "", notes: "", max_companies: 30, sending_mode: "prepare_only" });
+  const [form, setForm] = useState({ campaign_type: "initiative_outreach" as "initiative_outreach" | "listed_job_search", name: "My next opportunity", role_focus: "", locations: "", company_preferences: "", notes: "", max_companies: 30, max_jobs: 30, freshness_days: 30, sending_mode: "prepare_only" });
   const steps = ["Direction", "Places", "Character", "Autonomy", "Review"];
+  const isJobs = form.campaign_type === "listed_job_search";
 
   if (!profile.has_approved_profile) {
     return (
@@ -370,7 +407,7 @@ function CampaignWizard() {
     try {
       await mutate("/campaigns", "POST", { ...form, locations: form.locations.split(",").map((item) => item.trim()).filter(Boolean) });
       await refresh();
-      navigate("/");
+      navigate(isJobs ? "/jobs" : "/");
     } catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); }
   };
 
@@ -379,11 +416,13 @@ function CampaignWizard() {
       <button className="back-link" onClick={() => step ? setStep(step - 1) : navigate(-1)}>← {step ? "Back" : "Leave setup"}</button>
       <div className="wizard-progress">{steps.map((label, index) => <div className={index <= step ? "active" : ""} key={label}><span>{index + 1}</span><small>{label}</small></div>)}</div>
       <section className="wizard-card">
+        {step === 0 && <div className="campaign-type-choice"><button className={!isJobs ? "selected" : ""} onClick={() => setForm({ ...form, campaign_type: "initiative_outreach" })}><strong>Matching companies</strong><small>Initiative outreach to employers that fit you.</small></button><button className={isJobs ? "selected" : ""} onClick={() => setForm({ ...form, campaign_type: "listed_job_search", sending_mode: "prepare_only" })}><strong>Open positions</strong><small>Recent vacancies with verified application routes.</small></button></div>}
         {step === 0 && <WizardStep eyebrow="First, give your recruiter direction" title="What kind of work should we pursue?" body="A broad direction is enough. Your specialists will use your approved story to make the detailed decisions."><Field label="Campaign name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field><Field label="Role direction"><textarea autoFocus rows={4} placeholder="Applied AI engineering, technical product roles, ML systems…" value={form.role_focus} onChange={(e) => setForm({ ...form, role_focus: e.target.value })} /></Field></WizardStep>}
         {step === 1 && <WizardStep eyebrow="Define the search horizon" title="Where should your team look?" body="Add a few locations or remote regions. The research agent will handle variations and nearby matches."><Field label="Locations"><input autoFocus placeholder="Zurich, Basel, Remote Switzerland" value={form.locations} onChange={(e) => setForm({ ...form, locations: e.target.value })} /></Field><div className="suggestion-row">{["Zurich", "Switzerland", "Remote Europe"].map((place) => <button key={place} onClick={() => setForm({ ...form, locations: [form.locations, place].filter(Boolean).join(", ") })}>{place}</button>)}</div></WizardStep>}
         {step === 2 && <WizardStep eyebrow="Help matches feel like you" title="What should make a company stand out?" body="Describe the environment, mission, or work you want. This is guidance, not a complex filter form."><Field label="Company character"><textarea autoFocus rows={5} placeholder="Product-minded teams using AI for useful, concrete problems…" value={form.company_preferences} onChange={(e) => setForm({ ...form, company_preferences: e.target.value })} /></Field><div className="range-choice"><span>Search breadth</span>{[15, 30, 50].map((count) => <button className={form.max_companies === count ? "selected" : ""} onClick={() => setForm({ ...form, max_companies: count })} key={count}>{count === 15 ? "Focused" : count === 30 ? "Balanced" : "Broad"}<small>about {count} companies</small></button>)}</div></WizardStep>}
-        {step === 3 && <WizardStep eyebrow="Choose once, then let the team work" title="How far should this campaign proceed?" body="Both modes research, evaluate, tailor CVs, and write emails autonomously."><label className={`mode-card ${form.sending_mode === "prepare_only" ? "selected" : ""}`}><input type="radio" checked={form.sending_mode === "prepare_only"} onChange={() => setForm({ ...form, sending_mode: "prepare_only" })} /><span><strong>Prepare everything for me</strong><small>Stop when each application is ready. You decide what gets sent.</small></span></label><label className={`mode-card ${form.sending_mode === "gated_autosend" ? "selected" : ""} ${!delivery.gmail_configured ? "disabled" : ""}`}><input type="radio" disabled={!delivery.gmail_configured} checked={form.sending_mode === "gated_autosend"} onChange={() => setForm({ ...form, sending_mode: "gated_autosend" })} /><span><strong>Gated autopilot</strong><small>{delivery.gmail_configured ? "Send automatically only after every deterministic check passes." : "Connect Gmail in settings to make this available."}</small></span></label></WizardStep>}
-        {step === 4 && <WizardStep eyebrow="Your recruiter brief" title="Everything your team needs to begin" body="You can pause the campaign at any time. Only genuine exceptions will come back to you."><div className="brief-review"><ReviewRow label="Direction" value={form.role_focus || "Profile-aligned roles"} /><ReviewRow label="Places" value={form.locations || "From approved profile"} /><ReviewRow label="Character" value={form.company_preferences || "Use my approved preferences"} /><ReviewRow label="Breadth" value={`${form.max_companies} curated companies`} /><ReviewRow label="Autonomy" value={form.sending_mode === "gated_autosend" ? "Gated autopilot" : "Prepare through final drafts"} /></div></WizardStep>}
+        {step === 3 && isJobs && <WizardStep eyebrow="Safe handoff" title="You review and submit every application" body="The team prepares CV claims, a cover letter, and an answer kit. Auto Initiativ never submits application forms."><div className="mode-card selected"><span><strong>Prepare, then hand off to me</strong><small>Listings are revalidated before preparation.</small></span></div></WizardStep>}
+        {step === 3 && !isJobs && <WizardStep eyebrow="Choose once, then let the team work" title="How far should this campaign proceed?" body="Both modes research, evaluate, tailor CVs, and write emails autonomously."><label className={`mode-card ${form.sending_mode === "prepare_only" ? "selected" : ""}`}><input type="radio" checked={form.sending_mode === "prepare_only"} onChange={() => setForm({ ...form, sending_mode: "prepare_only" })} /><span><strong>Prepare everything for me</strong><small>Stop when each application is ready. You decide what gets sent.</small></span></label><label className={`mode-card ${form.sending_mode === "gated_autosend" ? "selected" : ""} ${!delivery.gmail_configured ? "disabled" : ""}`}><input type="radio" disabled={!delivery.gmail_configured} checked={form.sending_mode === "gated_autosend"} onChange={() => setForm({ ...form, sending_mode: "gated_autosend" })} /><span><strong>Gated autopilot</strong><small>{delivery.gmail_configured ? "Send automatically only after every deterministic check passes." : "Connect Gmail in settings to make this available."}</small></span></label></WizardStep>}
+        {step === 4 && <WizardStep eyebrow="Your recruiter brief" title="Everything your team needs to begin" body="You can pause or manually refresh the campaign at any time."><div className="brief-review"><ReviewRow label="Campaign type" value={isJobs ? "Verified open positions" : "Initiative outreach"} /><ReviewRow label="Direction" value={form.role_focus || "Profile-aligned roles"} /><ReviewRow label="Places" value={form.locations || "From approved profile"} /><ReviewRow label="Character" value={form.company_preferences || "Use my approved preferences"} /><ReviewRow label="Breadth" value={`${isJobs ? form.max_jobs : form.max_companies} ${isJobs ? "positions" : "companies"}`} /><ReviewRow label="Autonomy" value={isJobs ? "User reviews and submits" : form.sending_mode === "gated_autosend" ? "Gated autopilot" : "Prepare through final drafts"} /></div></WizardStep>}
         {error && <InlineError message={error} />}
         <div className="wizard-actions"><button className="text-button" onClick={() => step ? setStep(step - 1) : navigate(-1)}>Back</button>{step < steps.length - 1 ? <button className="primary-button" disabled={step === 0 && !form.name.trim()} onClick={() => setStep(step + 1)}>Continue <Arrow /></button> : <button className="primary-button" disabled={busy} onClick={() => void submit()}>{busy ? "Bringing the team together…" : "Start my campaign"} <Arrow /></button>}</div>
       </section>
@@ -758,6 +797,7 @@ function dayPart() { const hour = new Date().getHours(); return hour < 12 ? "mor
 function roleName(role: string) { const names: Record<string, string> = { company_researcher: "Research specialist", fit_specialist: "Fit analyst", cv_specialist: "CV specialist", resume_and_email_team: "Application team", email_writer: "Email writer", delivery_coordinator: "Delivery coordinator", onboarding_recruiter: "Onboarding recruiter" }; return names[role] || human(role); }
 function roleLetters(role: string) { return roleName(role).split(" ").map((word) => word[0]).join("").slice(0, 2).toUpperCase(); }
 function human(value: string) { return value.replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function relativeDate(value: string) { const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000); return days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`; }
 function sumValues(values: Record<string, number>) { return Object.values(values).reduce((sum, value) => sum + Number(value || 0), 0); }
 function initials(name: string) { return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join(""); }
 function hueFor(value: string) { return [...value].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 280 + 30; }

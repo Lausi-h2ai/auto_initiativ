@@ -4,6 +4,10 @@
 
 Build a personal, local-first application that helps a user run initiative job outreach with high transparency and safety.
 
+The product also supports a parallel `listed_job_search` campaign. It discovers real vacancies, verifies their public application route and freshness, evaluates both employer and role fit, and prepares claim-grounded application materials. It never replaces or merges the initiative-outreach path.
+
+Job applications remain manual-submit: the backend may prepare a tailored CV claim selection, cover letter, and answer kit, but neither an agent nor the backend submits an application form.
+
 The system should find relevant companies, evaluate fit, tailor CV materials from verified profile data, draft personal outreach emails, create structured send intents, and track all outreach and responses.
 
 ## Primary User

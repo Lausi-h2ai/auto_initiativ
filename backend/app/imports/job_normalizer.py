@@ -114,7 +114,7 @@ class JobNormalizationService:
             flags.append("missing_date_posted")
             return "needs_review"
         trusted = job.source_kind == "employer"
-        source = self.session.exec(select(JobSourceTrust).where(JobSourceTrust.domain == job.source_domain, JobSourceTrust.enabled == True)).first()  # noqa: E712
+        source = next((item for item in self.session.exec(select(JobSourceTrust).where(JobSourceTrust.enabled == True)).all() if job.source_domain == item.domain or job.source_domain.endswith(f".{item.domain}")), None)  # noqa: E712
         if source and source.trust_level == "blocked":
             flags.append("blocked_source")
             return "needs_review"
