@@ -43,6 +43,7 @@ from backend.app.db.models import (
 )
 from backend.app.db.session import get_session
 from backend.app.workflow.engine import WorkflowEngine
+from backend.app.jobs.application_packages import JobApplicationPackageService, JobPackageError
 
 
 router = APIRouter(tags=["product"])
@@ -904,6 +905,39 @@ def update_job_application_status(campaign_id: str, job_id: str, payload: JobApp
     session.add(AuditLog(actor_type="user", action="job_application_status_updated", entity_type="job_posting", entity_id=job.job_id, result_status=payload.status, metadata_json=json.dumps({"campaign_id": campaign.campaign_id})))
     session.commit()
     return _job_response(job, session, campaign_job=link)
+
+
+@router.post("/campaigns/{campaign_id}/jobs/{job_id}/prepare", status_code=201)
+def prepare_job_application(campaign_id: str, job_id: str, session: Session = Depends(get_session), settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    campaign = _campaign(session, campaign_id)
+    if campaign.campaign_type != "listed_job_search":
+        raise HTTPException(status_code=409, detail="This campaign does not prepare listed-job applications.")
+    job = session.exec(select(JobPosting).where(JobPosting.job_id == job_id)).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job posting not found.")
+    link = session.exec(select(CampaignJob).where(CampaignJob.campaign_id == campaign.id, CampaignJob.job_posting_id == job.id)).first()
+    if link is None:
+        raise HTTPException(status_code=404, detail="Job is not part of this campaign.")
+    try:
+        JobApplicationPackageService(session, settings).prepare(campaign=campaign, link=link, job=job)
+    except JobPackageError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _job_response(job, session, campaign_job=link)
+
+
+@router.post("/jobs/{job_id}/revalidate", status_code=202)
+def revalidate_job(job_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    job = session.exec(select(JobPosting).where(JobPosting.job_id == job_id)).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job posting not found.")
+    link = session.exec(select(CampaignJob).where(CampaignJob.job_posting_id == job.id)).first()
+    campaign = session.get(Campaign, link.campaign_id) if link else None
+    if campaign is None:
+        raise HTTPException(status_code=409, detail="The job is not attached to an active campaign.")
+    task = AgentTask(task_id=f"task-{uuid4()}", campaign_id=campaign.id, company_id=job.company_id, agent_role="vacancy_scout", task_type="job_research", narrative=f"Revalidating {job.title} at its canonical source.", input_json=json.dumps({"job_id": job.job_id, "canonical_url": job.canonical_url, "targeted_revalidation": True}), workspace_id=campaign.workspace_id)
+    session.add(task)
+    session.commit()
+    return {"job_id": job.job_id, "task_id": task.task_id, "status": "queued"}
 
 
 @router.get("/settings/job-sources")

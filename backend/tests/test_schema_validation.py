@@ -16,7 +16,7 @@ def test_schema_registry_loads_all_schemas(schemas_root):
     registry = SchemaRegistry(schemas_root=schemas_root)
     registry.load_all()
 
-    assert len(registry.schema_names) == 12
+    assert len(registry.schema_names) == 13
     assert "onboarding_review.schema.json" in registry.schema_names
     assert "send_intent.schema.json" in registry.schema_names
 

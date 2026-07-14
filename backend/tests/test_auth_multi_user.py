@@ -15,17 +15,20 @@ from backend.app.db.models import (
     AgentTask,
     Campaign,
     CampaignCompany,
+    CampaignJob,
     Company,
     Contact,
     EmailDraft,
     ImportedFile,
     Invitation,
+    JobPosting,
     MasterCvProfileSnapshot,
     PolicySnapshot,
     ReviewException,
     User,
     UserProfileSnapshot,
     Workspace,
+    utc_now,
 )
 
 
@@ -449,6 +452,30 @@ def test_listed_job_campaign_is_separate_and_manual_submit_only(authenticated_ap
     )
     assert refresh.status_code == 202
     assert refresh.json()["status"] == "queued"
+
+
+def test_verified_job_prepares_manual_application_package(authenticated_app):
+    client = authenticated_app["client"]
+    token = authenticated_app["user_token"]
+    headers = {"X-CSRF-Token": csrf_token(token, authenticated_app["settings"])}
+    with workspace_context(RequestIdentity(user_id=authenticated_app["user_id"], workspace_id=authenticated_app["user_workspace_id"])), Session(authenticated_app["engine"]) as session:
+        profile = session.exec(select(UserProfileSnapshot).where(UserProfileSnapshot.status == "approved")).first()
+        master = session.exec(select(MasterCvProfileSnapshot).where(MasterCvProfileSnapshot.status == "approved")).first()
+        policy = session.exec(select(PolicySnapshot).where(PolicySnapshot.status == "approved")).first()
+        company = session.exec(select(Company).where(Company.name == "User Company")).one()
+        campaign = Campaign(campaign_id="campaign-job-package", name="Open roles", campaign_type="listed_job_search", status="active", sending_mode="prepare_only", user_profile_snapshot_id=profile.id, master_cv_profile_snapshot_id=master.id, policy_snapshot_id=policy.id)
+        session.add(campaign)
+        session.flush()
+        job = JobPosting(job_id="job-package-test", company_id=company.id, external_company_id=company.company_id, title="Applied AI Engineer", source_url="https://example.com/jobs/1", canonical_url="https://example.com/jobs/1", application_url="https://example.com/jobs/1/apply", source_domain="example.com", source_kind="employer", fingerprint="package-test", vacancy_status="verified_open", date_posted=utc_now(), last_verified_at=utc_now(), verification_evidence_json=json.dumps({"page_accessible": True, "apply_route_available": True, "closed_signal_found": False, "employer_identity_match": True}))
+        session.add(job)
+        session.flush()
+        session.add(CampaignJob(campaign_id=campaign.id, job_posting_id=job.id))
+        session.commit()
+    response = client.post("/campaigns/campaign-job-package/jobs/job-package-test/prepare", cookies={"ai_session": token}, headers=headers)
+    assert response.status_code == 201
+    assert response.json()["application_status"] == "ready"
+    assert response.json()["package_ready"] is True
+    assert any(item["needs_user_input"] for item in response.json()["answer_kit"])
 
 
 def test_unresolved_worker_failure_becomes_exception(authenticated_app):

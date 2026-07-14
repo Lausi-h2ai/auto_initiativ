@@ -18,7 +18,7 @@ class SchemaRegistry:
 
     @property
     def schema_names(self) -> tuple[str, ...]:
-        return tuple(sorted(set(FILENAME_TO_SCHEMA.values()) | set(JOB_RESEARCH_DIRECTORY_TO_SCHEMA.values())))
+        return tuple(sorted(set(FILENAME_TO_SCHEMA.values()) | set(JOB_RESEARCH_DIRECTORY_TO_SCHEMA.values()) | {"application_answer_kit.schema.json"}))
 
     def load_all(self) -> None:
         for schema_name in self.schema_names:
