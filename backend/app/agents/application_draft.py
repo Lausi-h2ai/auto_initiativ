@@ -286,7 +286,7 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
         "Required process:\n\n"
         "1. Read `../input/draft_context.json` first and use it as the compact source of truth for the run.\n"
         "2. Decide which claim IDs from the historically named `approved_claims` ledger best match the company and fit evaluation; inspect and preserve each claim's own approval and review state.\n"
-        "3. Tailor the CV HTML from `../input/master_cv/de_ch_master.html`; preserve readable proportions and use only claims present in the master-CV claim ledger. Read the full HTML only when writing the tailored attachment.\n"
+        "3. Tailor the CV HTML from `../input/master_cv/de_ch_master.html`; treat its visual structure and intentional assets as a document contract, preserve readable proportions, and use only claims present in the master-CV claim ledger. Read the full HTML only when writing the tailored attachment.\n"
         f"4. Write the tailored HTML to `../output/attachments/{brief.html_filename}`. This HTML source is required.\n"
         "5. Render that HTML text document to a one-page PDF under `../output/attachments` using `application_draft_render_pdf`, and verify the PDF exists before finishing. Try at most one repair if rendering fails.\n"
         "6. Do not render the resume as a screenshot, bitmap, canvas, PIL image, ReportLab drawing, or image-only PDF. Text in the PDF must remain readable and selectable.\n"
@@ -318,11 +318,14 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
         "- Do not mention that the CV was tailored by an agent or that this is a bulk outreach workflow.\n"
         "- Never include the phrase `Summa Cum Laude` in the resume or email draft.\n\n"
         "Resume layout requirements:\n\n"
+        "- Preserve master-template `img`, `svg`, and `object` assets and their identifying class/alt structure. An asset may be omitted only when the template itself marks it `data-tailoring-optional=\"true\"`; do not drop a portrait or other required asset merely to simplify the layout.\n"
+        "- Preserve the template's overall visual hierarchy while adapting sections and supported content to the role; this is a tailored edit, not a blank-page redesign.\n"
         "- Use the available one-page space well; do not leave a visibly sparse lower third when relevant claim-ledger content exists.\n"
         "- If the rendered PDF has substantial blank space, add or restore relevant claim-ledger bullets, skills, project details, or education detail before finishing.\n"
         "- Keep the PDF exactly one page and avoid cramped or tiny text.\n"
         "- Use normal A4 CSS proportions: roughly 8-12mm page margins, body text around 9-10pt, section headings around 9-11pt, and a portrait photo around 30-35mm wide.\n"
         "- Do not use global CSS transforms, zoom, fixed 2000px+ canvases, raster text, or bitmap page rendering to make content fit.\n"
+        "- Treat renderer asset, page-count, and page-fill failures as required layout repairs. Use the returned layout diagnostics for the one permitted repair.\n"
         "- Before finishing, verify schema conformance, exact IDs and attachment paths, claim-ledger coverage and review signals, selectable PDF text, and the absence of send artifacts.\n"
     )
 

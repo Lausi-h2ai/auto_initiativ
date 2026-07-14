@@ -33,8 +33,8 @@ def test_application_draft_runtime_builds_restricted_pi_command(tmp_path: Path):
     assert "--no-context-files" in command
     assert "--session-dir" in command
     assert command[command.index("--provider") + 1] == "openai-codex"
-    assert command[command.index("--model") + 1] == "gpt-5.6-luna"
-    assert command[command.index("--thinking") + 1] == "low"
+    assert command[command.index("--model") + 1] == "gpt-5.6-terra"
+    assert command[command.index("--thinking") + 1] == "medium"
 
 
 def test_safe_application_draft_env_filters_secrets_and_sets_runtime_context(monkeypatch):
@@ -61,6 +61,12 @@ def test_application_draft_extension_contains_attachment_guards():
     assert "application_draft_write_email_draft" in source
     assert "application_draft_write_attachment" in source
     assert "application_draft_render_pdf" in source
+    assert 'displayHeaderFooter: false' in source
+    assert 'data-tailoring-optional' in source
+    assert 'missingRequiredAssets' in source
+    assert 'minimumFillRatio' in source
+    assert 'javaScriptEnabled: false' in source
+    assert 'route.abort("blockedbyclient")' in source
 
 
 def test_application_draft_inputs_redact_unwanted_education_honor():
@@ -175,6 +181,9 @@ def test_application_draft_task_forbids_honor_and_requires_fuller_page_use():
     assert "Do not render the resume as a screenshot, bitmap, canvas, PIL image, ReportLab drawing, or image-only PDF" in task
     assert "body text around 9-10pt" in task
     assert "historically named `approved_claims` ledger" in task
+    assert "visual structure and intentional assets as a document contract" in task
+    assert 'data-tailoring-optional="true"' in task
+    assert "renderer asset, page-count, and page-fill failures" in task
 
 
 def test_application_draft_runtime_closes_client_after_prompt_failure(tmp_path: Path):

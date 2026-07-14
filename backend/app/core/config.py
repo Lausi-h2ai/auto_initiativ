@@ -75,7 +75,7 @@ class Settings(BaseSettings):
         validation_alias="PI_RPC_APPLICATION_DRAFT_MODEL",
     )
     pi_rpc_application_draft_thinking: str = Field(
-        default="low",
+        default="medium",
         validation_alias="PI_RPC_APPLICATION_DRAFT_THINKING",
     )
     pi_rpc_application_draft_timeout_seconds: float = Field(

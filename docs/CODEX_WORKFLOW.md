@@ -63,7 +63,7 @@ Bulk application drafting must keep the model's per-company context small:
 - Do not copy large handoff documents into every draft run by default.
 - Do not do contact research inside application draft runs; run contact research first and skip companies without imported contacts.
 - Keep batch application drafting sequential by default unless the user explicitly accepts higher usage.
-- Use a smaller low-reasoning model for routine CV/email draft production.
+- Use the quality-focused application-draft model at medium reasoning because claim selection, localization, and print-layout judgment are coupled; recover efficiency through compact context and bounded tool output rather than lowering document quality.
 - Cap tool output and extract only the facts needed for JSON/PDF artifacts.
 
 ## Instructions Template Requirements

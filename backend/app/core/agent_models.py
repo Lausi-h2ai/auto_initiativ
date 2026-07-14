@@ -30,7 +30,7 @@ AGENT_MODEL_POLICIES: Final = (
     AgentModelPolicy(
         workload="application_draft",
         setting_name="pi_rpc_application_draft_model",
-        default_model="gpt-5.6-luna",
+        default_model="gpt-5.6-terra",
     ),
 )
 

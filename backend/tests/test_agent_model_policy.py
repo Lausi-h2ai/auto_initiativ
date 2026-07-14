@@ -19,7 +19,7 @@ def test_agent_model_policy_centralizes_gpt_5_6_defaults_by_workload(monkeypatch
 
     assert agent_model_for("onboarding") == "gpt-5.6-sol"
     assert agent_model_for("company_research") == "gpt-5.6-terra"
-    assert agent_model_for("application_draft") == "gpt-5.6-luna"
+    assert agent_model_for("application_draft") == "gpt-5.6-terra"
     assert {
         policy.setting_name: getattr(settings, policy.setting_name)
         for policy in AGENT_MODEL_POLICIES

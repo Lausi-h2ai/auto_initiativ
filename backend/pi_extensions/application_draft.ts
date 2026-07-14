@@ -1,13 +1,17 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { chromium, type Browser, type Page } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, delimiter, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const MAX_COMMAND_TIMEOUT_MS = 120000;
 const MAX_COMMAND_OUTPUT_BYTES = 16000;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MIN_PDF_BYTES = 10000;
+const A4_VIEWPORT = { width: 794, height: 1123 };
+const DEFAULT_MIN_CONTENT_FILL_RATIO = 0.72;
 
 function workspacePath(...parts: string[]): string {
   return resolve(process.cwd(), ...parts);
@@ -191,56 +195,135 @@ async function findBrowserBinary(): Promise<string> {
   throw new Error("No Chrome or Edge binary found for PDF rendering");
 }
 
-function renderPdf(browser: string, htmlPath: string, pdfPath: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  return new Promise((resolvePromise, reject) => {
-    let stdout = "";
-    let stderr = "";
-    let killedByTimeout = false;
-    const child = spawn(
-      browser,
-      [
-        "--headless=new",
-        "--disable-gpu",
-        "--disable-extensions",
-        "--disable-background-networking",
-        "--no-first-run",
-        "--no-default-browser-check",
-        `--print-to-pdf=${pdfPath}`,
-        `file:///${htmlPath.replace(/\\/g, "/")}`,
-      ],
-      {
-        cwd: runRoot(),
-        env: safeEnv(),
-        windowsHide: true,
-      },
-    );
-    const timer = setTimeout(() => {
-      killedByTimeout = true;
-      child.kill();
-    }, timeoutMs);
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      const cappedStdout = truncateOutput(stdout, MAX_COMMAND_OUTPUT_BYTES);
-      const cappedStderr = truncateOutput(stderr, MAX_COMMAND_OUTPUT_BYTES);
-      resolvePromise({
-        code,
-        timed_out: killedByTimeout,
-        stdout: cappedStdout.text,
-        stderr: cappedStderr.text,
-        truncated: cappedStdout.truncated || cappedStderr.truncated,
-      });
-    });
+type HtmlRenderMetrics = {
+  content_fill_ratio: number;
+  content_bottom_px: number;
+  document_height_px: number;
+  text_characters: number;
+  asset_signatures: string[];
+  required_asset_signatures: string[];
+  broken_image_signatures: string[];
+};
+
+async function inspectHtml(browser: Browser, htmlPath: string, timeoutMs: number): Promise<{ page: Page; metrics: HtmlRenderMetrics }> {
+  const page = await browser.newPage({ viewport: A4_VIEWPORT, deviceScaleFactor: 1, javaScriptEnabled: false });
+  page.setDefaultTimeout(timeoutMs);
+  await page.emulateMedia({ media: "print" });
+  await page.route("**/*", async (route) => {
+    const protocol = new URL(route.request().url()).protocol;
+    if (["file:", "data:", "blob:"].includes(protocol)) {
+      await route.continue();
+      return;
+    }
+    await route.abort("blockedbyclient");
   });
+  await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "load", timeout: timeoutMs });
+  const metrics = await page.evaluate((a4Height) => {
+    const signature = (element: Element): string => {
+      const label = element.getAttribute("alt") || element.getAttribute("aria-label") || "";
+      return [element.tagName.toLowerCase(), element.id, Array.from(element.classList).sort().join("."), label].join(":");
+    };
+    const visibleElements = Array.from(document.body.querySelectorAll("*")).filter((element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    });
+    const contentBottom = visibleElements.length
+      ? Math.max(...visibleElements.map((element) => element.getBoundingClientRect().bottom))
+      : 0;
+    const assets = Array.from(document.querySelectorAll("img, svg, object"));
+    const requiredAssets = assets.filter((asset) => asset.getAttribute("data-tailoring-optional") !== "true");
+    const brokenImages = Array.from(document.images).filter((image) => image.naturalWidth === 0 || image.naturalHeight === 0);
+    return {
+      content_fill_ratio: Number((contentBottom / a4Height).toFixed(3)),
+      content_bottom_px: Number(contentBottom.toFixed(1)),
+      document_height_px: document.documentElement.scrollHeight,
+      text_characters: (document.body.innerText || "").trim().length,
+      asset_signatures: assets.map(signature),
+      required_asset_signatures: requiredAssets.map(signature),
+      broken_image_signatures: brokenImages.map(signature),
+    };
+  }, A4_VIEWPORT.height);
+  return { page, metrics };
+}
+
+function pdfPageCount(pdf: Buffer): number {
+  return pdf.toString("latin1").match(/\/Type\s*\/Page\b/g)?.length || 0;
+}
+
+async function renderPdf(browserPath: string, htmlPath: string, pdfPath: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  const browser = await chromium.launch({
+    executablePath: browserPath,
+    headless: true,
+    timeout: timeoutMs,
+    args: ["--disable-background-networking", "--disable-extensions", "--no-first-run", "--no-default-browser-check"],
+  });
+  let outputPage: Page | undefined;
+  let templatePage: Page | undefined;
+  try {
+    const output = await inspectHtml(browser, htmlPath, timeoutMs);
+    outputPage = output.page;
+    const templatePath = workspacePath("../input/master_cv/de_ch_master.html");
+    let templateMetrics: HtmlRenderMetrics | undefined;
+    try {
+      await stat(templatePath);
+      const template = await inspectHtml(browser, templatePath, timeoutMs);
+      templatePage = template.page;
+      templateMetrics = template.metrics;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    const requiredAssets = new Set(templateMetrics?.required_asset_signatures || []);
+    const outputAssets = new Set(output.metrics.asset_signatures);
+    const missingRequiredAssets = [...requiredAssets].filter((signature) => !outputAssets.has(signature));
+    if (missingRequiredAssets.length) {
+      throw new Error(`Tailored HTML removed required master-template assets: ${missingRequiredAssets.join(", ")}`);
+    }
+    if (output.metrics.broken_image_signatures.length) {
+      throw new Error(`Tailored HTML contains images that did not load: ${output.metrics.broken_image_signatures.join(", ")}`);
+    }
+
+    const minimumFillRatio = Number(
+      (templateMetrics ? Math.min(0.78, templateMetrics.content_fill_ratio * 0.95) : DEFAULT_MIN_CONTENT_FILL_RATIO).toFixed(3),
+    );
+    if (output.metrics.content_fill_ratio < minimumFillRatio) {
+      throw new Error(
+        `Tailored HTML is visibly sparse (${output.metrics.content_fill_ratio} page fill; minimum ${minimumFillRatio.toFixed(3)}). ` +
+          "Use relevant supported content or balanced spacing without shrinking text or inventing claims.",
+      );
+    }
+
+    const pdf = await outputPage.pdf({
+      format: "A4",
+      printBackground: true,
+      preferCSSPageSize: true,
+      displayHeaderFooter: false,
+    });
+    const pageCount = pdfPageCount(pdf);
+    if (pageCount !== 1) {
+      throw new Error(`Rendered CV must contain exactly one page; found ${pageCount || "an unknown number of"} pages`);
+    }
+    if (pdf.byteLength < MIN_PDF_BYTES) {
+      throw new Error("Rendered PDF is unexpectedly small");
+    }
+    await writeFile(pdfPath, pdf);
+    return {
+      code: 0,
+      timed_out: false,
+      page_count: pageCount,
+      layout: output.metrics,
+      template_layout: templateMetrics,
+      minimum_content_fill_ratio: minimumFillRatio,
+      missing_required_assets: missingRequiredAssets,
+    };
+  } finally {
+    await outputPage?.close().catch(() => undefined);
+    await templatePage?.close().catch(() => undefined);
+    await browser.close().catch(() => undefined);
+  }
 }
 
 export default function applicationDraft(pi: ExtensionAPI) {
