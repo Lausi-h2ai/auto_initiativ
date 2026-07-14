@@ -132,6 +132,29 @@ def test_promotion_blocks_approved_claims_with_review_needed_provenance(db_sessi
     assert "approved_claim_requires_review" in {issue.code for issue in result.issues}
 
 
+def test_profile_confirmation_resolves_direct_user_claim_provenance(db_session, runs_root):
+    _import_valid_run(db_session, runs_root)
+    user_profile = db_session.exec(select(UserProfileSnapshot)).one()
+    _rewrite_raw(
+        user_profile,
+        lambda data: data["work_authorization"][0]["provenance"].update(
+            {"source_type": "user_claim", "needs_review": True, "confidence": 0.5}
+        ),
+    )
+    db_session.add(user_profile)
+    db_session.commit()
+
+    result = OnboardingPromotionService(db_session).promote_run_snapshots("onboarding-promote", _request())
+    db_session.commit()
+
+    assert result.status == "approved"
+    approved = json.loads(db_session.exec(select(UserProfileSnapshot)).one().raw_json)
+    provenance = approved["work_authorization"][0]["provenance"]
+    assert provenance["needs_review"] is False
+    assert provenance["confidence"] == 1.0
+    assert "profile_review:user_confirmation" in provenance["source_refs"]
+
+
 def test_promotion_blocks_duplicate_master_cv_claim_ids(db_session, runs_root):
     _import_valid_run(db_session, runs_root)
     master_cv = db_session.exec(select(MasterCvProfileSnapshot)).one()
@@ -224,4 +247,28 @@ def test_user_can_approve_claim_for_tailoring_from_approved_profile(client, db_s
     snapshots = db_session.exec(select(MasterCvProfileSnapshot)).all()
     assert {snapshot.status for snapshot in snapshots} == {"approved", "superseded"}
     audit = db_session.exec(select(AuditLog).where(AuditLog.action == "master_cv_claim_approved")).one()
+    assert audit.entity_id == "claim-1"
+
+
+def test_user_can_approve_claim_for_tailoring_from_candidate_review(client, db_session, runs_root):
+    copy_valid_run(runs_root, "candidate-claim-approval")
+    assert client.post("/runs/candidate-claim-approval/import").status_code == 200
+    candidate = db_session.exec(select(MasterCvProfileSnapshot)).one()
+    data = json.loads(candidate.raw_json)
+    data["claims"][0]["approved_for_tailoring"] = False
+    data["claims"][0]["provenance"].update({"source_type": "needs_review", "needs_review": True, "confidence": 0.4})
+    candidate.raw_json = json.dumps(data)
+    db_session.add(candidate)
+    db_session.commit()
+
+    response = client.post("/onboarding/runs/candidate-claim-approval/claims/claim-1/approve")
+
+    assert response.status_code == 200
+    claim = response.json()["content"]["claims"][0]
+    assert claim["approved_for_tailoring"] is True
+    assert claim["provenance"]["source_type"] == "user_claim"
+    assert claim["provenance"]["needs_review"] is False
+    assert "onboarding_review:user_confirmation" in claim["provenance"]["source_refs"]
+    assert db_session.exec(select(MasterCvProfileSnapshot)).one().status == "candidate"
+    audit = db_session.exec(select(AuditLog).where(AuditLog.action == "candidate_master_cv_claim_approved")).one()
     assert audit.entity_id == "claim-1"

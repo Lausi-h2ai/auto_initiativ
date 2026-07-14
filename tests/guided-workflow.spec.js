@@ -149,6 +149,10 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
     }
     if (pathname.includes("/onboarding/chat/") && pathname.endsWith("/input-files")) return route.fulfill({ json: { files: [] } });
     if (pathname.includes("/onboarding/runs/") && pathname.endsWith("/snapshots")) return route.fulfill({ json: [] });
+    if (pathname.includes("/onboarding/runs/") && pathname.endsWith("/claims/claim-1/approve") && request.method() === "POST") {
+      approvedClaims.add("claim-1");
+      return route.fulfill({ json: approvedProfileBundle(true).master_cv_profile });
+    }
     if (pathname.includes("/onboarding/runs/") && pathname.endsWith("/promote") && request.method() === "POST") {
       promotionCalls += 1;
       return route.fulfill({ json: { run_id: "onboarding-review", status: "approved", promoted: [], issues: [] } });
@@ -314,6 +318,10 @@ test("onboarding review is visible and approval requires confirmation", async ({
   await expect(page.getByRole("heading", { name: "Alex Morgan" })).toBeVisible();
   await expect(page.getByRole("paragraph").filter({ hasText: "Built reliable AI product workflows." })).toBeVisible();
   await expect(page.getByText("Phone number will be added later.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Approve for tailoring" }).click();
+  await page.getByRole("button", { name: "Yes, approve this claim" }).click();
+  await expect(page.getByText("Approved for tailoring", { exact: true })).toBeVisible();
 
   const approve = page.getByRole("button", { name: "Approve my profile" });
   await expect(approve).toBeDisabled();

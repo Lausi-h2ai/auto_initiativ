@@ -2068,6 +2068,19 @@ function ProfilePage() {
                   masterCv={artifactContents["master_cv_profile.json"]}
                   policy={artifactContents["policy.json"]}
                   mode="candidate"
+                  onApproveClaim={async (claimId) => {
+                    const document = await mutate<any>(
+                      `/onboarding/runs/${runId}/claims/${encodeURIComponent(claimId)}/approve`,
+                      "POST",
+                    );
+                    setArtifactContents((current) => ({
+                      ...current,
+                      "master_cv_profile.json": document.content,
+                    }));
+                    setNotice(
+                      "Claim approved. Your confirmation is recorded and this claim can be used after profile approval.",
+                    );
+                  }}
                 />
               ) : null}
               {artifactContents["onboarding_review.json"] ? (
@@ -2373,7 +2386,7 @@ function ProfilePresentation({
                   <ProfileClaimCard
                     key={claim.claim_id}
                     claim={claim}
-                    canApprove={mode === "approved" && Boolean(onApproveClaim)}
+                    canApprove={Boolean(onApproveClaim)}
                     confirming={confirmingClaim === claim.claim_id}
                     approving={approvingClaim === claim.claim_id}
                     error={

@@ -2108,6 +2108,7 @@ def get_onboarding_artifacts(
 def get_onboarding_artifact_content(
     run_id: str,
     filename: str,
+    session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> OnboardingArtifactContentResponse:
     if filename not in ONBOARDING_CHAT_FILENAMES:
@@ -2122,6 +2123,22 @@ def get_onboarding_artifact_content(
             filename=filename,
             path=str(artifact_path),
             exists=False,
+        )
+    imported_file = session.exec(
+        select(ImportedFile)
+        .where(ImportedFile.run_id == run_id, ImportedFile.filename == filename)
+        .order_by(ImportedFile.id.desc())
+    ).first()
+    _snapshot_type, snapshot = _snapshot_for_imported_file(session, imported_file)
+    if snapshot is not None and snapshot.status in {"candidate", "approved"}:
+        raw_text = snapshot.raw_json
+        return OnboardingArtifactContentResponse(
+            run_id=run_id,
+            filename=filename,
+            path=str(artifact_path),
+            exists=True,
+            raw_text=raw_text,
+            json_content=_raw_json_object(snapshot),
         )
     raw_text = artifact_path.read_text(encoding="utf-8")
     parsed: dict[str, Any] | list[Any] | None = None
@@ -2219,6 +2236,84 @@ def promote_onboarding_snapshots(
         status=result.status,
         promoted=[OnboardingSnapshotResponse(**snapshot.as_dict()) for snapshot in result.promoted],
         issues=[issue.as_dict() for issue in result.issues],
+    )
+
+
+@router.post(
+    "/onboarding/runs/{run_id}/claims/{claim_id}/approve",
+    response_model=ProfileDocumentResponse,
+)
+def approve_candidate_profile_claim(
+    run_id: str,
+    claim_id: str,
+    session: Session = Depends(get_session),
+) -> ProfileDocumentResponse:
+    imported_file_ids = _imported_file_ids_for_run(session, run_id)
+    master_cv = (
+        session.exec(
+            select(MasterCvProfileSnapshot)
+            .where(
+                col(MasterCvProfileSnapshot.imported_file_id).in_(imported_file_ids),
+                MasterCvProfileSnapshot.status == "candidate",
+            )
+            .order_by(MasterCvProfileSnapshot.id.desc())
+        ).first()
+        if imported_file_ids
+        else None
+    )
+    if master_cv is None:
+        raise HTTPException(status_code=404, detail="A candidate master CV profile is not available for this run.")
+
+    payload = _raw_json_object(master_cv)
+    matches = [claim for claim in payload.get("claims", []) if isinstance(claim, dict) and claim.get("claim_id") == claim_id]
+    if not matches:
+        raise HTTPException(status_code=404, detail="The claim was not found in the candidate profile.")
+    if len(matches) != 1:
+        raise HTTPException(status_code=409, detail="The claim ID is not unique in the candidate profile.")
+
+    claim = matches[0]
+    if claim.get("approved_for_tailoring") is not True:
+        provenance = claim.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+            claim["provenance"] = provenance
+        source_refs = provenance.get("source_refs") if isinstance(provenance.get("source_refs"), list) else []
+        provenance.update(
+            {
+                "source_type": "user_claim",
+                "confidence": 1.0,
+                "needs_review": False,
+                "source_refs": list(dict.fromkeys([*source_refs, "onboarding_review:user_confirmation"])),
+            }
+        )
+        claim["approved_for_tailoring"] = True
+        raw_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        master_cv.raw_json = raw_json
+        master_cv.content_hash = sha256(raw_json.encode("utf-8")).hexdigest()
+        session.add(master_cv)
+        identity = current_identity()
+        session.add(
+            AuditLog(
+                run_id=run_id,
+                actor_type="user",
+                action="candidate_master_cv_claim_approved",
+                entity_type="master_cv_claim",
+                entity_id=claim_id,
+                result_status="approved",
+                metadata_json=json.dumps(
+                    {
+                        "user_id": identity.user_id if identity is not None else None,
+                        "snapshot_id": master_cv.id,
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
+        session.commit()
+
+    return ProfileDocumentResponse(
+        snapshot=_profile_snapshot_summary("master_cv_profile", master_cv),
+        content=_raw_json_object(master_cv),
     )
 
 

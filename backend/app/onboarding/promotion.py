@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import Any
 
 from sqlmodel import Session, col, select
@@ -77,13 +78,17 @@ class OnboardingPromotionService:
     def promote_run_snapshots(self, run_id: str, request: SnapshotPromotionRequest) -> SnapshotPromotionResult:
         snapshots = self._snapshots_for_run(run_id)
         issues = self._validate_request(request)
-        issues.extend(self._validate_snapshots(snapshots))
+        issues.extend(self._validate_snapshots(snapshots, request))
 
         if issues:
             result = SnapshotPromotionResult(run_id=run_id, status="blocked", issues=issues)
             self._audit(run_id, request, result)
             self.session.flush()
             return result
+
+        user_profile = snapshots["user_profile"]
+        if request.confirm_user_profile and isinstance(user_profile, UserProfileSnapshot):
+            self._record_user_profile_confirmation(user_profile)
 
         promoted: list[PromotedSnapshot] = []
         for snapshot_type, snapshot in snapshots.items():
@@ -146,6 +151,7 @@ class OnboardingPromotionService:
     def _validate_snapshots(
         self,
         snapshots: dict[str, UserProfileSnapshot | MasterCvProfileSnapshot | PolicySnapshot | None],
+        request: SnapshotPromotionRequest,
     ) -> list[SnapshotPromotionIssue]:
         issues: list[SnapshotPromotionIssue] = []
         for snapshot_type, snapshot in snapshots.items():
@@ -170,7 +176,7 @@ class OnboardingPromotionService:
 
         user_profile = snapshots["user_profile"]
         if isinstance(user_profile, UserProfileSnapshot):
-            issues.extend(self._validate_user_profile(user_profile))
+            issues.extend(self._validate_user_profile(user_profile, confirmed=request.confirm_user_profile))
 
         master_cv = snapshots["master_cv_profile"]
         if isinstance(master_cv, MasterCvProfileSnapshot):
@@ -182,7 +188,7 @@ class OnboardingPromotionService:
 
         return issues
 
-    def _validate_user_profile(self, snapshot: UserProfileSnapshot) -> list[SnapshotPromotionIssue]:
+    def _validate_user_profile(self, snapshot: UserProfileSnapshot, *, confirmed: bool) -> list[SnapshotPromotionIssue]:
         data = _json_object(snapshot.raw_json)
         return [
             SnapshotPromotionIssue(
@@ -193,7 +199,30 @@ class OnboardingPromotionService:
             )
             for path, provenance in _iter_provenance(data)
             if _provenance_requires_review(provenance)
+            and not (confirmed and provenance.get("source_type") == "user_claim")
         ]
+
+    def _record_user_profile_confirmation(self, snapshot: UserProfileSnapshot) -> None:
+        data = _json_object(snapshot.raw_json)
+        changed = False
+        for _path, provenance in _iter_provenance(data):
+            if not _provenance_requires_review(provenance) or provenance.get("source_type") != "user_claim":
+                continue
+            source_refs = provenance.get("source_refs") if isinstance(provenance.get("source_refs"), list) else []
+            provenance.update(
+                {
+                    "confidence": 1.0,
+                    "needs_review": False,
+                    "source_refs": list(dict.fromkeys([*source_refs, "profile_review:user_confirmation"])),
+                }
+            )
+            changed = True
+        if not changed:
+            return
+        raw_json = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        snapshot.raw_json = raw_json
+        snapshot.content_hash = sha256(raw_json.encode("utf-8")).hexdigest()
+        self.session.add(snapshot)
 
     def _validate_master_cv(self, snapshot: MasterCvProfileSnapshot) -> list[SnapshotPromotionIssue]:
         data = _json_object(snapshot.raw_json)
