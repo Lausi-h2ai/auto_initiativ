@@ -94,10 +94,34 @@ function Login() {
 }
 
 function Registration() {
+  type LocalAccount = { id: number; display_name: string; email: string; workspace: { id: string; name: string }; is_current: boolean };
+  const [accounts, setAccounts] = useState<LocalAccount[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    request<LocalAccount[]>("/auth/local/accounts")
+      .then((items) => { setAccounts(items); setShowCreate(items.length === 0); })
+      .catch((cause) => setError(messageOf(cause)))
+      .finally(() => setLoadingAccounts(false));
+  }, []);
+
+  const switchAccount = async (userId: number) => {
+    setBusy(true);
+    setError("");
+    try {
+      await mutate("/auth/local/switch", "POST", { user_id: userId });
+      window.location.assign("/dashboard");
+    } catch (cause) {
+      setError(messageOf(cause));
+      setBusy(false);
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -110,29 +134,43 @@ function Registration() {
       setBusy(false);
     }
   };
+
   return (
     <main className="login-page">
       <section className="login-story">
         <Brand />
         <div className="login-copy">
-          <p className="eyebrow light">A clean workspace of your own</p>
-          <h1>Start from the beginning.</h1>
-          <p>Create a separate local account, then meet your recruiter and build your profile from scratch.</p>
+          <p className="eyebrow light">Your local workspaces</p>
+          <h1>Pick up where you left off.</h1>
+          <p>Each account keeps its profile, campaigns, companies, and documents in a separate workspace on this computer.</p>
         </div>
-        <div className="trust-line"><span /> Local-only account <span /> Separate workspace <span /> No Google setup</div>
+        <div className="trust-line"><span /> Local-only accounts <span /> Isolated workspaces <span /> No Google setup</div>
       </section>
       <section className="login-panel">
-        <div className="login-card">
-          <p className="eyebrow">Create a local account</p>
-          <h2>Your fresh workspace.</h2>
-          <p>This account is for local testing on this computer. It does not require a password or Google sign-in.</p>
-          <form className="registration-form" onSubmit={(event) => void submit(event)}>
-            <label><span>Your name</span><input autoFocus required minLength={2} maxLength={100} value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Laurent Hug" /></label>
-            <label><span>Email</span><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="fresh-test@example.com" /></label>
-            <button className="primary-button" disabled={busy}>{busy ? "Creating workspace…" : "Create account"}</button>
-          </form>
+        <div className="login-card account-chooser-card">
+          <p className="eyebrow">Switch workspace</p>
+          <h2>{showCreate ? "Create another account." : "Who is continuing?"}</h2>
+          {!showCreate && <p>Choose an existing local account. You can return here from Settings whenever you want to switch again.</p>}
+          {!showCreate && <div className="local-account-list" aria-label="Available local accounts">
+            {loadingAccounts ? <InlineLoading /> : accounts.map((account) => (
+              <button key={account.id} disabled={busy || account.is_current} onClick={() => void switchAccount(account.id)}>
+                <Avatar name={account.display_name} />
+                <span><strong>{account.display_name}</strong><small>{account.email}</small><small>{account.workspace.name}</small></span>
+                <b>{account.is_current ? "Current" : "Switch →"}</b>
+              </button>
+            ))}
+          </div>}
+          {showCreate && <>
+            <p>This creates a separate local workspace on this computer. It does not require a password or Google sign-in.</p>
+            <form className="registration-form" onSubmit={(event) => void submit(event)}>
+              <label><span>Your name</span><input autoFocus required minLength={2} maxLength={100} value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Laurent Hug" /></label>
+              <label><span>Email</span><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="fresh-test@example.com" /></label>
+              <button className="primary-button" disabled={busy}>{busy ? "Creating workspace…" : "Create account"}</button>
+            </form>
+          </>}
           {error && <InlineError message={error} />}
-          <a className="registration-back" href="/dashboard">Back to the current workspace</a>
+          {!loadingAccounts && accounts.length > 0 && <button className="account-create-toggle" onClick={() => { setShowCreate(!showCreate); setError(""); }}>{showCreate ? "← Back to existing accounts" : "+ Create a new local account"}</button>}
+          <a className="registration-back" href="/dashboard">Return to the current workspace</a>
         </div>
       </section>
     </main>

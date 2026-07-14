@@ -28,6 +28,27 @@ class LocalRegistrationCreate(BaseModel):
     email: EmailStr
 
 
+class LocalAccountSwitch(BaseModel):
+    user_id: int
+
+
+def _require_local_auth(settings: Settings) -> None:
+    if settings.auth_required:
+        raise HTTPException(status_code=403, detail="Local account access is disabled when authentication is required.")
+
+
+def _set_session_cookie(response: Response, raw_token: str, settings: Settings) -> None:
+    response.set_cookie(
+        "ai_session",
+        raw_token,
+        httponly=True,
+        secure=settings.secure_cookies,
+        samesite="lax",
+        max_age=settings.auth_session_days * 86400,
+        path="/",
+    )
+
+
 def _request_user(request: Request, session: Session) -> User:
     user_id = getattr(request.state, "user_id", None)
     user = session.get(User, user_id) if user_id is not None else None
@@ -91,6 +112,55 @@ def local_auth_capabilities(settings: Settings = Depends(get_settings)) -> dict[
     return {"registration_enabled": not settings.auth_required}
 
 
+@router.get("/auth/local/accounts")
+def local_accounts(
+    request: Request,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[dict[str, object]]:
+    _require_local_auth(settings)
+    users = session.exec(select(User).where(User.status == "active").order_by(User.display_name, User.id)).all()
+    workspaces = {item.owner_user_id: item for item in session.exec(select(Workspace).where(Workspace.status == "active")).all()}
+    switchable = [user for user in users if user.google_subject == "bootstrap:legacy" or user.google_subject.startswith(("dev:", "local:"))]
+    return [
+        {
+            "id": user.id,
+            "display_name": user.display_name,
+            "email": user.email,
+            "workspace": {"id": workspaces[user.id].workspace_id, "name": workspaces[user.id].name},
+            "is_current": user.id == getattr(request.state, "user_id", None),
+        }
+        for user in switchable
+        if user.id in workspaces
+    ]
+
+
+@router.post("/auth/local/switch")
+def local_switch(
+    payload: LocalAccountSwitch,
+    response: Response,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    _require_local_auth(settings)
+    user = session.get(User, payload.user_id)
+    if user is None or user.status != "active" or not (
+        user.google_subject == "bootstrap:legacy" or user.google_subject.startswith(("dev:", "local:"))
+    ):
+        raise HTTPException(status_code=404, detail="Local account not found.")
+    workspace = session.exec(select(Workspace).where(Workspace.owner_user_id == user.id, Workspace.status == "active")).first()
+    if workspace is None:
+        raise HTTPException(status_code=409, detail="This account has no active workspace.")
+    raw_token = AuthService(session, settings).create_session(user)
+    _set_session_cookie(response, raw_token, settings)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "workspace": {"id": workspace.workspace_id, "name": workspace.name},
+    }
+
+
 @router.post("/auth/local/register", status_code=201)
 def local_register(
     payload: LocalRegistrationCreate,
@@ -98,8 +168,7 @@ def local_register(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
-    if settings.auth_required:
-        raise HTTPException(status_code=403, detail="Local registration is disabled when authentication is required.")
+    _require_local_auth(settings)
     email = str(payload.email).strip().lower()
     display_name = payload.display_name.strip()
     if len(display_name) < 2:
@@ -146,15 +215,7 @@ def local_register(
         session.commit()
         session.refresh(workspace)
     raw_token = AuthService(session, settings).create_session(user)
-    response.set_cookie(
-        "ai_session",
-        raw_token,
-        httponly=True,
-        secure=settings.secure_cookies,
-        samesite="lax",
-        max_age=settings.auth_session_days * 86400,
-        path="/",
-    )
+    _set_session_cookie(response, raw_token, settings)
     return {
         "id": user.id,
         "email": user.email,

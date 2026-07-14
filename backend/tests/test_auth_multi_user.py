@@ -145,7 +145,7 @@ def test_unauthenticated_api_is_rejected(authenticated_app):
     assert response.status_code == 401
 
 
-def test_local_registration_creates_and_switches_fresh_workspaces(client):
+def test_local_registration_lists_and_switches_fresh_workspaces(client):
     capabilities = client.get("/auth/local/capabilities")
     assert capabilities.status_code == 200
     assert capabilities.json() == {"registration_enabled": True}
@@ -174,11 +174,15 @@ def test_local_registration_creates_and_switches_fresh_workspaces(client):
     assert second_me["email"] == "fresh-two@example.com"
     assert client.get("/product/summary").json()["pipeline"] == {}
 
-    switched_back = client.post(
-        "/auth/local/register",
-        json={"display_name": "Fresh One", "email": "fresh-one@example.com"},
-    )
-    assert switched_back.status_code == 201
+    accounts = client.get("/auth/local/accounts")
+    assert accounts.status_code == 200
+    account_rows = {item["email"]: item for item in accounts.json()}
+    assert account_rows["fresh-two@example.com"]["is_current"] is True
+    assert account_rows["fresh-one@example.com"]["is_current"] is False
+    assert account_rows["fresh-one@example.com"]["workspace"]["id"] == first_me.json()["workspace"]["id"]
+
+    switched_back = client.post("/auth/local/switch", json={"user_id": first_me.json()["id"]})
+    assert switched_back.status_code == 200
     assert client.get("/me").json()["id"] == first_me.json()["id"]
 
 
@@ -189,7 +193,9 @@ def test_local_registration_is_disabled_in_authenticated_mode(authenticated_app)
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Local registration is disabled when authentication is required."
+    assert response.json()["detail"] == "Local account access is disabled when authentication is required."
+    assert authenticated_app["client"].get("/auth/local/accounts").status_code == 403
+    assert authenticated_app["client"].post("/auth/local/switch", json={"user_id": authenticated_app["user_id"]}).status_code == 403
 
 
 def test_workspace_queries_and_duplicate_ids_are_isolated(authenticated_app):

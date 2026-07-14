@@ -89,6 +89,8 @@ def test_dashboard_assets_reference_guided_product_endpoints(client):
         "/documents",
         "/me",
         "/email-delivery/settings",
+        "/auth/local/accounts",
+        "/auth/local/switch",
     }
 
     for endpoint in required_endpoints:
@@ -108,6 +110,7 @@ def test_dashboard_assets_reference_guided_product_endpoints(client):
         "Company outreach",
         "All company campaigns",
         "All open-position campaigns",
+        "Who is continuing?",
         "A short inbox, not another task list",
         "What kind of work should we pursue?",
         "Where should your team look?",
