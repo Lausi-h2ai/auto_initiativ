@@ -196,3 +196,32 @@ def test_approved_profile_bundle_requires_all_three_approved_documents(client):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "A complete approved profile is not available yet."
+
+
+def test_user_can_approve_claim_for_tailoring_from_approved_profile(client, db_session, runs_root):
+    copy_valid_run(runs_root, "claim-approval")
+    assert client.post("/runs/claim-approval/import").status_code == 200
+    assert client.post(
+        "/onboarding/runs/claim-approval/promote",
+        json={"reviewer_id": "test-reviewer", "confirm_user_profile": True, "confirm_master_cv_profile": True, "confirm_policy": True},
+    ).json()["status"] == "approved"
+    original = db_session.exec(select(MasterCvProfileSnapshot).where(MasterCvProfileSnapshot.status == "approved")).one()
+    data = json.loads(original.raw_json)
+    data["claims"][0]["approved_for_tailoring"] = False
+    data["claims"][0]["provenance"].update({"source_type": "needs_review", "needs_review": True, "confidence": 0.4})
+    original.raw_json = json.dumps(data)
+    db_session.add(original)
+    db_session.commit()
+
+    response = client.post("/profile/claims/claim-1/approve")
+
+    assert response.status_code == 200
+    claim = response.json()["master_cv_profile"]["content"]["claims"][0]
+    assert claim["approved_for_tailoring"] is True
+    assert claim["provenance"]["source_type"] == "user_claim"
+    assert claim["provenance"]["needs_review"] is False
+    assert "profile_viewer:user_confirmation" in claim["provenance"]["source_refs"]
+    snapshots = db_session.exec(select(MasterCvProfileSnapshot)).all()
+    assert {snapshot.status for snapshot in snapshots} == {"approved", "superseded"}
+    audit = db_session.exec(select(AuditLog).where(AuditLog.action == "master_cv_claim_approved")).one()
+    assert audit.entity_id == "claim-1"

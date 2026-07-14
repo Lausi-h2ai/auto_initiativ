@@ -101,6 +101,7 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
   const forbidden = [];
   let launchCalls = 0;
   let promotionCalls = 0;
+  const approvedClaims = new Set();
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -121,7 +122,11 @@ async function mockApi(page, { withCompanies = false, activeResearch = false, fa
         },
       });
     }
-    if (pathname === "/profile/approved") return route.fulfill({ json: approvedProfileBundle() });
+    if (pathname === "/profile/approved") return route.fulfill({ json: approvedProfileBundle(approvedClaims.has("claim-1")) });
+    if (pathname === "/profile/claims/claim-1/approve" && request.method() === "POST") {
+      approvedClaims.add("claim-1");
+      return route.fulfill({ json: approvedProfileBundle(true) });
+    }
     if (pathname === "/email-delivery/settings") {
       return route.fulfill({ json: { sending_enabled: false, provider: "gmail_sandbox", allow_real_recipients: false, sandbox_recipient: null, gmail_configured: false, mode: "disabled" } });
     }
@@ -175,12 +180,13 @@ function onboardingArtifacts() {
   }));
 }
 
-function approvedProfileBundle() {
+function approvedProfileBundle(claimApproved = false) {
   const provenance = { source_type: "verified_document", confidence: 0.96, needs_review: false, source_refs: ["cv.pdf"] };
+  const claimProvenance = claimApproved ? { source_type: "user_claim", confidence: 1, needs_review: false, source_refs: ["cv.pdf", "profile_viewer:user_confirmation"] } : { source_type: "needs_review", confidence: 0.6, needs_review: true, source_refs: ["cv.pdf"] };
   const snapshot = { snapshot_type: "user_profile", id: 1, external_id: "profile-1", status: "approved", created_at: "2026-07-03T08:00:00Z" };
   return {
     user_profile: { snapshot, content: { schema_version: "1.0", profile_id: "profile-1", created_at: snapshot.created_at, identity: { display_name: "Alex Morgan", headline: "Applied AI product engineer", location: "Berlin, Germany", email: "alex@example.com", links: ["https://example.com"] }, preferences: { target_roles: [{ value: "Applied AI Engineer", provenance }], target_locations: [{ value: "Berlin", provenance }], remote_preferences: ["Hybrid"], relocation_preferences: [], communication_tone: { value: "Direct and thoughtful", provenance }, availability: { value: "Within one month", provenance } }, work_authorization: [{ value: "Germany", provenance }], languages: [{ language: "English", level: "Fluent", provenance }], provenance_summary: { source_documents: ["cv.pdf"], interview_notes: [] } } },
-    master_cv_profile: { snapshot: { ...snapshot, snapshot_type: "master_cv_profile", external_id: "cv-1" }, content: { schema_version: "1.0", profile_id: "cv-1", created_at: snapshot.created_at, claims: [{ claim_id: "claim-1", category: "experience", statement: "Built reliable AI product workflows.", role: "Product Engineer", organization: "Example Labs", tags: ["AI", "Python"], approved_for_tailoring: true, provenance }] } },
+    master_cv_profile: { snapshot: { ...snapshot, snapshot_type: "master_cv_profile", external_id: "cv-1" }, content: { schema_version: "1.0", profile_id: "cv-1", created_at: snapshot.created_at, claims: [{ claim_id: "claim-1", category: "experience", statement: "Built reliable AI product workflows.", role: "Product Engineer", organization: "Example Labs", tags: ["AI", "Python"], approved_for_tailoring: claimApproved, provenance: claimProvenance }] } },
     policy: { snapshot: { ...snapshot, snapshot_type: "policy", external_id: "policy-1" }, content: { schema_version: "1.0", policy_id: "policy-1", created_at: snapshot.created_at, exclusions: { industries: [{ value: "Gambling", reason: "Personal preference", provenance }], company_names: [], domains: [], keywords: [] }, outreach: { allow_company_repeat: false, allow_recipient_repeat: false, company_dedupe_window_days: 90, recipient_dedupe_window_days: 180, require_manual_review_before_send: true }, limits: { daily_send_limit: 5, weekly_send_limit: 20 }, review_thresholds: { minimum_required_confidence: 0.8, block_needs_review_required_fields: true }, forbidden_claims: ["Unverified revenue impact"] } },
   };
 }
@@ -305,7 +311,7 @@ test("onboarding review is visible and approval requires confirmation", async ({
   await expect(page.getByRole("heading", { name: "Review what your recruiter prepared" })).toBeVisible();
   await expect(page.getByText("Ready for your review", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Alex Morgan" })).toBeVisible();
-  await expect(page.getByText("Built reliable AI product workflows.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("paragraph").filter({ hasText: "Built reliable AI product workflows." })).toBeVisible();
   await expect(page.getByText("Phone number will be added later.")).toBeVisible();
 
   const approve = page.getByRole("button", { name: "Approve my profile" });
@@ -338,8 +344,13 @@ test("approved profile has a readable viewer with expandable source JSON", async
   await expect(page).toHaveURL(/#\/profile\/view/);
   await expect(page.getByRole("heading", { name: "Alex Morgan" })).toBeVisible();
   await expect(page.getByText("Applied AI Engineer", { exact: true })).toBeVisible();
-  await expect(page.getByText("Built reliable AI product workflows.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("paragraph").filter({ hasText: "Built reliable AI product workflows." })).toBeVisible();
   await expect(page.getByText("Gambling", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Approve for tailoring" }).click();
+  await expect(page.getByText("Confirm this claim is accurate")).toBeVisible();
+  await page.getByRole("button", { name: "Yes, approve this claim" }).click();
+  await expect(page.getByText("Claim approved. Your confirmation is now recorded in the profile.")).toBeVisible();
+  await expect(page.getByText("Approved for tailoring", { exact: true })).toBeVisible();
   await page.getByText("View source JSON").first().click();
   await expect(page.getByText('"display_name": "Alex Morgan"')).toBeVisible();
 });

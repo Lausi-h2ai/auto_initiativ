@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import uuid
+from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1296,6 +1297,10 @@ def profile_summary(session: Session = Depends(get_session)) -> ProfileSummaryRe
 
 @router.get("/profile/approved", response_model=ApprovedProfileBundleResponse)
 def approved_profile_bundle(session: Session = Depends(get_session)) -> ApprovedProfileBundleResponse:
+    return _approved_profile_bundle_response(session)
+
+
+def _approved_profile_bundle_response(session: Session) -> ApprovedProfileBundleResponse:
     user_profile = _latest_snapshot(session, UserProfileSnapshot, "approved")
     master_cv = _latest_snapshot(session, MasterCvProfileSnapshot, "approved")
     policy = _latest_snapshot(session, PolicySnapshot, "approved")
@@ -1313,6 +1318,69 @@ def approved_profile_bundle(session: Session = Depends(get_session)) -> Approved
         master_cv_profile=document("master_cv_profile", master_cv),
         policy=document("policy", policy),
     )
+
+
+@router.post("/profile/claims/{claim_id}/approve", response_model=ApprovedProfileBundleResponse)
+def approve_profile_claim(claim_id: str, session: Session = Depends(get_session)) -> ApprovedProfileBundleResponse:
+    master_cv = _latest_snapshot(session, MasterCvProfileSnapshot, "approved")
+    if master_cv is None:
+        raise HTTPException(status_code=404, detail="An approved master CV profile is not available yet.")
+    payload = _raw_json_object(master_cv)
+    matches = [claim for claim in payload.get("claims", []) if isinstance(claim, dict) and claim.get("claim_id") == claim_id]
+    if not matches:
+        raise HTTPException(status_code=404, detail="The claim was not found in the approved profile.")
+    if len(matches) != 1:
+        raise HTTPException(status_code=409, detail="The claim ID is not unique in the approved profile.")
+    claim = matches[0]
+    if claim.get("approved_for_tailoring") is not True:
+        provenance = claim.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+            claim["provenance"] = provenance
+        source_refs = provenance.get("source_refs") if isinstance(provenance.get("source_refs"), list) else []
+        confirmation_ref = "profile_viewer:user_confirmation"
+        provenance.update(
+            {
+                "source_type": "user_claim",
+                "confidence": 1.0,
+                "needs_review": False,
+                "source_refs": list(dict.fromkeys([*source_refs, confirmation_ref])),
+            }
+        )
+        claim["approved_for_tailoring"] = True
+        raw_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        replacement = MasterCvProfileSnapshot(
+            profile_id=f"{master_cv.profile_id}-claim-approval-{uuid.uuid4().hex[:12]}",
+            schema_version=master_cv.schema_version,
+            source_created_at=master_cv.source_created_at,
+            content_hash=sha256(raw_json.encode("utf-8")).hexdigest(),
+            status="approved",
+            raw_json=raw_json,
+            imported_file_id=None,
+        )
+        master_cv.status = "superseded"
+        session.add_all([master_cv, replacement])
+        session.flush()
+        identity = current_identity()
+        session.add(
+            AuditLog(
+                actor_type="user",
+                action="master_cv_claim_approved",
+                entity_type="master_cv_claim",
+                entity_id=claim_id,
+                result_status="approved",
+                metadata_json=json.dumps(
+                    {
+                        "user_id": identity.user_id if identity is not None else None,
+                        "previous_snapshot_id": master_cv.id,
+                        "new_snapshot_id": replacement.id,
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
+        session.commit()
+    return _approved_profile_bundle_response(session)
 
 
 @router.post("/campaigns/company-research", response_model=CompanyResearchCampaignResponse)
