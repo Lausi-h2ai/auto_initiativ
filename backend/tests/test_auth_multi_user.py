@@ -13,7 +13,10 @@ from backend.app.core.config import get_settings
 from backend.app.db.models import (
     AdminAccessAudit,
     AgentTask,
+    Campaign,
+    CampaignCompany,
     Company,
+    Contact,
     EmailDraft,
     ImportedFile,
     Invitation,
@@ -432,3 +435,239 @@ def test_unresolved_worker_failure_becomes_exception(authenticated_app):
     assert response.status_code == 200
     assert response.json()[0]["company_name"] == "User Company"
     assert response.json()[0]["external_company_id"] == "company-shared"
+
+
+def test_contact_research_without_imported_contact_blocks_before_drafting(authenticated_app):
+    from backend.app.auth.context import RequestIdentity, workspace_context
+    from backend.app.workflow.engine import WorkflowEngine
+
+    with workspace_context(
+        RequestIdentity(authenticated_app["user_id"], authenticated_app["user_workspace_id"])
+    ), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.name == "User Company")).one()
+        campaign = Campaign(campaign_id="campaign-contact-missing", name="Contact test")
+        session.add(campaign)
+        session.commit()
+        session.refresh(campaign)
+        session.add(CampaignCompany(campaign_id=campaign.id, company_id=company.id, stage="qualified"))
+        task = AgentTask(
+            task_id="task-contact-missing",
+            campaign_id=campaign.id,
+            company_id=company.id,
+            agent_role="contact_researcher",
+            task_type="contact_research",
+            status="running",
+            run_id="contact-missing",
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        WorkflowEngine(session, authenticated_app["settings"])._reconcile_contact_research(
+            task, {"status": "imported"}
+        )
+
+        session.refresh(task)
+        exception = session.exec(select(ReviewException).where(ReviewException.agent_task_id == task.id)).one()
+        drafts = session.exec(
+            select(AgentTask).where(
+                AgentTask.campaign_id == campaign.id,
+                AgentTask.company_id == company.id,
+                AgentTask.task_type == "application_draft",
+            )
+        ).all()
+        assert task.status == "blocked"
+        assert exception.category == "contact_not_found"
+        assert company.name in exception.title
+        assert "drafting has not been started" in exception.explanation
+        assert drafts == []
+
+
+def test_company_research_queues_contact_research_before_drafting(authenticated_app):
+    from backend.app.auth.context import RequestIdentity, workspace_context
+    from backend.app.workflow.engine import WorkflowEngine
+
+    with workspace_context(
+        RequestIdentity(authenticated_app["user_id"], authenticated_app["user_workspace_id"])
+    ), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.name == "User Company")).one()
+        imported = ImportedFile(
+            run_id="company-research-import",
+            path="companies/company-shared.json",
+            filename="company-shared.json",
+            schema_name="company_candidate.schema.json",
+            status="imported",
+        )
+        campaign = Campaign(campaign_id="campaign-contact-first", name="Contact first")
+        session.add(imported)
+        session.add(campaign)
+        session.commit()
+        session.refresh(imported)
+        session.refresh(campaign)
+        company.imported_file_id = imported.id
+        task = AgentTask(
+            task_id="task-company-research-contact-first",
+            campaign_id=campaign.id,
+            agent_role="company_researcher",
+            task_type="company_research",
+            status="running",
+            run_id=imported.run_id,
+        )
+        session.add(company)
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        WorkflowEngine(session, authenticated_app["settings"])._reconcile_research(
+            task, {"status": "imported", "artifact_counts": {"companies": 1}}
+        )
+
+        next_tasks = session.exec(
+            select(AgentTask).where(AgentTask.campaign_id == campaign.id, AgentTask.company_id == company.id)
+        ).all()
+        assert [item.task_type for item in next_tasks] == ["contact_research"]
+
+
+def test_contact_research_imported_contact_queues_drafting(authenticated_app):
+    from backend.app.auth.context import RequestIdentity, workspace_context
+    from backend.app.workflow.engine import WorkflowEngine
+
+    with workspace_context(
+        RequestIdentity(authenticated_app["user_id"], authenticated_app["user_workspace_id"])
+    ), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.name == "User Company")).one()
+        campaign = Campaign(campaign_id="campaign-contact-found", name="Contact test")
+        session.add(campaign)
+        session.commit()
+        session.refresh(campaign)
+        session.add(
+            Contact(
+                contact_id="contact-researched",
+                company_id=company.id,
+                external_company_id=company.company_id,
+                raw_email="careers@shared.example",
+                normalized_recipient_email="careers@shared.example",
+                email_source="company_site",
+                confidence=0.9,
+                source_refs_json='["https://shared.example/careers"]',
+                review_flags_json="[]",
+                raw_json="{}",
+            )
+        )
+        task = AgentTask(
+            task_id="task-contact-found",
+            campaign_id=campaign.id,
+            company_id=company.id,
+            agent_role="contact_researcher",
+            task_type="contact_research",
+            status="running",
+            run_id="contact-found",
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        WorkflowEngine(session, authenticated_app["settings"])._reconcile_contact_research(
+            task, {"status": "imported"}
+        )
+
+        session.refresh(task)
+        draft_task = session.exec(
+            select(AgentTask).where(
+                AgentTask.campaign_id == campaign.id,
+                AgentTask.company_id == company.id,
+                AgentTask.task_type == "application_draft",
+            )
+        ).one()
+        assert task.status == "completed"
+        assert draft_task.status == "queued"
+
+
+def test_contact_research_launch_prepares_exact_company_run(authenticated_app, monkeypatch):
+    from backend.app.agents.company_research_runtime import CompanyResearchRuntime, ResearchLaunchResult
+    from backend.app.auth.context import RequestIdentity, workspace_context
+    from backend.app.workflow.engine import WorkflowEngine
+
+    launched: list[str] = []
+
+    def fake_launch(self, run_id: str) -> ResearchLaunchResult:
+        launched.append(run_id)
+        return ResearchLaunchResult(run_id=run_id, status="running", command=[], workdir=self._run_root(run_id))
+
+    monkeypatch.setattr(CompanyResearchRuntime, "launch", fake_launch)
+    with workspace_context(
+        RequestIdentity(authenticated_app["user_id"], authenticated_app["user_workspace_id"])
+    ), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.name == "User Company")).one()
+        campaign = Campaign(campaign_id="campaign-contact-launch", name="Contact launch")
+        session.add(campaign)
+        session.commit()
+        session.refresh(campaign)
+        task = AgentTask(
+            task_id="task-contact-launch",
+            campaign_id=campaign.id,
+            company_id=company.id,
+            agent_role="contact_researcher",
+            task_type="contact_research",
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        WorkflowEngine(session, authenticated_app["settings"]).process(task)
+
+        session.refresh(task)
+        assert task.status == "running"
+        assert task.run_id == launched[0]
+        brief = json.loads((scoped_runs_root(authenticated_app["settings"].runs_root) / task.run_id / "input" / "campaign.json").read_text(encoding="utf-8"))
+        assert brief["max_companies"] == 1
+        assert "User Company" in brief["notes"]
+        assert "Do not discover other companies" in brief["notes"]
+
+
+def test_retry_upgrades_existing_missing_contact_draft_to_contact_research(authenticated_app):
+    with workspace_context(
+        RequestIdentity(authenticated_app["user_id"], authenticated_app["user_workspace_id"])
+    ), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.name == "User Company")).one()
+        task = AgentTask(
+            task_id="task-legacy-missing-contact",
+            company_id=company.id,
+            agent_role="resume_and_email_team",
+            task_type="application_draft",
+            status="blocked",
+            attempt_count=3,
+            last_error="409: Application drafts require an imported contact.",
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+        exception = ReviewException(
+            exception_id="exception-legacy-missing-contact",
+            company_id=company.id,
+            agent_task_id=task.id,
+            category="agent_failure",
+            title="A specialist needs help continuing",
+            explanation=task.last_error or "",
+            recommended_action="Retry.",
+        )
+        session.add(exception)
+        session.commit()
+
+    token = authenticated_app["user_token"]
+    response = authenticated_app["client"].post(
+        "/exceptions/exception-legacy-missing-contact/resolve",
+        cookies={"ai_session": token},
+        headers={"X-CSRF-Token": csrf_token(token, authenticated_app["settings"])},
+        json={"action": "retry"},
+    )
+    assert response.status_code == 200
+    with workspace_context(
+        RequestIdentity(authenticated_app["user_id"], authenticated_app["user_workspace_id"])
+    ), Session(authenticated_app["engine"]) as session:
+        task = session.exec(select(AgentTask).where(AgentTask.task_id == "task-legacy-missing-contact")).one()
+        assert task.task_type == "contact_research"
+        assert task.agent_role == "contact_researcher"
+        assert task.status == "queued"
+        assert task.attempt_count == 0
+        assert task.run_id is None

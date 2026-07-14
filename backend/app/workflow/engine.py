@@ -18,6 +18,7 @@ from backend.app.db.models import (
     Campaign,
     CampaignCompany,
     Company,
+    Contact,
     Document,
     EmailDraft,
     FitEvaluation,
@@ -97,6 +98,8 @@ class WorkflowEngine:
         try:
             if task.task_type == "company_research":
                 self._launch_research(task)
+            elif task.task_type == "contact_research":
+                self._launch_contact_research(task)
             elif task.task_type == "application_draft":
                 self._launch_application_draft(task)
             elif task.task_type == "gated_send":
@@ -113,6 +116,11 @@ class WorkflowEngine:
 
                 status = CompanyResearchRuntime(settings=self.settings).status(task.run_id or "")
                 self._reconcile_research(task, status)
+            elif task.task_type == "contact_research":
+                from backend.app.agents.company_research_runtime import CompanyResearchRuntime
+
+                status = CompanyResearchRuntime(settings=self.settings).status(task.run_id or "")
+                self._reconcile_contact_research(task, status)
             elif task.task_type == "application_draft":
                 from backend.app.agents.application_draft_runtime import ApplicationDraftRuntime
 
@@ -180,6 +188,38 @@ class WorkflowEngine:
         self.session.add(task)
         self.session.commit()
 
+    def _launch_contact_research(self, task: AgentTask) -> None:
+        from backend.app.agents.company_research_runtime import CompanyResearchRuntime
+        from backend.app.api.routes import prepare_company_research_campaign
+        from backend.app.schemas.api import CompanyResearchCampaignRequest
+
+        company = self.session.get(Company, task.company_id)
+        if company is None:
+            raise ValueError("Company no longer exists.")
+        request = CompanyResearchCampaignRequest(
+            run_id=f"contact-{company.company_id}-{uuid4().hex[:8]}",
+            role_focus="Contact research only",
+            locations=[],
+            time_budget_minutes=10,
+            max_companies=1,
+            notes=(
+                f"Refresh the existing company {company.name} "
+                f"({company.company_id}, {company.normalized_domain or company.raw_domain or 'domain unavailable'}). "
+                "Research only this company and find a public, professional recruiting or careers email. "
+                "Write the company candidate needed to preserve the company reference and write a contact candidate "
+                "only when a suitable, sourced address is found. Do not discover other companies."
+            ),
+        )
+        prepared = prepare_company_research_campaign(request, session=self.session, settings=self.settings)
+        CompanyResearchRuntime(settings=self.settings).launch(prepared.run_id)
+        task.run_id = prepared.run_id
+        task.progress = 20
+        task.narrative = f"The research specialist is looking for a suitable public contact at {company.name}."
+        task.output_json = json.dumps({"run_id": prepared.run_id})
+        task.updated_at = utc_now()
+        self.session.add(task)
+        self.session.commit()
+
     def _send_application(self, task: AgentTask) -> None:
         from backend.app.email_delivery.batch_send import SendBatchService
 
@@ -243,17 +283,85 @@ class WorkflowEngine:
                 self.session.add(link)
                 self.session.flush()
             if link.stage != "archived":
-                self.enqueue(
-                    campaign=campaign,
-                    company=company,
-                    task_type="application_draft",
-                    agent_role="resume_and_email_team",
-                    narrative=f"Preparing a tailored application for {company.name}.",
-                )
+                contact = self._latest_contact(company.id)
+                if contact is None:
+                    self.enqueue(
+                        campaign=campaign,
+                        company=company,
+                        task_type="contact_research",
+                        agent_role="contact_researcher",
+                        narrative=f"Finding a suitable public recruiting contact for {company.name}.",
+                    )
+                else:
+                    self._enqueue_application_draft(campaign, company)
         campaign.status = "preparing"
         campaign.updated_at = utc_now()
         self.session.add(campaign)
         self._complete(task, f"Research completed with {len(companies)} companies ready for the next specialist.")
+
+    def _reconcile_contact_research(self, task: AgentTask, status: dict[str, Any]) -> None:
+        state = str(status.get("status") or "running")
+        task.progress = 70 if state not in TERMINAL_RUNTIME_STATUSES else task.progress
+        task.updated_at = utc_now()
+        self.session.add(task)
+        if state not in TERMINAL_RUNTIME_STATUSES:
+            self.session.commit()
+            return
+        if state in FAILED_RUNTIME_STATUSES:
+            raise ValueError(f"Contact research ended with {state}.")
+        campaign = self.session.get(Campaign, task.campaign_id)
+        company = self.session.get(Company, task.company_id)
+        if campaign is None or company is None:
+            raise ValueError("Campaign company no longer exists.")
+        contact = self._latest_contact(company.id)
+        if contact is None:
+            self._block_no_contact(task, company)
+            return
+        self._enqueue_application_draft(campaign, company)
+        self._complete(task, f"A suitable public contact for {company.name} was imported; application preparation is queued.")
+
+    def _enqueue_application_draft(self, campaign: Campaign, company: Company) -> AgentTask:
+        return self.enqueue(
+            campaign=campaign,
+            company=company,
+            task_type="application_draft",
+            agent_role="resume_and_email_team",
+            narrative=f"Preparing a tailored application for {company.name}.",
+        )
+
+    def _latest_contact(self, company_id: int | None) -> Contact | None:
+        if company_id is None:
+            return None
+        return self.session.exec(
+            select(Contact).where(Contact.company_id == company_id).order_by(Contact.created_at.desc())
+        ).first()
+
+    def _block_no_contact(self, task: AgentTask, company: Company) -> None:
+        task.status = "blocked"
+        task.progress = 100
+        task.last_error = f"No suitable public professional contact was found for {company.name}."
+        task.narrative = task.last_error
+        task.completed_at = utc_now()
+        task.locked_at = None
+        task.locked_by = None
+        task.updated_at = utc_now()
+        self.session.add(task)
+        self.session.add(
+            ReviewException(
+                exception_id=f"exception-{uuid4()}",
+                campaign_id=task.campaign_id,
+                company_id=company.id,
+                agent_task_id=task.id,
+                category="contact_not_found",
+                title=f"No suitable contact found for {company.name}",
+                explanation=(
+                    f"Contact research completed for {company.name}, but no schema-valid, sourced public professional "
+                    "email address was imported. Application drafting has not been started."
+                ),
+                recommended_action="Retry contact research with new guidance or skip this company.",
+            )
+        )
+        self.session.commit()
 
     def _reconcile_draft(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")
@@ -403,7 +511,7 @@ class WorkflowWorker:
             running = session.exec(
                 select(AgentTask).where(
                     AgentTask.status == "running",
-                    AgentTask.task_type.in_(["company_research", "application_draft"]),
+                    AgentTask.task_type.in_(["company_research", "contact_research", "application_draft"]),
                 ).order_by(AgentTask.updated_at)
             ).first()
             task = running or session.exec(

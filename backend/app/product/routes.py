@@ -21,6 +21,7 @@ from backend.app.db.models import (
     Campaign,
     CampaignCompany,
     Company,
+    Contact,
     Document,
     EmailDraft,
     FitEvaluation,
@@ -344,11 +345,21 @@ def resolve_exception(
         raise HTTPException(status_code=404, detail="Exception not found.")
     task = session.get(AgentTask, item.agent_task_id) if item.agent_task_id else None
     if payload.action == "retry" and task is not None:
+        missing_contact = task.company_id is not None and session.exec(
+            select(Contact).where(Contact.company_id == task.company_id)
+        ).first() is None
+        if task.task_type == "application_draft" and missing_contact:
+            task.task_type = "contact_research"
+            task.agent_role = "contact_researcher"
+            task.run_id = None
+            task.output_json = "{}"
+            task.narrative = "The research specialist will look for a suitable public contact before drafting."
+        else:
+            task.narrative = "The specialist will retry with your guidance."
         task.status = "queued"
         task.attempt_count = 0
         task.available_at = utc_now()
         task.last_error = None
-        task.narrative = "The specialist will retry with your guidance."
         session.add(task)
     elif payload.action == "skip" and item.company_id and item.campaign_id:
         link = session.exec(
