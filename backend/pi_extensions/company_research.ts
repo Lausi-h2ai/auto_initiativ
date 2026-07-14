@@ -10,6 +10,8 @@ const WRITE_DIRECTORIES = {
   company: "companies",
   contact: "contacts",
   fit: "fit_evaluations",
+  job: "jobs",
+  jobFit: "job_fit_evaluations",
 } as const;
 
 function workspacePath(...parts: string[]): string {
@@ -242,6 +244,34 @@ export default function companyResearch(pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params) {
       const details = await writeArtifact("fit", params.filename, params.json);
+      return { content: [{ type: "text", text: `Wrote ${details.path}` }], details };
+    },
+  });
+
+  pi.registerTool({
+    name: "job_research_write_job",
+    label: "Write Job Candidate",
+    description: "Write one schema-validatable job posting candidate under ../output/jobs.",
+    parameters: Type.Object({
+      filename: Type.String({ description: "A stable JSON filename." }),
+      json: Type.String({ description: "Complete job_posting_candidate JSON document as a string." }),
+    }),
+    async execute(_toolCallId, params) {
+      const details = await writeArtifact("job", params.filename, params.json);
+      return { content: [{ type: "text", text: `Wrote ${details.path}` }], details };
+    },
+  });
+
+  pi.registerTool({
+    name: "job_research_write_fit_evaluation",
+    label: "Write Job Fit Evaluation",
+    description: "Write one schema-validatable vacancy fit evaluation under ../output/job_fit_evaluations.",
+    parameters: Type.Object({
+      filename: Type.String({ description: "A stable JSON filename." }),
+      json: Type.String({ description: "Complete job_fit_evaluation JSON document as a string." }),
+    }),
+    async execute(_toolCallId, params) {
+      const details = await writeArtifact("jobFit", params.filename, params.json);
       return { content: [{ type: "text", text: `Wrote ${details.path}` }], details };
     },
   });

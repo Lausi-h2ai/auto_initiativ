@@ -17,11 +17,13 @@ from backend.app.db.models import (
     AgentTask,
     Campaign,
     CampaignCompany,
+    CampaignJob,
     Company,
     Contact,
     Document,
     EmailDraft,
     FitEvaluation,
+    JobPosting,
     ImportedFile,
     ReviewException,
     SendIntent,
@@ -98,6 +100,8 @@ class WorkflowEngine:
         try:
             if task.task_type == "company_research":
                 self._launch_research(task)
+            elif task.task_type == "job_research":
+                self._launch_job_research(task)
             elif task.task_type == "contact_research":
                 self._launch_contact_research(task)
             elif task.task_type == "application_draft":
@@ -116,6 +120,9 @@ class WorkflowEngine:
 
                 status = CompanyResearchRuntime(settings=self.settings).status(task.run_id or "")
                 self._reconcile_research(task, status)
+            elif task.task_type == "job_research":
+                from backend.app.agents.job_research_runtime import JobResearchRuntime
+                self._reconcile_job_research(task, JobResearchRuntime(settings=self.settings).status(task.run_id or ""))
             elif task.task_type == "contact_research":
                 from backend.app.agents.company_research_runtime import CompanyResearchRuntime
 
@@ -158,6 +165,24 @@ class WorkflowEngine:
         campaign.updated_at = utc_now()
         self.session.add(task)
         self.session.add(campaign)
+        self.session.commit()
+
+    def _launch_job_research(self, task: AgentTask) -> None:
+        from backend.app.agents.job_research_runtime import JobResearchRuntime, prepare_job_research_run
+
+        campaign = self.session.get(Campaign, task.campaign_id)
+        if campaign is None or campaign.campaign_type != "listed_job_search":
+            raise ValueError("Job research requires a listed-job campaign.")
+        run_id = prepare_job_research_run(campaign=campaign, session=self.session, settings=self.settings)
+        JobResearchRuntime(settings=self.settings).launch(run_id)
+        task.run_id = run_id
+        task.progress = 15
+        task.narrative = "The vacancy scout is searching broad sources and verifying application routes."
+        task.output_json = json.dumps({"run_id": run_id})
+        task.updated_at = utc_now()
+        campaign.status = "researching"
+        campaign.updated_at = utc_now()
+        self.session.add_all([task, campaign])
         self.session.commit()
 
     def _launch_application_draft(self, task: AgentTask) -> None:
@@ -298,6 +323,32 @@ class WorkflowEngine:
         campaign.updated_at = utc_now()
         self.session.add(campaign)
         self._complete(task, f"Research completed with {len(companies)} companies ready for the next specialist.")
+
+    def _reconcile_job_research(self, task: AgentTask, status: dict[str, Any]) -> None:
+        state = str(status.get("status") or "running")
+        counts = status.get("artifact_counts") or {}
+        task.progress = min(90, max(task.progress, int(counts.get("jobs", 0)) * 3))
+        task.narrative = f"Vacancy research found {int(counts.get('jobs', 0))} listings and is checking validity and fit."
+        task.updated_at = utc_now()
+        self.session.add(task)
+        if state not in TERMINAL_RUNTIME_STATUSES:
+            self.session.commit()
+            return
+        if state in FAILED_RUNTIME_STATUSES:
+            raise ValueError(f"Job research ended with {state}.")
+        campaign = self.session.get(Campaign, task.campaign_id)
+        if campaign is None:
+            raise ValueError("Campaign no longer exists.")
+        file_ids = self.session.exec(select(ImportedFile.id).where(ImportedFile.run_id == task.run_id)).all()
+        jobs = self.session.exec(select(JobPosting).where(JobPosting.imported_file_id.in_(file_ids))).all() if file_ids else []
+        for job in jobs:
+            link = self.session.exec(select(CampaignJob).where(CampaignJob.campaign_id == campaign.id, CampaignJob.job_posting_id == job.id)).first()
+            if link is None:
+                self.session.add(CampaignJob(campaign_id=campaign.id, job_posting_id=job.id, application_status="discovered"))
+        campaign.status = "active"
+        campaign.updated_at = utc_now()
+        self.session.add(campaign)
+        self._complete(task, f"Vacancy research completed with {len(jobs)} listings retained with verification evidence.")
 
     def _reconcile_contact_research(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")

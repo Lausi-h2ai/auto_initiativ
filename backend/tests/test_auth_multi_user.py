@@ -411,6 +411,46 @@ def test_campaign_creation_is_on_rails_and_enqueues_research(authenticated_app):
     assert "Connect Gmail" in gated.json()["detail"]
 
 
+def test_listed_job_campaign_is_separate_and_manual_submit_only(authenticated_app):
+    client = authenticated_app["client"]
+    token = authenticated_app["user_token"]
+    headers = {"X-CSRF-Token": csrf_token(token, authenticated_app["settings"])}
+    response = client.post(
+        "/campaigns",
+        cookies={"ai_session": token},
+        headers=headers,
+        json={
+            "campaign_type": "listed_job_search",
+            "name": "Verified AI roles",
+            "role_focus": "Applied AI engineering",
+            "locations": ["Zurich"],
+            "max_jobs": 20,
+            "freshness_days": 30,
+            "sending_mode": "prepare_only",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["campaign_type"] == "listed_job_search"
+    assert response.json()["job_count"] == 0
+    assert response.json()["active_task_count"] == 1
+
+    blocked = client.patch(
+        f"/campaigns/{response.json()['id']}/sending-mode",
+        cookies={"ai_session": token},
+        headers=headers,
+        json={"sending_mode": "gated_autosend"},
+    )
+    assert blocked.status_code == 422
+
+    refresh = client.post(
+        f"/campaigns/{response.json()['id']}/refresh",
+        cookies={"ai_session": token},
+        headers=headers,
+    )
+    assert refresh.status_code == 202
+    assert refresh.json()["status"] == "queued"
+
+
 def test_unresolved_worker_failure_becomes_exception(authenticated_app):
     from backend.app.auth.context import RequestIdentity, workspace_context
     from backend.app.workflow.engine import WorkflowEngine
