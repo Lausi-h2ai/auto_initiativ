@@ -408,8 +408,10 @@ def test_unresolved_worker_failure_becomes_exception(authenticated_app):
             workspace_id=authenticated_app["user_workspace_id"],
         )
     ), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.name == "User Company")).one()
         task = AgentTask(
             task_id="task-unsupported",
+            company_id=company.id,
             agent_role="test_specialist",
             task_type="unsupported",
             max_attempts=1,
@@ -422,3 +424,11 @@ def test_unresolved_worker_failure_becomes_exception(authenticated_app):
         exception = session.exec(select(ReviewException).where(ReviewException.agent_task_id == task.id)).one()
         assert task.status == "blocked"
         assert exception.status == "open"
+
+    response = authenticated_app["client"].get(
+        "/exceptions",
+        cookies={"ai_session": authenticated_app["user_token"]},
+    )
+    assert response.status_code == 200
+    assert response.json()[0]["company_name"] == "User Company"
+    assert response.json()[0]["external_company_id"] == "company-shared"

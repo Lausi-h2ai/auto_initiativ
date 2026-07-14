@@ -64,6 +64,9 @@ export type Company = {
 
 export type ExceptionItem = {
   id: string;
+  company_id?: number | null;
+  company_name?: string | null;
+  external_company_id?: string | null;
   category: string;
   title: string;
   explanation: string;

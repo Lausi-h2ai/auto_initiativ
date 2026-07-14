@@ -12,7 +12,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from backend.app.auth.context import current_identity, scoped_runs_root
 from backend.app.core.config import Settings, get_settings
@@ -308,6 +308,12 @@ def agent_activity(campaign_id: str | None = None, session: Session = Depends(ge
 def list_exceptions(status: str = "open", session: Session = Depends(get_session)) -> list[dict[str, Any]]:
     statement = select(ReviewException).where(ReviewException.status == status).order_by(ReviewException.created_at.desc())
     items = session.exec(statement).all()
+    company_ids = {item.company_id for item in items if item.company_id is not None}
+    companies = {
+        company.id: company
+        for company in session.exec(select(Company).where(col(Company.id).in_(company_ids))).all()
+        if company.id is not None
+    } if company_ids else {}
     return [
         {
             "id": item.exception_id,
@@ -318,6 +324,8 @@ def list_exceptions(status: str = "open", session: Session = Depends(get_session
             "status": item.status,
             "campaign_id": item.campaign_id,
             "company_id": item.company_id,
+            "company_name": companies[item.company_id].name if item.company_id in companies else None,
+            "external_company_id": companies[item.company_id].company_id if item.company_id in companies else None,
             "created_at": item.created_at,
         }
         for item in items
