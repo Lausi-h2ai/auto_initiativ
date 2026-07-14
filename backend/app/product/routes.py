@@ -475,9 +475,11 @@ def _document_items(session: Session, settings: Settings, campaign_id: str | Non
             "size_bytes": item.size_bytes,
             "campaign_id": item.campaign_id,
             "company_id": item.company_id,
+            "job_id": json.loads(item.provenance_json or "{}").get("job_id"),
             "status": item.status,
             "created_at": item.created_at,
             "preview_url": f"/documents/{item.document_id}/content",
+            **({"download_url": f"/documents/{item.document_id}/content"} if item.mime_type == "application/pdf" else {}),
         }
         for item in documents
     ]

@@ -170,7 +170,7 @@ Listed-job requirements:
             RunFolderSpec(
                 run_id=run_id, task=task, instructions=APPLICATION_DRAFT_INSTRUCTIONS,
                 inputs=tuple(RunInputFile(path, content) for path, content in sorted(inputs.items())),
-                expected_output_files=("email_draft.json", f"attachments/{brief.html_filename}", f"attachments/{brief.pdf_filename}"),
+                expected_output_files=("email_draft.json", f"attachments/{brief.html_filename}", f"attachments/{brief.pdf_filename}", f"attachments/{brief.cover_letter_html_filename}", f"attachments/{brief.cover_letter_pdf_filename}"),
                 metadata={"task_type": "job_application_draft", "job_id": job.job_id, "campaign_id": campaign.campaign_id,
                           "profile_snapshot_id": profile.id, "master_cv_snapshot_id": master.id},
             )

@@ -26,15 +26,41 @@ export type Campaign = {
 };
 
 export type JobPosting = {
-  id: string; title: string; company_id: string; company_name?: string | null;
-  source_url: string; canonical_url: string; application_url: string; employer_website_url?: string | null;
-  source_domain: string; source_kind: string; description?: string | null; locations: string[];
-  remote_policy?: string | null; employment_types: string[]; compensation: Record<string, unknown>;
-  languages: string[]; requirements: string[]; responsibilities: string[]; date_posted?: string | null;
-  valid_through?: string | null; first_seen_at: string; last_verified_at?: string | null; vacancy_status: string;
-  company_fit_score?: number | null; role_fit_score?: number | null; fit_reasons: unknown[]; fit_gaps: unknown[];
-  application_status?: string | null; package_ready: boolean;
-  answer_kit: Array<{ question: string; answer: string; needs_user_input: boolean; reason?: string }>;
+  id: string;
+  title: string;
+  company_id: string;
+  company_name?: string | null;
+  source_url: string;
+  canonical_url: string;
+  application_url: string;
+  employer_website_url?: string | null;
+  source_domain: string;
+  source_kind: string;
+  description?: string | null;
+  locations: string[];
+  remote_policy?: string | null;
+  employment_types: string[];
+  compensation: Record<string, unknown>;
+  languages: string[];
+  requirements: string[];
+  responsibilities: string[];
+  date_posted?: string | null;
+  valid_through?: string | null;
+  first_seen_at: string;
+  last_verified_at?: string | null;
+  vacancy_status: string;
+  company_fit_score?: number | null;
+  role_fit_score?: number | null;
+  fit_reasons: unknown[];
+  fit_gaps: unknown[];
+  application_status?: string | null;
+  package_ready: boolean;
+  answer_kit: Array<{
+    question: string;
+    answer: string;
+    needs_user_input: boolean;
+    reason?: string;
+  }>;
   cover_letter_text?: string | null;
 };
 
@@ -99,6 +125,7 @@ export type DocumentItem = {
   size_bytes: number;
   company_id?: number | null;
   campaign_id?: number | null;
+  job_id?: string | null;
   status: string;
   preview_url: string;
   download_url?: string;
@@ -123,9 +150,18 @@ export type Provenance = {
 export type ProvenancedText = { value: string; provenance: Provenance };
 
 export type ApprovedProfileBundle = {
-  user_profile: { snapshot: { created_at: string; status: string }; content: Record<string, any> };
-  master_cv_profile: { snapshot: { created_at: string; status: string }; content: Record<string, any> };
-  policy: { snapshot: { created_at: string; status: string }; content: Record<string, any> };
+  user_profile: {
+    snapshot: { created_at: string; status: string };
+    content: Record<string, any>;
+  };
+  master_cv_profile: {
+    snapshot: { created_at: string; status: string };
+    content: Record<string, any>;
+  };
+  policy: {
+    snapshot: { created_at: string; status: string };
+    content: Record<string, any>;
+  };
 };
 
 export type Delivery = {
@@ -140,13 +176,25 @@ export type Delivery = {
 
 let csrf = "";
 
-export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
   const headers = new Headers(options.headers);
-  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  if (options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase()) && csrf) {
+  if (options.body && !headers.has("Content-Type"))
+    headers.set("Content-Type", "application/json");
+  if (
+    options.method &&
+    !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase()) &&
+    csrf
+  ) {
     headers.set("X-CSRF-Token", csrf);
   }
-  const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
+  const response = await fetch(path, {
+    ...options,
+    headers,
+    credentials: "same-origin",
+  });
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {
@@ -156,7 +204,12 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
       // Keep the HTTP fallback.
     }
     if (response.status >= 500) {
-      reportBrowserIssue({ kind: "api_error", message, source: path, status: response.status });
+      reportBrowserIssue({
+        kind: "api_error",
+        message,
+        source: path,
+        status: response.status,
+      });
     }
     throw new Error(message);
   }
@@ -172,7 +225,16 @@ export async function loadMe(): Promise<Me> {
 
 export async function loadWorkspace() {
   const me = await loadMe();
-  const [summary, profile, delivery, campaigns, exceptions, documents, agents, jobs] = await Promise.all([
+  const [
+    summary,
+    profile,
+    delivery,
+    campaigns,
+    exceptions,
+    documents,
+    agents,
+    jobs,
+  ] = await Promise.all([
     request<ProductSummary>("/product/summary"),
     request<ProfileSummary>("/profile/summary"),
     request<Delivery>("/email-delivery/settings"),
@@ -182,10 +244,27 @@ export async function loadWorkspace() {
     request<AgentTask[]>("/agent-activity"),
     request<JobPosting[]>("/jobs"),
   ]);
-  return { me, summary, profile, delivery, campaigns, exceptions, documents, agents, jobs };
+  return {
+    me,
+    summary,
+    profile,
+    delivery,
+    campaigns,
+    exceptions,
+    documents,
+    agents,
+    jobs,
+  };
 }
 
-export function mutate<T>(path: string, method: string, payload?: unknown): Promise<T> {
-  return request<T>(path, { method, body: payload === undefined ? undefined : JSON.stringify(payload) });
+export function mutate<T>(
+  path: string,
+  method: string,
+  payload?: unknown,
+): Promise<T> {
+  return request<T>(path, {
+    method,
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
 }
 import { reportBrowserIssue } from "./monitoring";

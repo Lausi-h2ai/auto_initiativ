@@ -467,7 +467,7 @@ class WorkflowEngine:
             link.entered_stage_at = utc_now()
             link.updated_at = utc_now()
             self.session.add(link)
-        self._index_documents(task, company)
+        self._index_documents(task, company, job_id=job.job_id, job_title=job.title)
         if campaign.sending_mode == "gated_autosend":
             self.enqueue(
                 campaign=campaign,
@@ -522,7 +522,7 @@ class WorkflowEngine:
         self.session.add_all([package, link])
         self._complete(task, f"The vacancy-tailored CV and cover letter for {job.title} are ready.")
 
-    def _index_documents(self, task: AgentTask, company: Company) -> None:
+    def _index_documents(self, task: AgentTask, company: Company, *, job_id: str | None = None, job_title: str | None = None) -> None:
         if not task.run_id:
             return
         output = scoped_runs_root(self.settings.runs_root) / task.run_id / "output"
@@ -536,7 +536,9 @@ class WorkflowEngine:
             if existing is not None:
                 continue
             data = path.read_bytes()
-            kind = "tailored_cv" if "cv" in path.name.lower() or path.suffix.lower() == ".pdf" else "email_draft"
+            normalized_name = path.name.casefold()
+            is_cover_letter = any(token in normalized_name for token in ("anschreiben", "cover-letter", "cover_letter"))
+            kind = "cover_letter" if is_cover_letter else "tailored_cv" if "cv" in normalized_name or "lebenslauf" in normalized_name else "email_draft"
             mime = "application/pdf" if path.suffix.lower() == ".pdf" else "text/html" if path.suffix.lower() in {".html", ".htm"} else "application/json" if path.suffix.lower() == ".json" else "text/plain"
             self.session.add(
                 Document(
@@ -551,7 +553,7 @@ class WorkflowEngine:
                     mime_type=mime,
                     size_bytes=len(data),
                     content_hash=hashlib.sha256(data).hexdigest(),
-                    provenance_json=json.dumps({"agent_task_id": task.task_id, "run_id": task.run_id}),
+                    provenance_json=json.dumps({"agent_task_id": task.task_id, "run_id": task.run_id, "job_id": job_id, "job_title": job_title}),
                 )
             )
 

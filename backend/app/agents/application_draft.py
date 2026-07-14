@@ -63,6 +63,14 @@ class ApplicationDraftBrief:
     def pdf_filename(self) -> str:
         return f"{self.company_slug}-lebenslauf.pdf"
 
+    @property
+    def cover_letter_html_filename(self) -> str:
+        return f"{self.company_slug}-anschreiben.html"
+
+    @property
+    def cover_letter_pdf_filename(self) -> str:
+        return f"{self.company_slug}-anschreiben.pdf"
+
 
 def slugify(value: str, *, fallback: str = "company") -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
@@ -198,9 +206,14 @@ def _compact_fit(fit_evaluation: dict[str, Any] | None) -> dict[str, Any]:
 
 def _compact_user_profile(user_profile: dict[str, Any]) -> dict[str, Any]:
     preferences = user_profile.get("preferences") if isinstance(user_profile.get("preferences"), dict) else {}
+    identity = user_profile.get("identity") if isinstance(user_profile.get("identity"), dict) else {}
     return {
         "profile_id": user_profile.get("profile_id"),
-        "display_name": (user_profile.get("identity") or {}).get("display_name") if isinstance(user_profile.get("identity"), dict) else None,
+        "display_name": identity.get("display_name"),
+        "location": identity.get("location"),
+        "email": identity.get("email"),
+        "phone": identity.get("phone"),
+        "links": identity.get("links") if isinstance(identity.get("links"), list) else [],
         "communication_tone": preferences.get("communication_tone"),
         "target_roles": preferences.get("target_roles") if isinstance(preferences.get("target_roles"), list) else [],
         "target_locations": preferences.get("target_locations") if isinstance(preferences.get("target_locations"), list) else [],
@@ -234,6 +247,8 @@ def build_application_draft_context(
                 "cv_pdf": f"../output/attachments/{brief.pdf_filename}",
                 "cv_attachment_path": f"attachments/{brief.pdf_filename}",
                 "cv_attachment_id": f"cv-{brief.company_slug}",
+                "cover_letter_html": f"../output/attachments/{brief.cover_letter_html_filename}",
+                "cover_letter_pdf": f"../output/attachments/{brief.cover_letter_pdf_filename}",
             },
         },
         "workflow": {
@@ -276,11 +291,13 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
             "cv_pdf": f"../output/attachments/{brief.pdf_filename}",
             "cv_attachment_path": f"attachments/{brief.pdf_filename}",
             "cv_attachment_id": f"cv-{brief.company_slug}",
+            "cover_letter_html": f"../output/attachments/{brief.cover_letter_html_filename}",
+            "cover_letter_pdf": f"../output/attachments/{brief.cover_letter_pdf_filename}",
         },
     }
     return (
         "# Application Draft Task\n\n"
-        "Create one tailored CV PDF and one email draft for the selected company/contact.\n\n"
+        "Create one tailored CV PDF, one formally formatted cover-letter PDF, and one email draft for the selected company/contact.\n\n"
         "Brief:\n\n"
         f"```json\n{json.dumps(payload, indent=2, sort_keys=True)}\n```\n\n"
         "Required process:\n\n"
@@ -295,7 +312,8 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
             if brief.contact_needs_research
             else "7. Do not research contacts in this run. If contact context is missing or weak, add review flags to `email_draft.json`.\n"
         )
-        + "8. Write `../output/email_draft.json` matching `../input/schemas/email_draft.schema.json`.\n\n"
+        + f"8. Write the cover letter as semantic HTML to `../output/attachments/{brief.cover_letter_html_filename}` and render it with `application_draft_render_pdf` to `../output/attachments/{brief.cover_letter_pdf_filename}`. The PDF text must remain selectable.\n"
+        + "9. Write `../output/email_draft.json` matching `../input/schemas/email_draft.schema.json`. Its body must contain the same substantive letter as the PDF.\n\n"
         + (
             "Contact research requirements:\n\n"
             "- Use the selected `contact_id` exactly in `contact_candidate.json` when contact research is required.\n"
@@ -327,6 +345,11 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
         "- Do not use global CSS transforms, zoom, fixed 2000px+ canvases, raster text, or bitmap page rendering to make content fit.\n"
         "- Treat renderer asset, page-count, and page-fill failures as required layout repairs. Use the returned layout diagnostics for the one permitted repair.\n"
         "- Before finishing, verify schema conformance, exact IDs and attachment paths, claim-ledger coverage and review signals, selectable PDF text, and the absence of send artifacts.\n"
+        "\nCover-letter document requirements:\n\n"
+        "- Determine the destination country from vacancy location/company context. Use that country's conventional business-letter layout; if ambiguous, use a conservative international A4 layout and add a review flag.\n"
+        "- Include only supported applicant/contact details. Omit unknown addresses, names, dates, or credentials rather than inventing them.\n"
+        "- Include the supported applicant contact block, supported employer/addressee block, current date, a role-specific subject, salutation, concise body, closing, and applicant name. For Germany, Switzerland, or Austria follow DIN-style ordering where available facts permit it.\n"
+        "- Use professional typography, 20-25mm margins, readable 10-12pt body text, restrained styling, and normally one A4 page. Never create a screenshot, canvas, or image-only PDF.\n"
     )
 
 
@@ -374,6 +397,8 @@ def build_application_draft_inputs(
                     "cv_pdf": f"../output/attachments/{brief.pdf_filename}",
                     "cv_attachment_path": f"attachments/{brief.pdf_filename}",
                     "cv_attachment_id": f"cv-{brief.company_slug}",
+                    "cover_letter_html": f"../output/attachments/{brief.cover_letter_html_filename}",
+                    "cover_letter_pdf": f"../output/attachments/{brief.cover_letter_pdf_filename}",
                 },
             },
             indent=2,
