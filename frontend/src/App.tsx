@@ -270,16 +270,32 @@ function Journey({ campaign, pipeline }: { campaign: Campaign | null; pipeline: 
 }
 
 function CompaniesPage() {
-  const { summary } = useWorkspace();
-  const campaign = summary.active_campaign;
+  const { campaigns } = useWorkspace();
+  const outreachCampaigns = campaigns.filter((item) => item.campaign_type === "initiative_outreach");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedCampaignId = searchParams.get("campaign");
+  const campaign = requestedCampaignId === "all" ? null : outreachCampaigns.find((item) => item.id === requestedCampaignId) || outreachCampaigns[0] || null;
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selected, setSelected] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
+    setLoading(true);
+    setError("");
+    setSelected(null);
     const path = campaign ? `/campaigns/${campaign.id}/pipeline` : "/companies";
-    request<Company[]>(path).then((items) => setCompanies(items.map(normalizeCompany))).finally(() => setLoading(false));
+    request<Company[]>(path)
+      .then((items) => setCompanies(items.map(normalizeCompany)))
+      .catch((cause) => setError(messageOf(cause)))
+      .finally(() => setLoading(false));
   }, [campaign?.id]);
+
+  const chooseCampaign = (campaignId: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("campaign", campaignId);
+    setSearchParams(next);
+  };
 
   const grouped = useMemo(() => {
     const map = new Map<string, Company[]>();
@@ -295,7 +311,8 @@ function CompaniesPage() {
   return (
     <div className="page pipeline-page">
       <PageHeader eyebrow="Curated opportunity map" title="Companies your team is moving forward" aside={<Link className="secondary-button" to="/campaigns/new">New campaign</Link>} />
-      <div className="pipeline-toolbar"><div><StatusPill status={campaign?.status || "ready"} /><span>{campaign?.name || "All discovered companies"}</span></div><p>{companies.length} opportunities · ranked by your approved profile</p></div>
+      <CampaignWorkspaceBar kind="initiative_outreach" campaigns={outreachCampaigns} selectedCampaign={campaign} selectedId={campaign?.id || "all"} onSelect={chooseCampaign} resultCount={companies.length} />
+      {error && <InlineError message={error} />}
       {loading ? <InlineLoading /> : companies.length ? (
         <div className="pipeline-board">
           {pipelineStages.slice(0, 5).map((stage) => (
@@ -347,12 +364,24 @@ function CompanyDrawer({ company, onClose }: { company: Company; onClose: () => 
 function JobsPage() {
   const { campaigns, jobs: initialJobs, refresh } = useWorkspace();
   const jobCampaigns = campaigns.filter((campaign) => campaign.campaign_type === "listed_job_search");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedCampaignId = searchParams.get("campaign");
+  const activeCampaign = requestedCampaignId === "all" ? null : jobCampaigns.find((campaign) => campaign.id === requestedCampaignId) || jobCampaigns[0] || null;
   const [jobs, setJobs] = useState<JobPosting[]>(initialJobs);
   const [selected, setSelected] = useState<JobPosting | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { setJobs(initialJobs); }, [initialJobs]);
-  const activeCampaign = jobCampaigns[0];
+  useEffect(() => {
+    setSelected(null);
+    setError("");
+    if (!activeCampaign) setJobs(initialJobs);
+    else void request<JobPosting[]>(`/campaigns/${activeCampaign.id}/jobs`).then(setJobs).catch((cause) => setError(messageOf(cause)));
+  }, [activeCampaign?.id, initialJobs]);
+  const chooseCampaign = (campaignId: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("campaign", campaignId);
+    setSearchParams(next);
+  };
   const reload = async () => {
     const next = activeCampaign ? await request<JobPosting[]>(`/campaigns/${activeCampaign.id}/jobs`) : await request<JobPosting[]>("/jobs");
     setJobs(next); if (selected) setSelected(next.find((job) => job.id === selected.id) || null);
@@ -367,6 +396,7 @@ function JobsPage() {
     <div className="page jobs-page">
       <PageHeader eyebrow="Verified opportunities" title="Open positions" aside={activeCampaign ? <button className="secondary-button" disabled={busy} onClick={() => void act(`/campaigns/${activeCampaign.id}/refresh`)}>Refresh search</button> : <Link className="primary-button" to="/campaigns/new">Start a job search</Link>} />
       <p className="page-intro">Vacancies stay separate from initiative outreach. “Verified open” means the source and application route were checked at the time shown—not that the employer guarantees the role remains unfilled.</p>
+      <CampaignWorkspaceBar kind="listed_job_search" campaigns={jobCampaigns} selectedCampaign={activeCampaign} selectedId={activeCampaign?.id || "all"} onSelect={chooseCampaign} resultCount={jobs.length} />
       {error && <InlineError message={error} />}
       {!jobs.length ? <EmptyState title="No verified positions yet" body="Start a job-listing campaign or refresh an existing one. Your Vacancy Scout will search broad sources and follow promising employers to their career pages." action={<Link className="primary-button" to="/campaigns/new">Create job campaign</Link>} /> : null}
       <div className="job-grid">
@@ -374,6 +404,43 @@ function JobsPage() {
       </div>
       {selected ? <div className="drawer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelected(null)}><aside className="company-drawer job-drawer"><button className="drawer-close" onClick={() => setSelected(null)}>×</button><p className="eyebrow">{human(selected.vacancy_status)}</p><h2>{selected.title}</h2><h3>{selected.company_name || selected.company_id}</h3><p>{selected.description || "The scout retained this vacancy with sourced fit and verification evidence."}</p><DrawerSection title="Fit"><p><strong>{selected.role_fit_score == null ? "Pending" : `${Math.round(selected.role_fit_score * 100)}%`} role fit</strong> · {selected.company_fit_score == null ? "Pending" : `${Math.round(selected.company_fit_score * 100)}%`} company fit</p>{toStrings(selected.fit_reasons).length ? <ul>{toStrings(selected.fit_reasons).map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}</DrawerSection><DrawerSection title="Requirements">{selected.requirements.length ? <ul>{selected.requirements.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No structured requirements were published.</p>}</DrawerSection>{selected.package_ready ? <><DrawerSection title="Cover letter"><p className="prewrap">{selected.cover_letter_text}</p></DrawerSection><DrawerSection title="Application answers">{selected.answer_kit.map((item) => <div className={`answer-item ${item.needs_user_input ? "needs-input" : ""}`} key={item.question}><strong>{item.question}</strong><p>{item.answer || item.reason || "Your input is required."}</p></div>)}</DrawerSection></> : null}<div className="drawer-actions"><a className="secondary-button" href={selected.canonical_url} target="_blank" rel="noreferrer">View listing</a>{activeCampaign && selected.vacancy_status === "verified_open" && !selected.package_ready ? <button className="primary-button" disabled={busy} onClick={() => void act(`/campaigns/${activeCampaign.id}/jobs/${selected.id}/prepare`)}>Prepare application</button> : null}{activeCampaign && selected.package_ready ? <button className="primary-button" disabled={busy} onClick={() => void act(`/campaigns/${activeCampaign.id}/jobs/${selected.id}/application-status`, "PATCH", { status: "applied" })}>Mark applied</button> : null}{selected.vacancy_status !== "verified_open" ? <button className="primary-button" disabled={busy} onClick={() => void act(`/jobs/${selected.id}/revalidate`)}>Revalidate</button> : null}<a className="primary-button" href={selected.application_url} target="_blank" rel="noreferrer">Open application</a></div></aside></div> : null}
     </div>
+  );
+}
+
+function CampaignWorkspaceBar({ kind, campaigns, selectedCampaign, selectedId, onSelect, resultCount }: {
+  kind: Campaign["campaign_type"];
+  campaigns: Campaign[];
+  selectedCampaign: Campaign | null;
+  selectedId: string;
+  onSelect: (campaignId: string) => void;
+  resultCount: number;
+}) {
+  const isJobs = kind === "listed_job_search";
+  return (
+    <section className="campaign-workspace" aria-label="Campaign view">
+      <div className="workspace-kind-switch" aria-label="Opportunity type">
+        <NavLink to="/companies" className={!isJobs ? "active" : ""}>
+          <span>Company outreach</span><small>Find fitting employers</small>
+        </NavLink>
+        <NavLink to="/jobs" className={isJobs ? "active" : ""}>
+          <span>Open positions</span><small>Track verified vacancies</small>
+        </NavLink>
+      </div>
+      <div className="campaign-scope">
+        <label htmlFor={`${kind}-campaign-select`}>Campaign</label>
+        <div className="campaign-select-wrap">
+          <select id={`${kind}-campaign-select`} value={selectedId} onChange={(event) => onSelect(event.target.value)}>
+            <option value="all">{isJobs ? "All open-position campaigns" : "All company campaigns"}</option>
+            {campaigns.map((campaign) => <option value={campaign.id} key={campaign.id}>{campaign.name}</option>)}
+          </select>
+        </div>
+        <div className="campaign-scope-summary">
+          <StatusPill status={selectedCampaign?.status || "ready"} />
+          <span><strong>{resultCount}</strong> {isJobs ? (resultCount === 1 ? "position" : "positions") : (resultCount === 1 ? "company" : "companies")}</span>
+          <small>{selectedCampaign ? `Showing only ${selectedCampaign.name}` : campaigns.length ? `Across ${campaigns.length} ${campaigns.length === 1 ? "campaign" : "campaigns"}` : "Workspace history"}</small>
+        </div>
+      </div>
+    </section>
   );
 }
 
