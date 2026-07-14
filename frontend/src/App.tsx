@@ -542,12 +542,27 @@ function DocumentsPage() {
   const [filter, setFilter] = useState<"all" | "cv" | "email" | "profile">("all");
   const [query, setQuery] = useState("");
   const [visibleCount, setVisibleCount] = useState(24);
-  const companyId = Number(searchParams.get("company"));
+  const companyRef = searchParams.get("company")?.trim() || "";
+  const companyId = Number(companyRef);
   const companyName = searchParams.get("companyName") || "this company";
-  const hasCompanyScope = Number.isFinite(companyId) && companyId > 0;
+  const hasCompanyScope = Boolean(companyRef);
   const availableDocuments = useMemo(
-    () => hasCompanyScope ? documents.filter((document) => document.company_id === companyId) : documents,
-    [companyId, documents, hasCompanyScope],
+    () => {
+      if (!hasCompanyScope) return documents;
+      if (Number.isFinite(companyId) && companyId > 0) {
+        return documents.filter((document) => document.company_id === companyId);
+      }
+
+      // Older/imported company records can expose only their stable string ID.
+      // Document rows currently carry the internal numeric ID, so retain a
+      // deterministic company-name fallback instead of dropping the scope.
+      const normalizedCompanyName = companyName.trim().toLocaleLowerCase();
+      return documents.filter((document) =>
+        normalizedCompanyName !== "this company"
+        && `${document.title} ${document.filename}`.toLocaleLowerCase().includes(normalizedCompanyName),
+      );
+    },
+    [companyId, companyName, documents, hasCompanyScope],
   );
   const cvCount = availableDocuments.filter((document) => document.type === "tailored_cv").length;
   const emailCount = availableDocuments.filter((document) => document.type === "email_draft").length;

@@ -52,6 +52,7 @@ test("restored documents are searchable, filterable, and previewable", async ({ 
   await expect(companyCard).toBeVisible();
   await companyCard.click();
   await page.getByRole("link", { name: "View documents" }).click();
+  await expect(page).toHaveURL(/#\/documents\?company=[^&]+&companyName=TX(?:\+|%20)Group/);
   await expect(page.getByRole("heading", { name: "Documents prepared for TX Group" })).toBeVisible();
   await expect(page.locator(".document-card")).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Tailored CVs 1" })).toBeVisible();
