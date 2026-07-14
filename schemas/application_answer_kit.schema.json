@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-initiativ.local/schemas/application_answer_kit.schema.json",
+  "title": "ApplicationAnswerKit",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "package_id", "job_id", "cover_letter_text", "answers", "claim_refs", "review_flags"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0"},
+    "package_id": {"type": "string", "minLength": 1},
+    "job_id": {"type": "string", "minLength": 1},
+    "cover_letter_text": {"type": "string"},
+    "answers": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["question", "answer", "claim_refs", "needs_user_input"], "properties": {"question": {"type": "string"}, "answer": {"type": "string"}, "claim_refs": {"type": "array", "items": {"type": "string"}}, "needs_user_input": {"type": "boolean"}, "reason": {"type": "string"}}}},
+    "claim_refs": {"type": "array", "items": {"type": "string"}},
+    "review_flags": {"type": "array", "items": {"type": "string"}}
+  }
+}

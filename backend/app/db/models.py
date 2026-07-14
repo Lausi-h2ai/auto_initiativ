@@ -121,6 +121,7 @@ class Campaign(WorkspaceOwned, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     campaign_id: str = Field(index=True)
     name: str
+    campaign_type: str = Field(default="initiative_outreach", index=True)
     status: str = Field(default="draft", index=True)
     sending_mode: str = Field(default="prepare_only", index=True)
     brief_json: str = Field(default="{}", sa_column=Column(Text))
@@ -162,6 +163,114 @@ class CampaignCompany(WorkspaceOwned, table=True):
     disposition: Optional[str] = Field(default=None, index=True)
     stage_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
     entered_stage_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class JobPosting(WorkspaceOwned, table=True):
+    __tablename__ = "job_postings"
+    __table_args__ = (UniqueConstraint("workspace_id", "job_id", name="uq_job_postings_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_id: str = Field(index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
+    external_company_id: str = Field(index=True)
+    title: str = Field(index=True)
+    source_url: str = Field(sa_column=Column(Text))
+    canonical_url: str = Field(sa_column=Column(Text))
+    application_url: str = Field(sa_column=Column(Text))
+    employer_website_url: Optional[str] = Field(default=None, sa_column=Column(Text))
+    source_domain: str = Field(index=True)
+    source_kind: str = Field(index=True)
+    external_listing_id: Optional[str] = Field(default=None, index=True)
+    fingerprint: str = Field(index=True)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    locations_json: str = Field(default="[]", sa_column=Column(Text))
+    remote_policy: Optional[str] = None
+    employment_types_json: str = Field(default="[]", sa_column=Column(Text))
+    compensation_json: str = Field(default="{}", sa_column=Column(Text))
+    languages_json: str = Field(default="[]", sa_column=Column(Text))
+    requirements_json: str = Field(default="[]", sa_column=Column(Text))
+    responsibilities_json: str = Field(default="[]", sa_column=Column(Text))
+    date_posted: Optional[datetime] = Field(default=None, index=True)
+    valid_through: Optional[datetime] = Field(default=None, index=True)
+    vacancy_status: str = Field(default="needs_verification", index=True)
+    first_seen_at: datetime = Field(default_factory=utc_now)
+    last_seen_at: datetime = Field(default_factory=utc_now)
+    last_verified_at: Optional[datetime] = Field(default=None, index=True)
+    verification_evidence_json: str = Field(default="{}", sa_column=Column(Text))
+    source_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    confidence: float = Field(default=0.0, sa_column=Column(Float))
+    review_flags_json: str = Field(default="[]", sa_column=Column(Text))
+    raw_json: str = Field(default="{}", sa_column=Column(Text))
+    imported_file_id: Optional[int] = Field(default=None, foreign_key="imported_files.id")
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class CampaignJob(WorkspaceOwned, table=True):
+    __tablename__ = "campaign_jobs"
+    __table_args__ = (UniqueConstraint("campaign_id", "job_posting_id", name="uq_campaign_jobs_campaign_job"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaigns.id", index=True)
+    job_posting_id: int = Field(foreign_key="job_postings.id", index=True)
+    application_status: str = Field(default="discovered", index=True)
+    status_note: Optional[str] = Field(default=None, sa_column=Column(Text))
+    applied_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class JobFitEvaluation(WorkspaceOwned, table=True):
+    __tablename__ = "job_fit_evaluations"
+    __table_args__ = (UniqueConstraint("workspace_id", "evaluation_id", name="uq_job_fit_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    evaluation_id: str = Field(index=True)
+    job_posting_id: Optional[int] = Field(default=None, foreign_key="job_postings.id", index=True)
+    external_job_id: str = Field(index=True)
+    company_fit_score: float = Field(sa_column=Column(Float))
+    role_fit_score: float = Field(sa_column=Column(Float))
+    decision: str = Field(index=True)
+    reasons_json: str = Field(default="[]", sa_column=Column(Text))
+    gaps_json: str = Field(default="[]", sa_column=Column(Text))
+    source_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    confidence: float = Field(sa_column=Column(Float))
+    review_flags_json: str = Field(default="[]", sa_column=Column(Text))
+    raw_json: str = Field(default="{}", sa_column=Column(Text))
+    imported_file_id: Optional[int] = Field(default=None, foreign_key="imported_files.id")
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class JobApplicationPackage(WorkspaceOwned, table=True):
+    __tablename__ = "job_application_packages"
+    __table_args__ = (UniqueConstraint("workspace_id", "package_id", name="uq_job_packages_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    package_id: str = Field(index=True)
+    campaign_job_id: int = Field(foreign_key="campaign_jobs.id", index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    status: str = Field(default="ready", index=True)
+    cv_document_id: Optional[int] = Field(default=None, foreign_key="documents.id")
+    cover_letter_text: str = Field(sa_column=Column(Text))
+    answer_kit_json: str = Field(default="[]", sa_column=Column(Text))
+    claim_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    review_flags_json: str = Field(default="[]", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class JobSourceTrust(WorkspaceOwned, table=True):
+    __tablename__ = "job_source_trust"
+    __table_args__ = (UniqueConstraint("workspace_id", "domain", name="uq_job_source_trust_workspace_domain"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    domain: str = Field(index=True)
+    trust_level: str = Field(default="discovery_only", index=True)
+    is_builtin: bool = Field(default=False)
+    enabled: bool = Field(default=True)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

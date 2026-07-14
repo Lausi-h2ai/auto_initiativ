@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-initiativ.local/schemas/job_posting_candidate.schema.json",
+  "title": "JobPostingCandidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job_id", "company_id", "title", "source_url", "canonical_url", "application_url", "source_domain", "source_kind", "observed_at", "verification_evidence", "source_refs", "confidence", "review_flags"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0"},
+    "job_id": {"type": "string", "minLength": 1},
+    "company_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "source_url": {"type": "string", "format": "uri"},
+    "canonical_url": {"type": "string", "format": "uri"},
+    "application_url": {"type": "string", "format": "uri"},
+    "employer_website_url": {"type": "string", "format": "uri"},
+    "source_domain": {"type": "string", "minLength": 1},
+    "source_kind": {"type": "string", "enum": ["employer", "ats", "trusted_portal", "other_portal"]},
+    "external_listing_id": {"type": "string"},
+    "description": {"type": "string"},
+    "locations": {"type": "array", "items": {"type": "string"}},
+    "remote_policy": {"type": "string"},
+    "employment_types": {"type": "array", "items": {"type": "string"}},
+    "compensation": {"type": "object"},
+    "languages": {"type": "array", "items": {"type": "string"}},
+    "requirements": {"type": "array", "items": {"type": "string"}},
+    "responsibilities": {"type": "array", "items": {"type": "string"}},
+    "date_posted": {"type": "string", "format": "date-time"},
+    "valid_through": {"type": "string", "format": "date-time"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "verification_evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["page_accessible", "apply_route_available", "closed_signal_found", "employer_identity_match"],
+      "properties": {
+        "page_accessible": {"type": "boolean"},
+        "apply_route_available": {"type": "boolean"},
+        "closed_signal_found": {"type": "boolean"},
+        "employer_identity_match": {"type": "boolean"},
+        "http_status": {"type": "integer"},
+        "signals": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "source_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "review_flags": {"type": "array", "items": {"type": "string"}}
+  }
+}

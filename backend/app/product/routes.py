@@ -4,7 +4,7 @@ import json
 import re
 from html import escape
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -17,9 +17,11 @@ from sqlmodel import Session, col, select
 from backend.app.auth.context import current_identity, scoped_runs_root
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.models import (
+    AuditLog,
     AgentTask,
     Campaign,
     CampaignCompany,
+    CampaignJob,
     Company,
     Contact,
     Document,
@@ -28,6 +30,10 @@ from backend.app.db.models import (
     GmailConnection,
     ImportedFile,
     MasterCvProfileSnapshot,
+    JobApplicationPackage,
+    JobFitEvaluation,
+    JobPosting,
+    JobSourceTrust,
     OutreachRecord,
     PolicySnapshot,
     ReviewException,
@@ -43,6 +49,7 @@ router = APIRouter(tags=["product"])
 
 
 class CampaignCreate(BaseModel):
+    campaign_type: Literal["initiative_outreach", "listed_job_search"] = "initiative_outreach"
     name: str = Field(min_length=1, max_length=160)
     role_focus: str = Field(default="Profile-aligned roles", min_length=1, max_length=240)
     locations: list[str] = Field(default_factory=list, max_length=20)
@@ -50,11 +57,29 @@ class CampaignCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     time_budget_minutes: int = Field(default=30, ge=1, le=240)
     max_companies: int = Field(default=30, ge=1, le=100)
+    max_jobs: int = Field(default=30, ge=1, le=100)
+    freshness_days: int = Field(default=30, ge=1, le=180)
+    seniority: list[str] = Field(default_factory=list, max_length=20)
+    employment_types: list[str] = Field(default_factory=list, max_length=20)
+    work_modes: list[str] = Field(default_factory=list, max_length=10)
+    minimum_salary: int | None = Field(default=None, ge=0)
+    languages: list[str] = Field(default_factory=list, max_length=20)
     sending_mode: Literal["prepare_only", "gated_autosend"] = "prepare_only"
 
 
 class CampaignModeUpdate(BaseModel):
     sending_mode: Literal["prepare_only", "gated_autosend"]
+
+
+class JobApplicationStatusUpdate(BaseModel):
+    status: Literal["discovered", "saved", "preparing", "ready", "applied", "interview", "offer", "rejected", "withdrawn"]
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class JobSourceTrustUpdate(BaseModel):
+    domain: str = Field(min_length=1, max_length=255)
+    trust_level: Literal["verification_capable", "discovery_only", "blocked"]
+    enabled: bool = True
 
 
 class ExceptionResolution(BaseModel):
@@ -95,11 +120,13 @@ def _campaign_response(campaign: Campaign, session: Session) -> dict[str, Any]:
     return {
         "id": campaign.campaign_id,
         "name": campaign.name,
+        "campaign_type": campaign.campaign_type,
         "status": campaign.status,
         "sending_mode": campaign.sending_mode,
         "brief": json.loads(campaign.brief_json or "{}"),
         "stages": dict(stages),
         "company_count": len(links),
+        "job_count": len(session.exec(select(CampaignJob).where(CampaignJob.campaign_id == campaign.id)).all()),
         "active_task_count": len(active_tasks),
         "exception_count": len(open_exceptions),
         "started_at": campaign.started_at,
@@ -122,6 +149,8 @@ def create_campaign(
     if profile is None or master_cv is None or policy is None:
         raise HTTPException(status_code=409, detail="Approve your profile, master CV, and policy before starting a campaign.")
     if payload.sending_mode == "gated_autosend":
+        if payload.campaign_type == "listed_job_search":
+            raise HTTPException(status_code=422, detail="Job-listing campaigns never submit applications or send outreach.")
         gmail = session.exec(
             select(GmailConnection).where(
                 GmailConnection.user_id == identity.user_id,
@@ -133,6 +162,7 @@ def create_campaign(
     campaign = Campaign(
         campaign_id=f"campaign-{uuid4()}",
         name=payload.name.strip(),
+        campaign_type=payload.campaign_type,
         status="active",
         sending_mode=payload.sending_mode,
         brief_json=json.dumps(
@@ -143,6 +173,13 @@ def create_campaign(
                 "notes": payload.notes,
                 "time_budget_minutes": payload.time_budget_minutes,
                 "max_companies": payload.max_companies,
+                "max_jobs": payload.max_jobs,
+                "freshness_days": payload.freshness_days,
+                "seniority": payload.seniority,
+                "employment_types": payload.employment_types,
+                "work_modes": payload.work_modes,
+                "minimum_salary": payload.minimum_salary,
+                "languages": payload.languages,
             },
             sort_keys=True,
         ),
@@ -155,12 +192,20 @@ def create_campaign(
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
-    WorkflowEngine(session).enqueue(
-        campaign=campaign,
-        task_type="company_research",
-        agent_role="company_researcher",
-        narrative="Your research specialist is ready to discover strong-fit companies.",
-    )
+    if campaign.campaign_type == "listed_job_search":
+        WorkflowEngine(session).enqueue(
+            campaign=campaign,
+            task_type="job_research",
+            agent_role="vacancy_scout",
+            narrative="Your vacancy scout is ready to discover and verify open positions.",
+        )
+    else:
+        WorkflowEngine(session).enqueue(
+            campaign=campaign,
+            task_type="company_research",
+            agent_role="company_researcher",
+            narrative="Your research specialist is ready to discover strong-fit companies.",
+        )
     return _campaign_response(campaign, session)
 
 
@@ -222,6 +267,8 @@ def update_campaign_mode(
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     campaign = _campaign(session, campaign_id)
+    if campaign.campaign_type == "listed_job_search" and payload.sending_mode != "prepare_only":
+        raise HTTPException(status_code=422, detail="Job-listing campaigns are manual-submit only.")
     if payload.sending_mode == "gated_autosend":
         identity = current_identity()
         gmail = (
@@ -735,3 +782,157 @@ def product_summary(
         "document_count": len(documents),
         "sent_count": len(sent),
     }
+
+
+BUILTIN_JOB_SOURCES = {
+    "greenhouse.io": "verification_capable",
+    "lever.co": "verification_capable",
+    "myworkdayjobs.com": "verification_capable",
+    "smartrecruiters.com": "verification_capable",
+    "jobs.personio.de": "verification_capable",
+    "ashbyhq.com": "verification_capable",
+    "jobs.ch": "verification_capable",
+    "jobup.ch": "verification_capable",
+    "jobscout24.ch": "verification_capable",
+    "arbeitsagentur.de": "verification_capable",
+    "bund.de": "verification_capable",
+}
+
+
+def _job_response(job: JobPosting, session: Session, *, campaign_job: CampaignJob | None = None) -> dict[str, Any]:
+    company = session.get(Company, job.company_id) if job.company_id else None
+    fit = session.exec(
+        select(JobFitEvaluation).where(JobFitEvaluation.job_posting_id == job.id).order_by(JobFitEvaluation.created_at.desc())
+    ).first()
+    package = None
+    if campaign_job is not None:
+        package = session.exec(
+            select(JobApplicationPackage).where(JobApplicationPackage.campaign_job_id == campaign_job.id).order_by(JobApplicationPackage.created_at.desc())
+        ).first()
+    return {
+        "id": job.job_id,
+        "title": job.title,
+        "company_id": company.company_id if company else job.external_company_id,
+        "company_name": company.name if company else None,
+        "source_url": job.source_url,
+        "canonical_url": job.canonical_url,
+        "application_url": job.application_url,
+        "employer_website_url": job.employer_website_url,
+        "source_domain": job.source_domain,
+        "source_kind": job.source_kind,
+        "description": job.description,
+        "locations": json.loads(job.locations_json or "[]"),
+        "remote_policy": job.remote_policy,
+        "employment_types": json.loads(job.employment_types_json or "[]"),
+        "compensation": json.loads(job.compensation_json or "{}"),
+        "languages": json.loads(job.languages_json or "[]"),
+        "requirements": json.loads(job.requirements_json or "[]"),
+        "responsibilities": json.loads(job.responsibilities_json or "[]"),
+        "date_posted": job.date_posted,
+        "valid_through": job.valid_through,
+        "first_seen_at": job.first_seen_at,
+        "last_verified_at": job.last_verified_at,
+        "vacancy_status": job.vacancy_status,
+        "verification_evidence": json.loads(job.verification_evidence_json or "{}"),
+        "confidence": job.confidence,
+        "review_flags": json.loads(job.review_flags_json or "[]"),
+        "company_fit_score": fit.company_fit_score if fit else None,
+        "role_fit_score": fit.role_fit_score if fit else None,
+        "fit_decision": fit.decision if fit else None,
+        "fit_reasons": json.loads(fit.reasons_json or "[]") if fit else [],
+        "fit_gaps": json.loads(fit.gaps_json or "[]") if fit else [],
+        "application_status": campaign_job.application_status if campaign_job else None,
+        "application_note": campaign_job.status_note if campaign_job else None,
+        "package_ready": package is not None,
+        "answer_kit": json.loads(package.answer_kit_json or "[]") if package else [],
+        "cover_letter_text": package.cover_letter_text if package else None,
+    }
+
+
+@router.get("/jobs")
+def list_jobs(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    return [_job_response(job, session) for job in session.exec(select(JobPosting).order_by(JobPosting.updated_at.desc())).all()]
+
+
+@router.get("/jobs/{job_id}")
+def get_job(job_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    job = session.exec(select(JobPosting).where(JobPosting.job_id == job_id)).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job posting not found.")
+    campaign_job = session.exec(select(CampaignJob).where(CampaignJob.job_posting_id == job.id)).first()
+    return _job_response(job, session, campaign_job=campaign_job)
+
+
+@router.get("/campaigns/{campaign_id}/jobs")
+def campaign_jobs(campaign_id: str, session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    campaign = _campaign(session, campaign_id)
+    links = session.exec(select(CampaignJob).where(CampaignJob.campaign_id == campaign.id).order_by(CampaignJob.updated_at.desc())).all()
+    return [_job_response(job, session, campaign_job=link) for link in links if (job := session.get(JobPosting, link.job_posting_id))]
+
+
+@router.post("/campaigns/{campaign_id}/refresh", status_code=202)
+def refresh_job_campaign(campaign_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    campaign = _campaign(session, campaign_id)
+    if campaign.campaign_type != "listed_job_search":
+        raise HTTPException(status_code=409, detail="Only job-listing campaigns support vacancy refresh.")
+    task = AgentTask(
+        task_id=f"task-{uuid4()}", campaign_id=campaign.id, agent_role="vacancy_scout", task_type="job_research",
+        narrative="Refreshing discovery and revalidating active vacancies.", workspace_id=campaign.workspace_id,
+    )
+    session.add(task)
+    campaign.status = "researching"
+    campaign.updated_at = utc_now()
+    session.add(campaign)
+    session.commit()
+    return {"campaign_id": campaign.campaign_id, "task_id": task.task_id, "status": "queued"}
+
+
+@router.patch("/campaigns/{campaign_id}/jobs/{job_id}/application-status")
+def update_job_application_status(campaign_id: str, job_id: str, payload: JobApplicationStatusUpdate, session: Session = Depends(get_session)) -> dict[str, Any]:
+    campaign = _campaign(session, campaign_id)
+    job = session.exec(select(JobPosting).where(JobPosting.job_id == job_id)).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job posting not found.")
+    link = session.exec(select(CampaignJob).where(CampaignJob.campaign_id == campaign.id, CampaignJob.job_posting_id == job.id)).first()
+    if link is None:
+        raise HTTPException(status_code=404, detail="Job is not part of this campaign.")
+    link.application_status = payload.status
+    link.status_note = payload.note
+    link.applied_at = utc_now() if payload.status == "applied" and link.applied_at is None else link.applied_at
+    link.updated_at = utc_now()
+    session.add(link)
+    session.add(AuditLog(actor_type="user", action="job_application_status_updated", entity_type="job_posting", entity_id=job.job_id, result_status=payload.status, metadata_json=json.dumps({"campaign_id": campaign.campaign_id})))
+    session.commit()
+    return _job_response(job, session, campaign_job=link)
+
+
+@router.get("/settings/job-sources")
+def list_job_sources(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+    identity = current_identity()
+    if identity is None:
+        raise HTTPException(status_code=409, detail="Job source settings require a workspace.")
+    existing = {item.domain: item for item in session.exec(select(JobSourceTrust)).all()}
+    for domain, trust_level in BUILTIN_JOB_SOURCES.items():
+        if domain not in existing:
+            item = JobSourceTrust(domain=domain, trust_level=trust_level, is_builtin=True, workspace_id=identity.effective_workspace_id)
+            session.add(item)
+            existing[domain] = item
+    session.commit()
+    return [{"domain": item.domain, "trust_level": item.trust_level, "enabled": item.enabled, "is_builtin": item.is_builtin} for item in sorted(existing.values(), key=lambda value: value.domain)]
+
+
+@router.put("/settings/job-sources/{domain}")
+def update_job_source(domain: str, payload: JobSourceTrustUpdate, session: Session = Depends(get_session)) -> dict[str, Any]:
+    identity = current_identity()
+    normalized = payload.domain.strip().lower().removeprefix("www.")
+    if normalized != domain.strip().lower().removeprefix("www."):
+        raise HTTPException(status_code=422, detail="Path and payload domains must match.")
+    item = session.exec(select(JobSourceTrust).where(JobSourceTrust.domain == normalized)).first()
+    if item is None:
+        item = JobSourceTrust(domain=normalized, workspace_id=identity.effective_workspace_id if identity else 0)
+    item.trust_level = payload.trust_level
+    item.enabled = payload.enabled
+    item.updated_at = utc_now()
+    session.add(item)
+    session.commit()
+    return {"domain": item.domain, "trust_level": item.trust_level, "enabled": item.enabled, "is_builtin": item.is_builtin}

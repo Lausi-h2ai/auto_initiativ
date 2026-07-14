@@ -22,6 +22,11 @@ COMPANY_RESEARCH_DIRECTORY_TO_SCHEMA = {
     "fit_evaluations": "fit_evaluation.schema.json",
 }
 
+JOB_RESEARCH_DIRECTORY_TO_SCHEMA = {
+    "jobs": "job_posting_candidate.schema.json",
+    "job_fit_evaluations": "job_fit_evaluation.schema.json",
+}
+
 
 def classify_filename(filename: str) -> str | None:
     """Return the exact schema filename for a known Phase 1 output filename."""
@@ -37,4 +42,4 @@ def classify_output_path(path: str) -> str | None:
     if not filename.endswith(".json"):
         return None
     directory = parent.rsplit("/", 1)[-1]
-    return COMPANY_RESEARCH_DIRECTORY_TO_SCHEMA.get(directory)
+    return COMPANY_RESEARCH_DIRECTORY_TO_SCHEMA.get(directory) or JOB_RESEARCH_DIRECTORY_TO_SCHEMA.get(directory)

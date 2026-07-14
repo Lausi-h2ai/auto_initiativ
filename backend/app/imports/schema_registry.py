@@ -7,7 +7,7 @@ from typing import Any
 from jsonschema import Draft202012Validator, FormatChecker
 
 from backend.app.core.config import get_settings
-from backend.app.imports.file_classifier import FILENAME_TO_SCHEMA
+from backend.app.imports.file_classifier import FILENAME_TO_SCHEMA, JOB_RESEARCH_DIRECTORY_TO_SCHEMA
 
 
 class SchemaRegistry:
@@ -18,7 +18,7 @@ class SchemaRegistry:
 
     @property
     def schema_names(self) -> tuple[str, ...]:
-        return tuple(sorted(set(FILENAME_TO_SCHEMA.values())))
+        return tuple(sorted(set(FILENAME_TO_SCHEMA.values()) | set(JOB_RESEARCH_DIRECTORY_TO_SCHEMA.values())))
 
     def load_all(self) -> None:
         for schema_name in self.schema_names:
@@ -39,4 +39,3 @@ class SchemaRegistry:
             Draft202012Validator.check_schema(schema)
             self._validators[schema_name] = Draft202012Validator(schema, format_checker=FormatChecker())
         return self._validators[schema_name]
-
