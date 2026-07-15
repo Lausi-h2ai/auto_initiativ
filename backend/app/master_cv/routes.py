@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
@@ -38,7 +39,9 @@ def _service(session: Session, settings: Settings) -> MasterCvService:
 def _candidate(record: MasterCvBuilderSession | None) -> dict | None:
     if record is None or not record.candidate_json:
         return None
-    return json.loads(record.candidate_json)
+    candidate = json.loads(record.candidate_json)
+    candidate["preview_url"] = "/master-cv/preview"
+    return candidate
 
 
 def _version(item) -> dict:
@@ -110,6 +113,8 @@ def summary(
             "asset_id": portrait.asset_id, "mime_type": portrait.mime_type, "width": portrait.width,
             "height": portrait.height, "crop": json.loads(portrait.crop_json),
             "focal_point": json.loads(portrait.focal_point_json), "status": portrait.status,
+            "filename": portrait.original_filename,
+            "preview_url": f"/master-cv/portrait/{portrait.asset_id}/preview",
         } if portrait else None,
         "source_documents": [
             {"id": item.document_id, "document_id": item.document_id, "title": item.title, "filename": item.filename, "status": item.status}
@@ -391,3 +396,29 @@ async def update_portrait_crop(
     session.add(asset)
     session.commit()
     return {"asset_id": asset.asset_id, "crop": crop.model_dump(), "focal_point": focal.model_dump(), "status": asset.status}
+
+
+@router.get("/portrait/{asset_id}/preview")
+def portrait_preview(
+    asset_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    asset = session.exec(
+        select(ProfileAsset).where(ProfileAsset.asset_id == asset_id, ProfileAsset.status == "ready")
+    ).first()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Portrait not found")
+    try:
+        uri = PortraitService(settings.runs_root / "master_cv_assets").render_data_uri(
+            relative_path=asset.relative_path,
+            expected_sha256=asset.content_hash,
+            crop=PortraitCrop.model_validate_json(asset.crop_json),
+        )
+    except PortraitValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(
+        content=base64.b64decode(uri.partition(",")[2]),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )

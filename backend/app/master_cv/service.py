@@ -18,7 +18,7 @@ from backend.app.db.models import (
     MasterCvProfileSnapshot,
     ProfileAsset,
 )
-from backend.app.master_cv.contracts import MasterCvDocument
+from backend.app.master_cv.contracts import MasterCvDocument, PortraitCrop
 from backend.app.master_cv.rendering import render_master_cv_html
 
 
@@ -255,6 +255,7 @@ class MasterCvService:
         return PortraitService(self.settings.runs_root / "master_cv_assets").render_data_uri(
             relative_path=asset.relative_path,
             expected_sha256=asset.content_hash,
+            crop=PortraitCrop.model_validate_json(asset.crop_json),
         )
 
     def _require_active_session(self) -> MasterCvBuilderSession:
@@ -310,4 +311,3 @@ class MasterCvService:
             entity_id=entity_id,
             result_status="success",
         ))
-

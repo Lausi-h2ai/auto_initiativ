@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from backend.app.agents.application_draft import application_draft_template_html
 from backend.app.core.config import Settings
 from backend.app.db.models import MasterCvDocumentSnapshot, ProfileAsset
-from backend.app.master_cv.contracts import MasterCvDocument
+from backend.app.master_cv.contracts import MasterCvDocument, PortraitCrop
 from backend.app.master_cv.portraits import PortraitService
 from backend.app.master_cv.rendering import render_master_cv_html
 
@@ -34,6 +34,6 @@ def approved_master_cv_html(session: Session, settings: Settings) -> str:
         portrait_uri = PortraitService(settings.runs_root / "master_cv_assets").render_data_uri(
             relative_path=asset.relative_path,
             expected_sha256=asset.content_hash,
+            crop=PortraitCrop.model_validate_json(asset.crop_json),
         )
     return render_master_cv_html(document, portrait_data_uri=portrait_uri)
-
