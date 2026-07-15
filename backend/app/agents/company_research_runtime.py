@@ -34,6 +34,7 @@ MIN_PROMPT_TIMEOUT_SECONDS = 1
 _RESEARCH_CLIENTS: dict[str, PiRpcClientProtocol] = {}
 _RESEARCH_THREADS: dict[str, threading.Thread] = {}
 _THREAD_LOCK = threading.Lock()
+_PROCESS_STARTED_AT = datetime.now(timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,9 @@ class CompanyResearchRuntime:
     def status(self, run_id: str) -> dict[str, Any]:
         state = self._read_state(run_id)
         run, validation_results, imported_files = self._read_import_state(run_id)
+        state = self._reconcile_stale_state(run_id, state, run)
+        if state.get("status") == "failed" and run is not None and run.status != "research_failed":
+            run, validation_results, imported_files = self._read_import_state(run_id)
         status = self._display_status(state, run)
         return {
             "run_id": run_id,
@@ -185,6 +189,47 @@ class CompanyResearchRuntime:
         if run is not None and run.completed_at is not None and run_status:
             return run_status
         return state_status or run_status or "not_started"
+
+    def _reconcile_stale_state(self, run_id: str, state: dict[str, Any], run: Run | None) -> dict[str, Any]:
+        if not self._state_is_stale(run_id, state, run):
+            return state
+        reason = "runtime_orphaned_after_restart_or_timeout"
+        self._write_state(run_id, "failed", last_error=reason, failed_at=_utc_now(), error_type="StaleResearchRun")
+        self._append_event(run_id, {"type": "company_research_failed", "error": reason, "error_type": "StaleResearchRun"})
+        self._mark_run(
+            run_id,
+            "research_failed",
+            action="company_research_failed",
+            result_status="failed",
+            reason_codes=["stale_runtime"],
+        )
+        return self._read_state(run_id)
+
+    def _state_is_stale(self, run_id: str, state: dict[str, Any], run: Run | None) -> bool:
+        status = state.get("status")
+        run_status = run.status if run is not None else None
+        if status not in {"running", "continuing", "importing"} and run_status not in {
+            "research_running",
+            "research_importing",
+        }:
+            return False
+        with _THREAD_LOCK:
+            thread = _RESEARCH_THREADS.get(run_id)
+            if thread is not None and thread.is_alive():
+                return False
+        timestamp = state.get("updated_at") or state.get("started_at")
+        if not isinstance(timestamp, str):
+            return False
+        try:
+            updated_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        if updated_at < _PROCESS_STARTED_AT:
+            return True
+        stale_after_seconds = max(self._prompt_timeout_seconds(run_id) + 300, 600)
+        return (datetime.now(timezone.utc) - updated_at).total_seconds() > stale_after_seconds
 
     def _run_agent(self, run_id: str) -> None:
         try:
@@ -524,7 +569,6 @@ class CompanyResearchRuntime:
             if run is None:
                 return
             run.status = status
-            run.agent_type = "company_research"
             run.updated_at = utc_now()
             if status == "research_running":
                 run.started_at = run.started_at or utc_now()

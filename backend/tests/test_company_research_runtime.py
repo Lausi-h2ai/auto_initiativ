@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -107,6 +108,23 @@ def test_company_research_runtime_closes_client_after_prompt_failure(tmp_path: P
     assert "run-1" not in runtime.clients
     state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))
     assert state["status"] == "failed"
+
+
+def test_company_research_runtime_detects_run_orphaned_by_process_restart(tmp_path: Path, monkeypatch):
+    runtime = CompanyResearchRuntime(settings=_settings(tmp_path), clients={})
+    previous_process_time = datetime.now(timezone.utc) - timedelta(seconds=30)
+    monkeypatch.setattr(company_research_runtime, "_PROCESS_STARTED_AT", previous_process_time)
+
+    assert runtime._state_is_stale(
+        "run-1",
+        {"status": "running", "updated_at": (previous_process_time - timedelta(seconds=1)).isoformat()},
+        None,
+    )
+    assert not runtime._state_is_stale(
+        "run-2",
+        {"status": "running", "updated_at": (previous_process_time + timedelta(seconds=1)).isoformat()},
+        None,
+    )
 
 
 def test_company_research_runtime_uses_campaign_time_budget_for_prompt_timeout(tmp_path: Path):

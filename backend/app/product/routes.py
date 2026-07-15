@@ -77,6 +77,14 @@ class CampaignModeUpdate(BaseModel):
     sending_mode: Literal["prepare_only", "gated_autosend"]
 
 
+class JobCampaignRefresh(BaseModel):
+    role_focus: str | None = Field(default=None, min_length=1, max_length=240)
+    locations: list[str] | None = Field(default=None, max_length=20)
+    time_budget_minutes: int | None = Field(default=None, ge=1, le=240)
+    max_jobs: int | None = Field(default=None, ge=1, le=100)
+    freshness_days: int | None = Field(default=None, ge=1, le=180)
+
+
 class JobApplicationStatusUpdate(BaseModel):
     status: Literal["discovered", "saved", "preparing", "ready", "applied", "interview", "offer", "rejected", "withdrawn"]
     note: str | None = Field(default=None, max_length=2000)
@@ -963,10 +971,38 @@ def campaign_jobs(campaign_id: str, session: Session = Depends(get_session)) -> 
 
 
 @router.post("/campaigns/{campaign_id}/refresh", status_code=202)
-def refresh_job_campaign(campaign_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+def refresh_job_campaign(
+    campaign_id: str,
+    payload: JobCampaignRefresh | None = None,
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
     campaign = _campaign(session, campaign_id)
     if campaign.campaign_type != "listed_job_search":
         raise HTTPException(status_code=409, detail="Only job-listing campaigns support vacancy refresh.")
+    if payload is not None:
+        brief = json.loads(campaign.brief_json or "{}")
+        updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+        if "role_focus" in updates:
+            updates["role_focus"] = str(updates["role_focus"]).strip()
+        if "locations" in updates:
+            updates["locations"] = [str(value).strip() for value in updates["locations"] if str(value).strip()]
+        brief.update(updates)
+        campaign.brief_json = json.dumps(brief, sort_keys=True)
+    active_task = session.exec(
+        select(AgentTask)
+        .where(
+            AgentTask.campaign_id == campaign.id,
+            AgentTask.task_type == "job_research",
+            AgentTask.status.in_(["queued", "retry", "running"]),
+        )
+        .order_by(AgentTask.created_at.desc())
+    ).first()
+    if active_task is not None:
+        campaign.status = "researching"
+        campaign.updated_at = utc_now()
+        session.add(campaign)
+        session.commit()
+        return {"campaign_id": campaign.campaign_id, "task_id": active_task.task_id, "status": active_task.status}
     task = AgentTask(
         task_id=f"task-{uuid4()}", campaign_id=campaign.id, agent_role="vacancy_scout", task_type="job_research",
         narrative="Refreshing discovery and revalidating active vacancies.", workspace_id=campaign.workspace_id,

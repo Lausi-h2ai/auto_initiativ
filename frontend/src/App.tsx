@@ -940,11 +940,21 @@ function JobsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [manualConfirming, setManualConfirming] = useState(false);
+  const [editingSearch, setEditingSearch] = useState(false);
+  const [searchScope, setSearchScope] = useState({ role_focus: "", locations: "" });
   const selectedCampaignId = selected?.campaign_id || activeCampaign?.id;
   useEffect(() => {
     setSelected(null);
     setManualConfirming(false);
+    setEditingSearch(false);
     setError("");
+    const brief = activeCampaign?.brief;
+    setSearchScope({
+      role_focus: typeof brief?.role_focus === "string" ? brief.role_focus : "",
+      locations: Array.isArray(brief?.locations)
+        ? brief.locations.filter((value): value is string => typeof value === "string").join(", ")
+        : "",
+    });
     if (!activeCampaign) setJobs(initialJobs);
     else
       void request<JobPosting[]>(`/campaigns/${activeCampaign.id}/jobs`)
@@ -990,6 +1000,15 @@ function JobsPage() {
               <button
                 className="secondary-button"
                 disabled={busy}
+                onClick={() => setEditingSearch((value) => !value)}
+              >
+                {editingSearch ? "Close scope" : "Edit search scope"}
+              </button>
+            )}
+            {activeCampaign && (
+              <button
+                className="secondary-button"
+                disabled={busy}
                 onClick={() =>
                   void act(`/campaigns/${activeCampaign.id}/refresh`)
                 }
@@ -1019,6 +1038,39 @@ function JobsPage() {
         onSelect={chooseCampaign}
         resultCount={jobs.length}
       />
+      {activeCampaign && editingSearch && (
+        <section className="job-search-scope-editor" aria-label="Vacancy search scope">
+          <label>
+            <span>Roles and themes</span>
+            <input
+              value={searchScope.role_focus}
+              onChange={(event) => setSearchScope({ ...searchScope, role_focus: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Locations, separated by commas</span>
+            <input
+              value={searchScope.locations}
+              onChange={(event) => setSearchScope({ ...searchScope, locations: event.target.value })}
+            />
+          </label>
+          <button
+            className="primary-button"
+            disabled={busy || !searchScope.role_focus.trim()}
+            onClick={() =>
+              void act(`/campaigns/${activeCampaign.id}/refresh`, "POST", {
+                role_focus: searchScope.role_focus.trim(),
+                locations: searchScope.locations
+                  .split(",")
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              }).then((ok) => ok && setEditingSearch(false))
+            }
+          >
+            Save and refresh
+          </button>
+        </section>
+      )}
       {error && <InlineError message={error} />}
       {!jobs.length ? (
         <EmptyState
