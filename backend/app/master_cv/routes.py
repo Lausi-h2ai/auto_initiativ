@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import base64
+import hashlib
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse
 from sqlmodel import Session, select
 
 from backend.app.agents.master_cv_builder_prompt import (
@@ -17,12 +18,13 @@ from backend.app.agents.master_cv_builder_prompt import (
 from backend.app.agents.master_cv_builder_runtime import PiRpcMasterCvBuilderAdapter
 from backend.app.auth.context import current_workspace_id, scoped_runs_root
 from backend.app.core.config import Settings, get_settings
-from backend.app.db.models import Document, MasterCvBuilderSession, ProfileAsset
+from backend.app.db.models import Document, MasterCvBuilderSession, MasterCvDocumentSnapshot, ProfileAsset
 from backend.app.db.session import get_session
 from backend.app.master_cv.contracts import BuilderChatRequest, FocalPoint, MasterCvDocument, PortraitCrop
 from backend.app.master_cv.portraits import PortraitService, PortraitValidationError
 from backend.app.master_cv.service import MasterCvService, MasterCvValidationError, utc_now
 from backend.app.master_cv.templates import MASTER_CV_TEMPLATES, upstream_prompt_path, upstream_skill_path
+from backend.app.onboarding.document_text import DocumentExtractionError, extract_document_text
 
 
 router = APIRouter(prefix="/master-cv", tags=["master-cv"])
@@ -68,6 +70,10 @@ def _template(item) -> dict:
         "market": "DACH" if "germany" in item.markets or "switzerland" in item.markets else "Global",
         "photo": item.supports_photo,
         "ats": "High" if item.ats_compatibility == "high" else "Good",
+        "ats_profile": "high" if item.ats_compatibility == "high" else "moderate",
+        "layout": item.layout,
+        "portrait_placement": item.portrait_placement,
+        "supported_markets": list(item.supported_locales),
     })
     return data
 
@@ -75,6 +81,21 @@ def _template(item) -> dict:
 @router.get("/templates")
 def list_templates() -> list[dict]:
     return [_template(template) for template in MASTER_CV_TEMPLATES]
+
+
+@router.get("/approved")
+def approved_master_cv(
+    session: Session = Depends(get_session), settings: Settings = Depends(get_settings),
+) -> dict | None:
+    item = _service(session, settings).latest_document()
+    return _version(item) if item else None
+
+
+@router.get("/versions")
+def list_versions(
+    session: Session = Depends(get_session), settings: Settings = Depends(get_settings),
+) -> list[dict]:
+    return [_version(item) for item in _service(session, settings).versions()]
 
 
 @router.get("/summary")
@@ -177,6 +198,77 @@ def start_session(
         }
 
 
+@router.get("/sessions/{session_id}/status")
+def session_status(session_id: str, session: Session = Depends(get_session)) -> dict:
+    record = session.exec(select(MasterCvBuilderSession).where(
+        MasterCvBuilderSession.session_id == session_id,
+    )).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Master CV session not found")
+    candidate = MasterCvDocument.model_validate_json(record.candidate_json)
+    return {
+        "session_id": record.session_id, "run_id": record.run_id, "status": record.status,
+        "candidate_id": candidate.document_snapshot_id, "revision": candidate.revision,
+        "started_at": record.started_at.isoformat(),
+        "completed_at": record.completed_at.isoformat() if record.completed_at else None,
+    }
+
+
+@router.post("/sessions/{session_id}/start")
+def start_named_session(
+    session_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    record = session.exec(select(MasterCvBuilderSession).where(
+        MasterCvBuilderSession.session_id == session_id,
+    )).first()
+    if record is None or record.status != "active":
+        raise HTTPException(status_code=404, detail="Active master CV session not found")
+    return {
+        "session_id": record.session_id, "run_id": record.run_id, "status": record.status,
+        "candidate": _candidate(record), "transcript": json.loads(record.transcript_json or "[]"),
+    }
+
+
+@router.post("/sessions/{session_id}/finish")
+def finish_session(session_id: str, session: Session = Depends(get_session)) -> dict:
+    record = session.exec(select(MasterCvBuilderSession).where(
+        MasterCvBuilderSession.session_id == session_id,
+    )).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Master CV session not found")
+    record.status = "closed"
+    record.completed_at = utc_now()
+    record.updated_at = utc_now()
+    session.add(record)
+    session.commit()
+    return {"session_id": record.session_id, "status": record.status}
+
+
+@router.post("/sessions/{session_id}/reset")
+def reset_session(
+    session_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    record = session.exec(select(MasterCvBuilderSession).where(
+        MasterCvBuilderSession.session_id == session_id,
+    )).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Master CV session not found")
+    base = session.get(MasterCvDocumentSnapshot, record.base_document_snapshot_id) if record.base_document_snapshot_id else None
+    record.status = "closed"
+    record.completed_at = utc_now()
+    session.add(record)
+    session.commit()
+    try:
+        next_record = _service(session, settings).restore_version(base.document_snapshot_id) if base else _service(session, settings).start_session()
+    except MasterCvValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"session_id": next_record.session_id, "run_id": next_record.run_id, "status": next_record.status, "candidate": _candidate(next_record)}
+
+
 @router.post("/sessions/{session_id}/messages")
 def send_message(
     session_id: str,
@@ -244,16 +336,52 @@ async def patch_block(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.patch("/candidates/{document_snapshot_id}/blocks/{block_id}")
+async def patch_candidate_block(
+    document_snapshot_id: str,
+    block_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    record = _service(session, settings).active_session()
+    if record is None or MasterCvDocument.model_validate_json(record.candidate_json).document_snapshot_id != document_snapshot_id:
+        raise HTTPException(status_code=404, detail="Active candidate not found")
+    return await patch_block(block_id, request, session, settings)
+
+
 @router.post("/render")
 def render_candidate(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     try:
-        _service(session, settings).render_candidate()
-        return {"status": "ready", "preview_url": "/master-cv/preview"}
+        service = _service(session, settings)
+        record = service.active_session()
+        if record is None:
+            raise MasterCvValidationError("No active master CV builder session.")
+        document = MasterCvDocument.model_validate_json(record.candidate_json)
+        service.render_candidate()
+        metrics = service.render_metrics(document)
+        return {
+            "status": "overflow" if metrics["overflow"] else "ready",
+            "preview_url": "/master-cv/preview",
+            **metrics,
+        }
     except (MasterCvValidationError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/candidates/{document_snapshot_id}/render")
+def render_named_candidate(
+    document_snapshot_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    record = _service(session, settings).active_session()
+    if record is None or MasterCvDocument.model_validate_json(record.candidate_json).document_snapshot_id != document_snapshot_id:
+        raise HTTPException(status_code=404, detail="Active candidate not found")
+    return render_candidate(session, settings)
 
 
 @router.get("/preview", response_class=HTMLResponse)
@@ -300,6 +428,48 @@ def approve_candidate(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.post("/candidates/{document_snapshot_id}/approve")
+def approve_named_candidate(
+    document_snapshot_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    record = _service(session, settings).active_session()
+    if record is None or MasterCvDocument.model_validate_json(record.candidate_json).document_snapshot_id != document_snapshot_id:
+        raise HTTPException(status_code=404, detail="Active candidate not found")
+    return approve_candidate(session, settings)
+
+
+@router.post("/versions/{document_snapshot_id}/restore")
+def restore_version(
+    document_snapshot_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        record = _service(session, settings).restore_version(document_snapshot_id)
+    except MasterCvValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"session_id": record.session_id, "run_id": record.run_id, "status": record.status, "candidate": _candidate(record)}
+
+
+@router.post("/claim-proposals/{proposal_id}/approve")
+def approve_claim_proposal(
+    proposal_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    try:
+        snapshot = _service(session, settings).approve_claim_proposal(proposal_id)
+    except MasterCvValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "status": snapshot.status,
+        "profile_id": snapshot.profile_id,
+        "message": "Claim approved into a new immutable profile snapshot. Start a new Master CV candidate to use it.",
+    }
+
+
 @router.put("/source-documents/{filename}")
 async def upload_source_document(
     filename: str,
@@ -308,7 +478,7 @@ async def upload_source_document(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     clean = Path(filename).name
-    if clean != filename or not clean or Path(clean).suffix.lower() not in {".pdf", ".docx", ".txt", ".md", ".json"}:
+    if clean != filename or not clean or Path(clean).suffix.lower() not in {".pdf", ".doc", ".docx", ".txt", ".md", ".json"}:
         raise HTTPException(status_code=422, detail="Unsupported source document filename")
     content = await request.body()
     if not content or len(content) > 20 * 1024 * 1024:
@@ -319,10 +489,18 @@ async def upload_source_document(
     destination = root / run_id / "input" / clean
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(content)
+    try:
+        extracted = extract_document_text(destination)
+    except (DocumentExtractionError, OSError, ValueError) as exc:
+        extracted = {"filename": clean, "text": "", "error": str(exc), "needs_review": True}
+    destination.with_name(destination.name + ".extracted.json").write_text(
+        json.dumps(extracted, ensure_ascii=False), encoding="utf-8",
+    )
     document = Document(
         document_id=f"doc_{uuid4().hex}", run_id=run_id, document_type="master_cv_source_upload",
         title=clean, filename=clean, relative_path=destination.relative_to(root).as_posix(),
         mime_type=request.headers.get("content-type", "application/octet-stream"), size_bytes=len(content),
+        content_hash=hashlib.sha256(content).hexdigest(),
     )
     session.add(document)
     session.commit()
@@ -369,6 +547,18 @@ async def upload_portrait(
     }
 
 
+@router.post("/portrait")
+async def upload_portrait_canonical(
+    request: Request,
+    filename: str | None = Header(default=None, alias="X-Filename"),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    if not filename:
+        raise HTTPException(status_code=422, detail="X-Filename header is required")
+    return await upload_portrait(filename, request, session, settings)
+
+
 @router.patch("/portrait")
 async def update_portrait_crop(
     request: Request,
@@ -388,6 +578,31 @@ async def update_portrait_crop(
     try:
         crop = PortraitCrop.model_validate(crop_payload)
         focal = FocalPoint.model_validate(payload.get("focal_point", {"x": 0.5, "y": 0.5}))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    asset.crop_json = crop.model_dump_json()
+    asset.focal_point_json = focal.model_dump_json()
+    asset.updated_at = utc_now()
+    session.add(asset)
+    session.commit()
+    return {"asset_id": asset.asset_id, "crop": crop.model_dump(), "focal_point": focal.model_dump(), "status": asset.status}
+
+
+@router.post("/portrait/{asset_id}/crop")
+async def crop_named_portrait(
+    asset_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> dict:
+    asset = session.exec(select(ProfileAsset).where(
+        ProfileAsset.asset_id == asset_id, ProfileAsset.status == "ready",
+    )).first()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Portrait not found")
+    payload = await request.json()
+    try:
+        crop = PortraitCrop.model_validate(payload.get("crop", payload))
+        focal = FocalPoint.model_validate(payload.get("focal_point", json.loads(asset.focal_point_json)))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     asset.crop_json = crop.model_dump_json()
@@ -422,3 +637,33 @@ def portrait_preview(
         media_type="image/jpeg",
         headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
+
+
+@router.get("/documents/{document_snapshot_id}/preview", response_class=HTMLResponse)
+def document_preview(
+    document_snapshot_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    return preview_version(document_snapshot_id, session, settings)
+
+
+@router.get("/documents/{document_snapshot_id}/download")
+def document_download(
+    document_snapshot_id: str,
+    format: str = "pdf",
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    if format not in {"pdf", "html"}:
+        raise HTTPException(status_code=422, detail="Format must be pdf or html")
+    mime = "application/pdf" if format == "pdf" else "text/html"
+    documents = session.exec(select(Document).where(Document.document_type == "master_cv", Document.mime_type == mime)).all()
+    match = next((item for item in documents if json.loads(item.provenance_json or "{}").get("master_cv_document_snapshot_id") == document_snapshot_id), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Generated Master CV document not found")
+    root = scoped_runs_root(settings.runs_root)
+    path = (root / match.relative_path).resolve()
+    if not path.is_relative_to(root.resolve()) or not path.is_file():
+        raise HTTPException(status_code=409, detail="Generated Master CV file is unavailable")
+    return FileResponse(path, media_type=mime, filename=match.filename)

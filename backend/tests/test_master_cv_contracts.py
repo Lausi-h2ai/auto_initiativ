@@ -54,6 +54,9 @@ def test_master_cv_document_matches_pydantic_and_json_schema(schemas_root):
 
     Draft202012Validator(schema).validate(payload)
     assert parsed.design.page_size == "A4"
+    assert parsed.design.template_version == "1.0"
+    assert parsed.design.photo.inclusion_policy == "german_swiss"
+    assert parsed.revision == 1
     assert parsed.sections[0].blocks[0].claim_refs == ["claim_123"]
 
 

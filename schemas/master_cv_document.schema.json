@@ -9,10 +9,18 @@
     "schema_version": { "type": "string", "const": "1.0" },
     "document_snapshot_id": { "type": "string", "minLength": 1 },
     "profile_id": { "type": "string", "minLength": 1 },
+    "user_profile_id": { "type": ["string", "null"], "minLength": 1 },
     "created_at": { "type": "string", "format": "date-time" },
     "title": { "type": "string", "minLength": 1, "maxLength": 200 },
     "locale": { "type": "string", "minLength": 2, "maxLength": 35 },
+    "market": { "type": "string", "minLength": 2, "maxLength": 35 },
+    "page_goal": { "type": "integer", "enum": [1, 2] },
     "portrait_asset_id": { "type": ["string", "null"] },
+    "portrait_variant_id": { "type": ["string", "null"] },
+    "lifecycle_status": { "type": "string", "enum": ["candidate", "needs_review", "approved", "superseded", "rejected"] },
+    "review_flags": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "revision": { "type": "integer", "minimum": 1 },
+    "content_hash": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
     "design": { "$ref": "#/$defs/design" },
     "sections": {
       "type": "array",
@@ -26,6 +34,7 @@
       "required": ["template_id", "page_size", "page_count", "density", "photo"],
       "properties": {
         "template_id": { "type": "string", "minLength": 1 },
+        "template_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
         "page_size": { "type": "string", "const": "A4" },
         "page_count": { "type": "integer", "enum": [1, 2] },
         "density": { "type": "string", "enum": ["airy", "balanced", "compact"] },
@@ -39,6 +48,7 @@
             "enabled": { "type": "boolean" },
             "shape": { "type": "string", "enum": ["circle", "rounded", "square"] },
             "position": { "type": "string", "enum": ["header_left", "header_right", "sidebar"] }
+            ,"inclusion_policy": { "type": "string", "enum": ["always", "german_swiss", "never"] }
           }
         }
       }
@@ -66,6 +76,7 @@
         "kind": { "type": "string", "enum": ["heading", "paragraph", "entry", "bullet", "skill", "contact"] },
         "text": { "type": "string", "maxLength": 5000 },
         "claim_refs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "profile_field_refs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
         "visible": { "type": "boolean" },
         "metadata": { "type": "object" }
       }

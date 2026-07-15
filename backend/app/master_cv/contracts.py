@@ -46,12 +46,14 @@ class PhotoDesign(BaseModel):
     enabled: bool = False
     shape: Literal["circle", "rounded", "square"] = "rounded"
     position: Literal["header_left", "header_right", "sidebar"] = "header_right"
+    inclusion_policy: Literal["always", "german_swiss", "never"] = "german_swiss"
 
 
 class MasterCvDesign(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     template_id: str = Field(min_length=1)
+    template_version: str = Field(default="1.0", pattern=r"^[0-9]+\.[0-9]+$")
     page_size: Literal["A4"] = "A4"
     page_count: Literal[1, 2] = 1
     density: Literal["airy", "balanced", "compact"] = "balanced"
@@ -67,6 +69,7 @@ class MasterCvBlock(BaseModel):
     kind: Literal["heading", "paragraph", "entry", "bullet", "skill", "contact"]
     text: str = Field(max_length=5000)
     claim_refs: list[str] = Field(default_factory=list)
+    profile_field_refs: list[str] = Field(default_factory=list)
     visible: bool = True
     metadata: dict[str, Any] | None = None
 
@@ -89,10 +92,18 @@ class MasterCvDocument(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     document_snapshot_id: str = Field(min_length=1)
     profile_id: str = Field(min_length=1)
+    user_profile_id: str | None = None
     created_at: datetime
     title: str = Field(min_length=1, max_length=200)
     locale: str = Field(default="en", min_length=2, max_length=35)
+    market: str = Field(default="international", min_length=2, max_length=35)
+    page_goal: Literal[1, 2] = 1
     portrait_asset_id: str | None = None
+    portrait_variant_id: str | None = None
+    lifecycle_status: Literal["candidate", "needs_review", "approved", "superseded", "rejected"] = "candidate"
+    review_flags: list[str] = Field(default_factory=list)
+    revision: int = Field(default=1, ge=1)
+    content_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     design: MasterCvDesign
     sections: list[MasterCvSection]
 
@@ -103,6 +114,7 @@ class BlockPatchRequest(BaseModel):
     text: str | None = Field(default=None, max_length=5000)
     visible: bool | None = None
     claim_refs: list[str] | None = None
+    expected_revision: int | None = Field(default=None, ge=1)
 
 
 class ClaimProposal(BaseModel):
@@ -112,7 +124,9 @@ class ClaimProposal(BaseModel):
     category: Literal["experience", "project", "education", "skill", "language", "certification", "achievement", "other"]
     statement: str = Field(min_length=1)
     source_refs: list[str]
+    confidence: float | None = Field(default=None, ge=0, le=1)
     reason: str = Field(min_length=1)
+    related_claim_refs: list[str] = Field(default_factory=list)
     needs_review: Literal[True] = True
 
 

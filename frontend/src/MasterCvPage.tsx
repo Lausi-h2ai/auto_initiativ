@@ -37,18 +37,22 @@ type BuilderSummary = {
   has_approved_profile?: boolean;
   candidate?: {
     id?: string;
+    document_snapshot_id?: string;
     title?: string;
     template_id?: string;
     page_count?: number;
     preview_url?: string;
     updated_at?: string;
     blocks?: CvBlock[];
+    revision?: number;
+    lifecycle_status?: string;
+    review_flags?: string[];
     design?: { template_id?: string; page_count?: number };
     sections?: CvSection[];
   } | null;
-  approved?: { id?: string; version?: number; template_id?: string; preview_url?: string; updated_at?: string } | null;
+  approved?: { id?: string; document_snapshot_id?: string; version?: number; template_id?: string; preview_url?: string; updated_at?: string } | null;
   session?: { id?: string; session_id?: string; run_id?: string; status?: string; entries?: Array<{ id?: string; role: string; content: string }>; transcript?: Array<{ id?: string; role: string; content: string }> } | null;
-  portrait?: { filename?: string; preview_url?: string; crop?: { x?: number; y?: number; zoom?: number; width?: number; height?: number }; focal_point?: { x?: number; y?: number } } | null;
+  portrait?: { asset_id?: string; filename?: string; preview_url?: string; crop?: { x?: number; y?: number; zoom?: number; width?: number; height?: number }; focal_point?: { x?: number; y?: number } } | null;
   source_documents?: Array<{ id?: string; filename: string; size_bytes?: number; status?: string }>;
   versions?: Array<{ id?: string; document_snapshot_id?: string; version?: number; version_number?: number; status?: string; template_id?: string; created_at?: string; preview_url?: string }>;
   claims?: ClaimItem[];
@@ -151,16 +155,17 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
   };
 
   const upload = async (kind: "source-documents" | "portrait", file: File) => {
-    await act(kind, () => request(`/master-cv/${kind}/${encodeURIComponent(file.name)}`, {
-      method: "PUT",
-      headers: { "Content-Type": file.type || "application/octet-stream" },
+    const path = kind === "portrait" ? "/master-cv/portrait" : `/master-cv/source-documents/${encodeURIComponent(file.name)}`;
+    await act(kind, () => request(path, {
+      method: kind === "portrait" ? "POST" : "PUT",
+      headers: { "Content-Type": file.type || "application/octet-stream", ...(kind === "portrait" ? { "X-Filename": file.name } : {}) },
       body: file,
     }), kind === "portrait" ? "Portrait added. Adjust the crop before approving it." : "Source CV added for the coach to review.");
   };
 
   const chooseTemplate = (templateId: string) => act(
     `template-${templateId}`,
-    () => request("/master-cv/candidate/design", { method: "PATCH", body: JSON.stringify({ template_id: templateId }) }),
+    () => request("/master-cv/candidate/design", { method: "PATCH", body: JSON.stringify({ template_id: templateId, expected_revision: summary?.candidate?.revision }) }),
     "Design updated. Your content and approved claims are unchanged.",
   );
 
@@ -175,15 +180,17 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
     if (!editingBlock) return;
     void act("block", () => request(`/master-cv/candidate/blocks/${encodeURIComponent(editingBlock)}`, {
       method: "PATCH",
-      body: JSON.stringify({ text: draftContent }),
+      body: JSON.stringify({ text: draftContent, expected_revision: summary?.candidate?.revision }),
     }), "Section saved and queued for a fresh preview.").then(() => setEditingBlock(null));
   };
 
   const saveCrop = () => {
     const width = 100 / crop.zoom;
     const height = width;
-    return act("crop", () => request("/master-cv/portrait", {
-      method: "PATCH",
+    const assetId = summary?.portrait?.asset_id;
+    if (!assetId) return Promise.resolve();
+    return act("crop", () => request(`/master-cv/portrait/${encodeURIComponent(assetId)}/crop`, {
+      method: "POST",
       body: JSON.stringify({
         crop: {
           x: (crop.x / 100) * (1 - width),
@@ -198,6 +205,7 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
 
   const render = () => act("render", () => mutate("/master-cv/render", "POST"), "A fresh A4 preview is ready.");
   const approve = () => act("approve", () => mutate("/master-cv/approve", "POST", { confirm_claims: true, confirm_design: true }), "Approved. This version can now anchor tailored CVs.");
+  const approvedId = summary?.approved?.document_snapshot_id || summary?.approved?.id;
 
   if (loading) return <div className="page master-cv-page"><div className="master-cv-loading"><i /><strong>Opening your CV studio…</strong><span>Loading designs, claims, and the latest version.</span></div></div>;
 
@@ -211,6 +219,8 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
         </div>
         <div className="master-cv-header-actions">
           <span className={`master-cv-state ${summary?.approved ? "approved" : "draft"}`}><i />{summary?.approved ? `Approved v${summary.approved.version || 1}` : "Working draft"}</span>
+          {approvedId && <a className="secondary-button" href={`/master-cv/documents/${encodeURIComponent(approvedId)}/download?format=html`}>Export HTML</a>}
+          {approvedId && <a className="secondary-button" href={`/master-cv/documents/${encodeURIComponent(approvedId)}/download?format=pdf`}>Export PDF</a>}
           <button className="secondary-button" disabled={Boolean(busy)} onClick={() => void render()}>{busy === "render" ? "Rendering…" : "Refresh preview"}</button>
           <button className="primary-button" disabled={Boolean(busy) || !summary?.candidate} onClick={() => void approve()}>{busy === "approve" ? "Approving…" : "Approve version"}</button>
         </div>

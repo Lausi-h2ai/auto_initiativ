@@ -19,7 +19,9 @@
           "category": { "type": "string", "enum": ["experience", "project", "education", "skill", "language", "certification", "achievement", "other"] },
           "statement": { "type": "string", "minLength": 1 },
           "source_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
           "reason": { "type": "string", "minLength": 1 },
+          "related_claim_refs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
           "needs_review": { "type": "boolean", "const": true }
         }
       }

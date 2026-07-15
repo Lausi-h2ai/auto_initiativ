@@ -30,6 +30,8 @@ from backend.app.db.models import (
     GmailConnection,
     ImportedFile,
     MasterCvProfileSnapshot,
+    MasterCvDocumentSnapshot,
+    MasterCvBuilderSession,
     JobApplicationPackage,
     JobFitEvaluation,
     JobPosting,
@@ -46,6 +48,7 @@ from backend.app.workflow.engine import WorkflowEngine
 from backend.app.jobs.application_packages import JobApplicationPackageService, JobPackageError
 from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
 from backend.app.imports.job_normalizer import JobNormalizationService
+from backend.app.master_cv.contracts import MasterCvDocument
 
 
 router = APIRouter(tags=["product"])
@@ -167,6 +170,11 @@ def create_campaign(
         ).first()
         if gmail is None:
             raise HTTPException(status_code=409, detail="Connect Gmail before choosing gated autosend.")
+    master_cv_document = session.exec(
+        select(MasterCvDocumentSnapshot)
+        .where(MasterCvDocumentSnapshot.status == "approved")
+        .order_by(MasterCvDocumentSnapshot.version_number.desc())
+    ).first()
     campaign = Campaign(
         campaign_id=f"campaign-{uuid4()}",
         name=payload.name.strip(),
@@ -193,6 +201,7 @@ def create_campaign(
         ),
         user_profile_snapshot_id=profile.id,
         master_cv_profile_snapshot_id=master_cv.id,
+        master_cv_document_snapshot_id=master_cv_document.id if master_cv_document else None,
         policy_snapshot_id=policy.id,
         workspace_id=identity.effective_workspace_id,
         started_at=utc_now(),
@@ -811,6 +820,16 @@ def product_summary(
     exceptions = session.exec(select(ReviewException).where(ReviewException.status == "open")).all()
     documents = _document_items(session, settings)
     sent = session.exec(select(SentMessage).where(SentMessage.status == "provider_accepted")).all()
+    approved_master_cv = session.exec(
+        select(MasterCvDocumentSnapshot)
+        .where(MasterCvDocumentSnapshot.status == "approved")
+        .order_by(MasterCvDocumentSnapshot.version_number.desc())
+    ).first()
+    master_cv_session = session.exec(
+        select(MasterCvBuilderSession)
+        .where(MasterCvBuilderSession.status == "active")
+        .order_by(MasterCvBuilderSession.updated_at.desc())
+    ).first()
     stages = Counter(item.stage for item in links)
     linked_company_ids = {item.company_id for item in links}
     drafts = session.exec(select(EmailDraft)).all()
@@ -849,6 +868,15 @@ def product_summary(
         "exception_count": len(exceptions),
         "document_count": len(documents),
         "sent_count": len(sent),
+        "master_cv": {
+            "status": "approved" if approved_master_cv else "candidate" if master_cv_session else "not_started",
+            "approved_version": approved_master_cv.version_number if approved_master_cv else None,
+            "has_candidate": master_cv_session is not None,
+            "review_blockers": (
+                len(MasterCvDocument.model_validate_json(master_cv_session.candidate_json).review_flags)
+                if master_cv_session else 0
+            ),
+        },
     }
 
 

@@ -11,7 +11,7 @@ from backend.app.core.config import get_settings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CURRENT_HEAD = "20260715_0006"
+CURRENT_HEAD = "20260715_0007"
 EXPECTED_TABLES = {
     "alembic_version",
     "runs",

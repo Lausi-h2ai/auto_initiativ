@@ -312,14 +312,14 @@ function Shell() {
             icon="◇"
             count={sumValues(summary.pipeline)}
           />
+          <NavItem to="/profile" label="My story" icon="◎" />
+          <NavItem to="/master-cv" label="Master CV" icon="CV" />
           <NavItem
             to="/documents"
             label="Documents"
             icon="▱"
             count={summary.document_count}
           />
-          <NavItem to="/profile" label="My story" icon="◎" />
-          <NavItem to="/master-cv" label="Master CV" icon="CV" />
           <NavItem
             to="/jobs"
             label="Open positions"
@@ -415,6 +415,18 @@ function Overview() {
 
       {(campaign || hasPriorWork) && (
         <Journey campaign={campaign} pipeline={summary.pipeline} />
+      )}
+
+      {profile.has_approved_profile && (
+        <section className="panel master-cv-readiness-panel">
+          <PanelHeading eyebrow="Reusable foundation" title="Your application readiness" action={<Link to="/master-cv">{summary.master_cv?.has_candidate ? "Continue Master CV" : "Open Master CV"}</Link>} />
+          <div className="readiness-sequence">
+            <span>✓ Career story approved</span>
+            <span>{summary.master_cv?.status === "approved" ? "✓" : "○"} Master CV ready</span>
+            <span>{campaign ? "✓" : "○"} Campaign active</span>
+          </div>
+          {summary.master_cv?.review_blockers ? <p>{summary.master_cv.review_blockers} Master CV item{summary.master_cv.review_blockers === 1 ? " needs" : "s need"} review before approval.</p> : null}
+        </section>
       )}
 
       <div className="overview-grid">

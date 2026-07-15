@@ -10,7 +10,12 @@ from backend.app.master_cv.portraits import PortraitService
 from backend.app.master_cv.rendering import render_master_cv_html
 
 
-def approved_master_cv_html(session: Session, settings: Settings) -> str:
+def approved_master_cv_html(
+    session: Session,
+    settings: Settings,
+    *,
+    document_snapshot_id: int | None = None,
+) -> str:
     """Resolve the exact latest approved design for a downstream tailoring run.
 
     The returned HTML contains only validated structured text and, if selected,
@@ -18,11 +23,16 @@ def approved_master_cv_html(session: Session, settings: Settings) -> str:
     template remains the deterministic fallback before the first approval.
     """
 
-    snapshot = session.exec(
-        select(MasterCvDocumentSnapshot)
-        .where(MasterCvDocumentSnapshot.status == "approved")
-        .order_by(MasterCvDocumentSnapshot.version_number.desc())
-    ).first()
+    if document_snapshot_id is not None:
+        snapshot = session.get(MasterCvDocumentSnapshot, document_snapshot_id)
+        if snapshot is None or snapshot.status != "approved":
+            raise ValueError("Campaign-pinned Master CV snapshot is unavailable")
+    else:
+        snapshot = session.exec(
+            select(MasterCvDocumentSnapshot)
+            .where(MasterCvDocumentSnapshot.status == "approved")
+            .order_by(MasterCvDocumentSnapshot.version_number.desc())
+        ).first()
     if snapshot is None:
         return application_draft_template_html()
     document = MasterCvDocument.model_validate_json(snapshot.raw_json)

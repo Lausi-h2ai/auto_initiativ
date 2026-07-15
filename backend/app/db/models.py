@@ -127,6 +127,7 @@ class Campaign(WorkspaceOwned, table=True):
     brief_json: str = Field(default="{}", sa_column=Column(Text))
     user_profile_snapshot_id: Optional[int] = Field(default=None, foreign_key="user_profile_snapshots.id", index=True)
     master_cv_profile_snapshot_id: Optional[int] = Field(default=None, foreign_key="master_cv_profile_snapshots.id", index=True)
+    master_cv_document_snapshot_id: Optional[int] = Field(default=None, foreign_key="master_cv_document_snapshots.id", index=True)
     policy_snapshot_id: Optional[int] = Field(default=None, foreign_key="policy_snapshots.id", index=True)
     started_at: Optional[datetime] = None
     paused_at: Optional[datetime] = None
@@ -447,12 +448,17 @@ class ProfileAsset(WorkspaceOwned, table=True):
     original_filename: str
     mime_type: str
     relative_path: str = Field(sa_column=Column(Text))
+    original_relative_path: Optional[str] = Field(default=None, sa_column=Column(Text))
     content_hash: str = Field(index=True)
     size_bytes: int
     width: int
     height: int
     crop_json: str = Field(default="{}", sa_column=Column(Text))
     focal_point_json: str = Field(default="{}", sa_column=Column(Text))
+    variants_json: str = Field(default="[]", sa_column=Column(Text))
+    processing_metadata_json: str = Field(default="{}", sa_column=Column(Text))
+    inclusion_policy: str = Field(default="german_swiss", index=True)
+    active_version: int = Field(default=1)
     status: str = Field(default="ready", index=True)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -468,14 +474,21 @@ class MasterCvDocumentSnapshot(WorkspaceOwned, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     document_snapshot_id: str = Field(index=True)
     master_cv_profile_snapshot_id: int = Field(foreign_key="master_cv_profile_snapshots.id", index=True)
+    user_profile_snapshot_id: Optional[int] = Field(default=None, foreign_key="user_profile_snapshots.id", index=True)
     parent_snapshot_id: Optional[int] = Field(default=None, foreign_key="master_cv_document_snapshots.id", index=True)
     portrait_asset_id: Optional[int] = Field(default=None, foreign_key="profile_assets.id", index=True)
     schema_version: str
     version_number: int = Field(index=True)
     title: str
     template_id: str = Field(index=True)
+    template_version: str = Field(default="1.0")
     locale: str = Field(default="en", index=True)
+    market: str = Field(default="international", index=True)
     page_count: int = Field(default=1)
+    page_goal: int = Field(default=1)
+    portrait_variant_id: Optional[str] = None
+    review_flags_json: str = Field(default="[]", sa_column=Column(Text))
+    renderer_version: str = Field(default="1.0")
     content_hash: str = Field(index=True)
     status: str = Field(default="candidate", index=True)
     raw_json: str = Field(sa_column=Column(Text))
@@ -494,6 +507,11 @@ class MasterCvBuilderSession(WorkspaceOwned, table=True):
     base_document_snapshot_id: Optional[int] = Field(
         default=None, foreign_key="master_cv_document_snapshots.id", index=True
     )
+    current_candidate_snapshot_id: Optional[int] = Field(
+        default=None, foreign_key="master_cv_document_snapshots.id", index=True
+    )
+    selected_entry_route: str = Field(default="approved_profile", index=True)
+    candidate_revision: int = Field(default=1)
     candidate_json: str = Field(default="{}", sa_column=Column(Text))
     transcript_json: str = Field(default="[]", sa_column=Column(Text))
     transport_metadata_json: str = Field(default="{}", sa_column=Column(Text))

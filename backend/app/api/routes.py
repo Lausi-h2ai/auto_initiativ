@@ -48,6 +48,7 @@ from backend.app.db.models import (
     AgentTask,
     Company,
     Contact,
+    Document,
     EmailDraft,
     FitEvaluation,
     GmailConnection,
@@ -59,6 +60,7 @@ from backend.app.db.models import (
     OnboardingSession,
     OutreachRecord,
     PolicySnapshot,
+    ProfileAsset,
     SendApprovalSnapshot,
     Run,
     SendIntent,
@@ -82,6 +84,8 @@ from backend.app.imports.import_service import (
     RunImportService,
 )
 from backend.app.onboarding.promotion import OnboardingPromotionService, SnapshotPromotionRequest
+from backend.app.master_cv.portraits import PortraitService, PortraitValidationError
+from backend.app.onboarding.document_text import DocumentExtractionError, extract_document_text
 from backend.app.schemas.api import (
     AuditLogResponse,
     ApplicationDraftImportResponse,
@@ -2189,6 +2193,7 @@ async def upload_onboarding_input_file(
     run_id: str,
     filename: str,
     request: Request,
+    session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> OnboardingInputFileResponse:
     safe_filename = _safe_input_filename(filename)
@@ -2202,6 +2207,44 @@ async def upload_onboarding_input_file(
     input_path.mkdir(parents=True, exist_ok=True)
     destination = input_path / safe_filename
     destination.write_bytes(content)
+    suffix = destination.suffix.lower()
+    if suffix in {".pdf", ".doc", ".docx", ".txt", ".md"}:
+        try:
+            extracted = extract_document_text(destination)
+        except (DocumentExtractionError, OSError, ValueError) as exc:
+            extracted = {"filename": destination.name, "text": "", "error": str(exc), "needs_review": True}
+        destination.with_name(destination.name + ".extracted.json").write_text(
+            json.dumps(extracted, ensure_ascii=False), encoding="utf-8",
+        )
+        root = scoped_runs_root(settings.runs_root)
+        session.add(Document(
+            document_id=f"doc_{uuid.uuid4().hex}", run_id=run_id,
+            document_type="master_cv_source_upload", title=destination.name,
+            filename=destination.name, relative_path=destination.relative_to(root).as_posix(),
+            mime_type=request.headers.get("content-type", "application/octet-stream"),
+            size_bytes=len(content), content_hash=sha256(content).hexdigest(),
+            provenance_json=json.dumps({"onboarding_run_id": run_id, "purpose": "master_cv_source"}, sort_keys=True),
+        ))
+    elif suffix in {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}:
+        identity = current_identity()
+        workspace_key = f"workspace_{identity.effective_workspace_id if identity else 0}"
+        try:
+            normalized = PortraitService(settings.runs_root / "master_cv_assets").ingest(
+                workspace_key=workspace_key, filename=destination.name, content=content,
+                declared_mime_type=request.headers.get("content-type"),
+            )
+        except PortraitValidationError as exc:
+            destination.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        session.add(ProfileAsset(
+            asset_id=normalized.asset_id, original_filename=normalized.original_filename,
+            mime_type=normalized.mime_type, relative_path=normalized.relative_path,
+            content_hash=normalized.content_hash, size_bytes=normalized.size_bytes,
+            width=normalized.width, height=normalized.height,
+            crop_json=normalized.crop.model_dump_json(), focal_point_json=normalized.focal_point.model_dump_json(),
+            status="ready",
+        ))
+    session.commit()
     return OnboardingInputFileResponse(
         filename=destination.name,
         path=str(destination),

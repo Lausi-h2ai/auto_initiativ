@@ -39,6 +39,30 @@ class MasterCvTemplate:
     supports_photo: bool = True
     native_photo_layout: bool = False
     page_size: str = "A4"
+    template_version: str = "1.0"
+    supported_pages: tuple[int, ...] = (1, 2)
+    supported_locales: tuple[str, ...] = ("de-DE", "de-CH", "en-CH", "en")
+    role_families: tuple[str, ...] = ("general",)
+
+    @property
+    def portrait_placement(self) -> str:
+        if self.template_id == "photo-corporate":
+            return "banner_overlap"
+        if self.template_id in {"modern-sidebar", "tech-compact"}:
+            return "sidebar"
+        return "header_right"
+
+    @property
+    def layout(self) -> str:
+        if self.template_id in {"modern-sidebar", "photo-corporate", "tech-compact"}:
+            return "sidebar"
+        if self.template_id in {"pillar", "swiss"}:
+            return "two_column"
+        if self.template_id == "timeline":
+            return "timeline"
+        if self.template_id in {"atelier", "editorial-banner", "photo-minimal"}:
+            return "editorial"
+        return "single_column"
 
     @property
     def upstream_filename(self) -> str:

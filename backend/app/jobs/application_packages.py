@@ -143,7 +143,10 @@ class JobApplicationPackageService:
             fit_evaluation=None,
             email_draft_schema=(self.settings.schemas_root / "email_draft.schema.json").read_text(encoding="utf-8"),
             contact_schema="{}",
-            master_cv_html=approved_master_cv_html(self.session, self.settings),
+            master_cv_html=approved_master_cv_html(
+                self.session, self.settings,
+                document_snapshot_id=campaign.master_cv_document_snapshot_id,
+            ),
             handoff_docs={},
         )
         job_payload = {

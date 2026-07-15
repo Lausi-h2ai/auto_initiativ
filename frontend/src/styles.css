@@ -626,3 +626,20 @@ h2, h3 { font-weight: 650; }
   .master-cv-template-grid { grid-template-columns: 1fr; }
   .master-cv-preview-footer { display: none; }
 }
+.master-cv-readiness-panel {
+  margin: 18px 0;
+}
+
+.readiness-sequence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.readiness-sequence span {
+  border: 1px solid rgba(38, 78, 64, 0.16);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(250, 248, 239, 0.72);
+  color: var(--ink, #24342d);
+}

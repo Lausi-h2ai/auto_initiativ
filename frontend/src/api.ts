@@ -85,6 +85,12 @@ export type ProductSummary = {
   exception_count: number;
   document_count: number;
   sent_count: number;
+  master_cv: {
+    status: "not_started" | "candidate" | "approved";
+    approved_version?: number | null;
+    has_candidate: boolean;
+    review_blockers: number;
+  };
 };
 
 export type Company = {
