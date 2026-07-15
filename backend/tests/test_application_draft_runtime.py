@@ -4,7 +4,13 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from backend.app.agents.application_draft import ApplicationDraftBrief, build_application_draft_inputs, build_application_draft_task
+from backend.app.agents.application_draft import (
+    APPLICATION_DRAFT_TEMPLATE_PATH,
+    ApplicationDraftBrief,
+    application_draft_template_html,
+    build_application_draft_inputs,
+    build_application_draft_task,
+)
 from backend.app.agents.application_draft_runtime import ApplicationDraftRuntime, safe_application_draft_env
 from backend.app.core.config import Settings
 
@@ -54,19 +60,35 @@ def test_safe_application_draft_env_filters_secrets_and_sets_runtime_context(mon
 def test_application_draft_extension_contains_attachment_guards():
     source = Path("backend/pi_extensions/application_draft.ts").read_text(encoding="utf-8")
 
-    assert "MAX_COMMAND_OUTPUT_BYTES" in source
     assert "MAX_ATTACHMENT_BYTES" in source
     assert "assertChildPath(outputRoot, outputPath)" in source
     assert "application_draft_write_contact_candidate" in source
     assert "application_draft_write_email_draft" in source
     assert "application_draft_write_attachment" in source
     assert "application_draft_render_pdf" in source
+    assert "application_draft_shell" not in source
+    assert "spawn(" not in source
     assert 'displayHeaderFooter: false' in source
-    assert 'data-tailoring-optional' in source
+    assert 'data-tailoring-required' in source
     assert 'missingRequiredAssets' in source
     assert 'minimumFillRatio' in source
     assert 'javaScriptEnabled: false' in source
+    assert 'isMainDocument && protocol === "file:"' in source
+    assert "forbidden local file asset reference" in source
     assert 'route.abort("blockedbyclient")' in source
+
+
+def test_application_draft_template_is_repository_owned_and_identity_neutral():
+    template = application_draft_template_html()
+    lowered = template.casefold()
+
+    assert APPLICATION_DRAFT_TEMPLATE_PATH.is_relative_to(Path("backend").resolve())
+    assert "data-cv-slot" in template
+    assert "file:" not in lowered
+    assert "http:" not in lowered
+    assert "https:" not in lowered
+    assert "<img" not in lowered
+    assert "<object" not in lowered
 
 
 def test_application_draft_inputs_redact_unwanted_education_honor():
@@ -181,9 +203,9 @@ def test_application_draft_task_forbids_honor_and_requires_fuller_page_use():
     assert "Do not render the resume as a screenshot, bitmap, canvas, PIL image, ReportLab drawing, or image-only PDF" in task
     assert "body text around 9-10pt" in task
     assert "historically named `approved_claims` ledger" in task
-    assert "visual structure and intentional assets as a document contract" in task
-    assert 'data-tailoring-optional="true"' in task
-    assert "renderer asset, page-count, and page-fill failures" in task
+    assert "repository-owned neutral template" in task
+    assert "Preserve an existing approved JPEG portrait data URI exactly" in task
+    assert "never bypass the renderer" in task
 
 
 def test_application_draft_runtime_closes_client_after_prompt_failure(tmp_path: Path):

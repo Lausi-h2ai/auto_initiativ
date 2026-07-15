@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-initiativ.local/schemas/master_cv_claim_proposals.schema.json",
+  "title": "MasterCvClaimProposals",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile_id", "proposals"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["proposal_id", "category", "statement", "source_refs", "reason", "needs_review"],
+        "properties": {
+          "proposal_id": { "type": "string", "minLength": 1 },
+          "category": { "type": "string", "enum": ["experience", "project", "education", "skill", "language", "certification", "achievement", "other"] },
+          "statement": { "type": "string", "minLength": 1 },
+          "source_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "reason": { "type": "string", "minLength": 1 },
+          "needs_review": { "type": "boolean", "const": true }
+        }
+      }
+    }
+  }
+}

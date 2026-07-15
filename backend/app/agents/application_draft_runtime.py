@@ -273,10 +273,11 @@ class ApplicationDraftRuntime:
             f"{instructions}\n\n"
             "Task:\n"
             f"{task}\n\n"
-            "Use `application_draft_list_inputs`, `application_draft_read_input`, `application_draft_shell`, "
+            "Use `application_draft_list_inputs`, `application_draft_read_input`, "
             "`application_draft_write_contact_candidate`, `application_draft_write_email_draft`, "
             "`application_draft_write_attachment`, and `application_draft_render_pdf` as needed. Stop after writing the requested JSON outputs and "
-            "PDF/HTML attachments. Prefer `draft_context.json` over larger inputs. Do not create send intents or send anything."
+            "PDF/HTML attachments. Prefer `draft_context.json` over larger inputs. Do not invoke a shell or another PDF renderer. "
+            "Do not create send intents or send anything."
         )
 
     def _command(self, run_id: str) -> list[str]:

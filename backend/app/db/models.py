@@ -437,6 +437,73 @@ class MasterCvProfileSnapshot(WorkspaceOwned, table=True):
     imported_at: datetime = Field(default_factory=utc_now)
 
 
+class ProfileAsset(WorkspaceOwned, table=True):
+    __tablename__ = "profile_assets"
+    __table_args__ = (UniqueConstraint("workspace_id", "asset_id", name="uq_profile_assets_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    asset_id: str = Field(index=True)
+    asset_type: str = Field(default="portrait", index=True)
+    original_filename: str
+    mime_type: str
+    relative_path: str = Field(sa_column=Column(Text))
+    content_hash: str = Field(index=True)
+    size_bytes: int
+    width: int
+    height: int
+    crop_json: str = Field(default="{}", sa_column=Column(Text))
+    focal_point_json: str = Field(default="{}", sa_column=Column(Text))
+    status: str = Field(default="ready", index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class MasterCvDocumentSnapshot(WorkspaceOwned, table=True):
+    __tablename__ = "master_cv_document_snapshots"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "document_snapshot_id", name="uq_master_cv_documents_workspace_external_id"),
+        UniqueConstraint("workspace_id", "version_number", name="uq_master_cv_documents_workspace_version"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    document_snapshot_id: str = Field(index=True)
+    master_cv_profile_snapshot_id: int = Field(foreign_key="master_cv_profile_snapshots.id", index=True)
+    parent_snapshot_id: Optional[int] = Field(default=None, foreign_key="master_cv_document_snapshots.id", index=True)
+    portrait_asset_id: Optional[int] = Field(default=None, foreign_key="profile_assets.id", index=True)
+    schema_version: str
+    version_number: int = Field(index=True)
+    title: str
+    template_id: str = Field(index=True)
+    locale: str = Field(default="en", index=True)
+    page_count: int = Field(default=1)
+    content_hash: str = Field(index=True)
+    status: str = Field(default="candidate", index=True)
+    raw_json: str = Field(sa_column=Column(Text))
+    approved_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class MasterCvBuilderSession(WorkspaceOwned, table=True):
+    __tablename__ = "master_cv_builder_sessions"
+    __table_args__ = (UniqueConstraint("workspace_id", "session_id", name="uq_master_cv_sessions_workspace_external_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True)
+    run_id: str = Field(index=True)
+    base_document_snapshot_id: Optional[int] = Field(
+        default=None, foreign_key="master_cv_document_snapshots.id", index=True
+    )
+    candidate_json: str = Field(default="{}", sa_column=Column(Text))
+    transcript_json: str = Field(default="[]", sa_column=Column(Text))
+    transport_metadata_json: str = Field(default="{}", sa_column=Column(Text))
+    status: str = Field(default="active", index=True)
+    started_at: datetime = Field(default_factory=utc_now)
+    completed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class PolicySnapshot(WorkspaceOwned, table=True):
     __tablename__ = "policy_snapshots"
     __table_args__ = (UniqueConstraint("workspace_id", "policy_id", name="uq_policies_workspace_external_id"),)

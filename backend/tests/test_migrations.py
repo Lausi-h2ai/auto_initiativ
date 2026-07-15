@@ -11,7 +11,7 @@ from backend.app.core.config import get_settings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CURRENT_HEAD = "20260714_0005"
+CURRENT_HEAD = "20260715_0006"
 EXPECTED_TABLES = {
     "alembic_version",
     "runs",
@@ -20,6 +20,9 @@ EXPECTED_TABLES = {
     "audit_logs",
     "user_profile_snapshots",
     "master_cv_profile_snapshots",
+    "profile_assets",
+    "master_cv_document_snapshots",
+    "master_cv_builder_sessions",
     "policy_snapshots",
     "companies",
     "contacts",

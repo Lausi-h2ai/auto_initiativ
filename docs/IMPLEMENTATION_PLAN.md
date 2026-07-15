@@ -168,3 +168,14 @@ Status: implemented as a parallel campaign path.
 - `listed_job_search` uses the Vacancy Scout, job-specific schemas, deterministic verification states, manual refresh, and a separate Jobs UI.
 - Employer pages may be discovered dynamically; configured trust affects whether evidence can establish `verified_open`, not whether a source may be searched.
 - Application packages are schema validated, use only approved master-CV claims, require a fresh verified vacancy, and are always submitted manually by the user.
+
+## Master CV Builder Extension
+
+Status: implementation in progress. The governing design is in `docs/MASTER_CV_BUILDER.md`.
+
+- Add a dedicated Master CV workspace without increasing onboarding's required steps.
+- Vendor the MIT-licensed resume-builder skill and adapt all thirteen templates through application-owned, A4-safe adapters.
+- Treat portraits as first-class profile assets from the first release, including German and Swiss market defaults.
+- Persist candidate and approved document versions separately from the approved factual claim ledger.
+- Use one restricted Pi RPC specialist for iterative design and content proposals; validate all code-consumed output as JSON.
+- Keep approval, rendering, assets, provenance, and downstream version pinning deterministic and application-owned.

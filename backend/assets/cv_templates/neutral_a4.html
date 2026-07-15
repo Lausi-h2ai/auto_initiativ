@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tailored CV</title>
+  <style>
+    @page { size: A4; margin: 10mm 11mm; }
+    :root { --text: #1b1f23; --muted: #4a5563; --accent: #0d4f8b; --rule: #c9d4df; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; color: var(--text); font: 9.5pt/1.3 "Segoe UI", Arial, sans-serif; }
+    h1, h2, p, ul { margin: 0; }
+    .resume { width: 100%; }
+    .header { border-bottom: 1.2px solid var(--accent); padding-bottom: 6px; margin-bottom: 8px; }
+    .name { font-size: 18pt; font-weight: 800; letter-spacing: .5px; }
+    .headline { margin-top: 2px; color: var(--accent); font-size: 10pt; font-weight: 700; text-transform: uppercase; }
+    .contacts { margin-top: 4px; color: var(--muted); font-size: 9pt; }
+    .summary { margin-top: 5px; }
+    .section { margin-top: 9px; }
+    .section-title { border-bottom: .8px solid var(--rule); padding-bottom: 2px; margin-bottom: 4px; color: var(--accent); font-size: 10pt; font-weight: 800; text-transform: uppercase; }
+    .entry { margin-top: 6px; break-inside: avoid; }
+    .entry-head { display: flex; justify-content: space-between; gap: 12px; }
+    .entry-title { font-weight: 800; }
+    .entry-date { color: var(--muted); white-space: nowrap; }
+    .bullets { margin-top: 2px; padding-left: 15px; }
+    .bullets li { margin-bottom: 2px; }
+    .two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  </style>
+</head>
+<body>
+  <main class="resume">
+    <header class="header" data-cv-slot="identity"></header>
+    <section class="section" data-cv-slot="summary"></section>
+    <section class="section" data-cv-slot="skills"></section>
+    <section class="section" data-cv-slot="experience"></section>
+    <section class="section two-column" data-cv-slot="education-and-additional"></section>
+  </main>
+</body>
+</html>

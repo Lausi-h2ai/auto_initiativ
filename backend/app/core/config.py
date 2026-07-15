@@ -90,18 +90,6 @@ class Settings(BaseSettings):
         default=1800,
         validation_alias="PI_RPC_APPLICATION_DRAFT_TIMEOUT_SECONDS",
     )
-    application_draft_master_cv_html_path: Path = Field(
-        default=Path(r"C:\Users\laure\OneDrive\Documents\Bewerbungsunterlagen\Lebenslauf\Switzerland\de\master\de_ch_master.html"),
-        validation_alias="APPLICATION_DRAFT_MASTER_CV_HTML_PATH",
-    )
-    application_draft_handoff_dir: Path = Field(
-        default=Path(r"C:\Users\laure\OneDrive\Documents\Bewerbungsunterlagen\agent-handoff"),
-        validation_alias="APPLICATION_DRAFT_HANDOFF_DIR",
-    )
-    application_draft_include_handoff_docs: bool = Field(
-        default=False,
-        validation_alias="APPLICATION_DRAFT_INCLUDE_HANDOFF_DOCS",
-    )
     application_draft_allow_contact_research: bool = Field(
         default=False,
         validation_alias="APPLICATION_DRAFT_ALLOW_CONTACT_RESEARCH",

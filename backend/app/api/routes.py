@@ -26,10 +26,12 @@ from backend.app.agents.company_research_runtime import CompanyResearchRuntime
 from backend.app.agents.application_draft import (
     APPLICATION_DRAFT_INSTRUCTIONS,
     ApplicationDraftBrief,
+    application_draft_template_html,
     build_application_draft_inputs,
     build_application_draft_task,
     slugify,
 )
+from backend.app.master_cv.downstream import approved_master_cv_html
 from backend.app.agents.application_draft_runtime import ApplicationDraftRuntime
 from backend.app.agents.onboarding_chat import OnboardingCodexChatAdapter
 from backend.app.agents.onboarding_recruiter_prompt import (
@@ -1557,23 +1559,6 @@ def _prepare_application_draft_response(
         language=request.language,
         notes=request.notes,
     )
-    handoff_docs: dict[str, str] = {}
-    if settings.application_draft_include_handoff_docs:
-        handoff_dir = settings.application_draft_handoff_dir
-        handoff_docs = {
-            "initiativbewerbung-style-guide.md": _read_required_text(
-                handoff_dir / "initiativbewerbung-style-guide.md",
-                "application draft style guide",
-            ),
-            "initiativbewerbung-workflow.md": _read_required_text(
-                handoff_dir / "initiativbewerbung-workflow.md",
-                "application draft workflow guide",
-            ),
-            "resume-job-search-context.md": _read_required_text(
-                handoff_dir / "resume-job-search-context.md",
-                "resume rendering context",
-            ),
-        }
     input_payloads = build_application_draft_inputs(
         brief=brief,
         user_profile=_raw_json_object(user_profile),
@@ -1584,8 +1569,8 @@ def _prepare_application_draft_response(
         fit_evaluation=_json_loads(fit_evaluation.raw_json, {}) if fit_evaluation is not None else None,
         email_draft_schema=(settings.schemas_root / "email_draft.schema.json").read_text(encoding="utf-8"),
         contact_schema=(settings.schemas_root / "contact_candidate.schema.json").read_text(encoding="utf-8"),
-        master_cv_html=_read_required_text(settings.application_draft_master_cv_html_path, "master CV HTML"),
-        handoff_docs=handoff_docs,
+        master_cv_html=approved_master_cv_html(session, settings),
+        handoff_docs={},
     )
     expected_json_outputs = APPLICATION_DRAFT_FILENAMES + (
         ("contact_candidate.json",) if contact_needs_research and settings.application_draft_allow_contact_research else ()

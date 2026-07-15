@@ -28,6 +28,7 @@ import {
   mutate,
   request,
 } from "./api";
+import { MasterCvPage } from "./MasterCvPage";
 
 type WorkspaceData = Awaited<ReturnType<typeof loadWorkspace>>;
 type WorkspaceContextValue = WorkspaceData & { refresh: () => Promise<void> };
@@ -318,6 +319,7 @@ function Shell() {
             count={summary.document_count}
           />
           <NavItem to="/profile" label="My story" icon="◎" />
+          <NavItem to="/master-cv" label="Master CV" icon="CV" />
           <NavItem
             to="/jobs"
             label="Open positions"
@@ -359,6 +361,10 @@ function Shell() {
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/profile/view" element={<ProfileViewerPage />} />
+          <Route
+            path="/master-cv"
+            element={<MasterCvPage candidateName={me.display_name} />}
+          />
           <Route path="/exceptions" element={<ExceptionsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/admin" element={<AdminPage />} />
@@ -1915,6 +1921,9 @@ function ProfilePage() {
               </div>
             </div>
             <div className="profile-hero-actions">
+              <Link className="primary-button" to="/master-cv">
+                Build my Master CV
+              </Link>
               <Link className="primary-button" to="/profile/view">
                 View my profile
               </Link>
@@ -1989,6 +1998,15 @@ function ProfilePage() {
               <span>One guided review at the end</span>
               <span>Uncertain facts stay visibly flagged</span>
               <span>Your approved claims become the source of truth</span>
+            </div>
+            <div className="onboarding-master-cv-handoff">
+              <strong>Next: make it a document</strong>
+              <p>
+                Your uploaded CV becomes useful starting material. In the
+                Master CV studio you can add a portrait, choose a design, and
+                refine every section with a dedicated coach.
+              </p>
+              <Link to="/master-cv">Preview the Master CV studio →</Link>
             </div>
           </div>
           <div className="chat-card">
@@ -2943,6 +2961,8 @@ function DocumentsPage() {
     const profileTypes = new Set([
       "career_profile",
       "master_cv_profile",
+      "master_cv",
+      "master_cv_document",
       "outreach_policy",
     ]);
     const needle = query.trim().toLocaleLowerCase();
@@ -2981,6 +3001,19 @@ function DocumentsPage() {
             : "Every document, ready when you need it"
         }
       />
+      {!hasCompanyScope && (
+        <Link className="master-cv-library-card" to="/master-cv">
+          <div>
+            <span className="eyebrow">Reusable source document</span>
+            <h2>Your Master CV lives in its own studio</h2>
+            <p>
+              Refine the content, design, portrait, and approved version that
+              every tailored CV starts from.
+            </p>
+          </div>
+          <strong>Open Master CV studio →</strong>
+        </Link>
+      )}
       {hasCompanyScope && (
         <div className="document-scope">
           <div>

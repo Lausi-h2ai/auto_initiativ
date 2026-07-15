@@ -14,6 +14,7 @@ from backend.app.core.config import get_settings
 from backend.app.workflow.engine import start_workflow_worker, stop_workflow_worker
 from backend.app.product.routes import router as product_router
 from backend.app.monitoring.issues import IssueCaptureMiddleware, router as monitoring_router
+from backend.app.master_cv.routes import router as master_cv_router
 
 STATIC_DIR = Path(__file__).parent / "static"
 DESIGN_LAB_DIR = STATIC_DIR / "design-lab"
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(product_router)
     app.include_router(monitoring_router)
+    app.include_router(master_cv_router)
     app.include_router(router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

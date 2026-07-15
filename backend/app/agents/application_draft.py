@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -34,14 +35,26 @@ Create one evidence-backed unsolicited application package from the prepared com
 - Write only `../output/email_draft.json`, `../output/contact_candidate.json` when explicitly required, and files under `../output/attachments`.
 - Match the supplied JSON schemas exactly, preserve the brief's IDs and attachment paths, and use only observed public URLs in `source_refs`.
 
-Use the compact tone and workflow notes in `../input/draft_context.json`. Use the master CV HTML in `../input/master_cv/de_ch_master.html` as the real starting point for the tailored CV.
-On this machine, render the CV PDF with `application_draft_render_pdf` after writing the HTML attachment. Do not use WeasyPrint unless the render tool is unavailable.
+Use the compact tone and workflow notes in `../input/draft_context.json`. Use the approved master CV HTML in `../input/master_cv/de_ch_master.html` as the visual starting point for the tailored CV.
+Preserve its template identity, design tokens, and any existing `data:image/jpeg;base64,` portrait exactly. Do not add, replace, reinterpret, or remove a portrait. Never add an object, external stylesheet, local/remote asset, or any other data URI.
+Render every PDF only with `application_draft_render_pdf`. Never invoke Chrome, Edge, Playwright, WeasyPrint, or another PDF renderer through a shell or fallback command. If the protected renderer still rejects the document after the one permitted repair, stop and report the failure.
 ## Completion checks
 
 Before finishing, confirm the HTML and one-page PDF exist, the PDF remains selectable text, every CV/email claim maps to a claim-ledger ID with review state preserved, IDs and attachment paths match the brief, JSON matches the supplied schemas, and no send or delivery artifact was created.
 """
 
 REDACTED_RESUME_PHRASES = ("Summa Cum Laude",)
+APPLICATION_DRAFT_TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "assets" / "cv_templates" / "neutral_a4.html"
+
+
+def application_draft_template_html() -> str:
+    """Return the repository-owned, identity-neutral application CV template."""
+    template = APPLICATION_DRAFT_TEMPLATE_PATH.read_text(encoding="utf-8")
+    lowered = template.casefold()
+    forbidden = ("file:", "http:", "https:", "<img", "<object", "<embed", "<iframe")
+    if any(token in lowered for token in forbidden):
+        raise ValueError("Application CV template must not contain personal or external assets.")
+    return template
 
 
 @dataclass(frozen=True)
@@ -303,9 +316,9 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
         "Required process:\n\n"
         "1. Read `../input/draft_context.json` first and use it as the compact source of truth for the run.\n"
         "2. Decide which claim IDs from the historically named `approved_claims` ledger best match the company and fit evaluation; inspect and preserve each claim's own approval and review state.\n"
-        "3. Tailor the CV HTML from `../input/master_cv/de_ch_master.html`; treat its visual structure and intentional assets as a document contract, preserve readable proportions, and use only claims present in the master-CV claim ledger. Read the full HTML only when writing the tailored attachment.\n"
+        "3. Tailor the approved CV HTML at `../input/master_cv/de_ch_master.html` (or its repository-owned neutral template fallback before the first approval); preserve its pinned template, visual hierarchy, design tokens, and exact approved portrait when present, and use only claims present in the master-CV claim ledger. Read the full HTML only when writing the tailored attachment.\n"
         f"4. Write the tailored HTML to `../output/attachments/{brief.html_filename}`. This HTML source is required.\n"
-        "5. Render that HTML text document to a one-page PDF under `../output/attachments` using `application_draft_render_pdf`, and verify the PDF exists before finishing. Try at most one repair if rendering fails.\n"
+        "5. Render that HTML text document to a one-page PDF under `../output/attachments` using only `application_draft_render_pdf`, and verify the PDF exists before finishing. Try at most one repair if rendering fails; if it still fails, stop without using a shell or another renderer.\n"
         "6. Do not render the resume as a screenshot, bitmap, canvas, PIL image, ReportLab drawing, or image-only PDF. Text in the PDF must remain readable and selectable.\n"
         + (
             "7. If `contact_needs_research` is true, find one public professional contact email and write `../output/contact_candidate.json`; keep shell/web output tiny and never dump raw search pages.\n"
@@ -336,14 +349,14 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
         "- Do not mention that the CV was tailored by an agent or that this is a bulk outreach workflow.\n"
         "- Never include the phrase `Summa Cum Laude` in the resume or email draft.\n\n"
         "Resume layout requirements:\n\n"
-        "- Preserve master-template `img`, `svg`, and `object` assets and their identifying class/alt structure. An asset may be omitted only when the template itself marks it `data-tailoring-optional=\"true\"`; do not drop a portrait or other required asset merely to simplify the layout.\n"
+        "- Preserve an existing approved JPEG portrait data URI exactly when the template contains one. Do not add, replace, restyle, or remove it; do not use other images, objects, external stylesheets, `file:` URLs, remote assets, or other data URIs.\n"
         "- Preserve the template's overall visual hierarchy while adapting sections and supported content to the role; this is a tailored edit, not a blank-page redesign.\n"
         "- Use the available one-page space well; do not leave a visibly sparse lower third when relevant claim-ledger content exists.\n"
         "- If the rendered PDF has substantial blank space, add or restore relevant claim-ledger bullets, skills, project details, or education detail before finishing.\n"
         "- Keep the PDF exactly one page and avoid cramped or tiny text.\n"
-        "- Use normal A4 CSS proportions: roughly 8-12mm page margins, body text around 9-10pt, section headings around 9-11pt, and a portrait photo around 30-35mm wide.\n"
+        "- Use normal A4 CSS proportions: roughly 8-12mm page margins, body text around 9-10pt, and section headings around 9-11pt.\n"
         "- Do not use global CSS transforms, zoom, fixed 2000px+ canvases, raster text, or bitmap page rendering to make content fit.\n"
-        "- Treat renderer asset, page-count, and page-fill failures as required layout repairs. Use the returned layout diagnostics for the one permitted repair.\n"
+        "- Treat renderer asset-safety, page-count, and page-fill failures as required layout repairs. Use the returned layout diagnostics for the one permitted repair; never bypass the renderer.\n"
         "- Before finishing, verify schema conformance, exact IDs and attachment paths, claim-ledger coverage and review signals, selectable PDF text, and the absence of send artifacts.\n"
         "\nCover-letter document requirements:\n\n"
         "- Determine the destination country from vacancy location/company context. Use that country's conventional business-letter layout; if ambiguous, use a conservative international A4 layout and add a review flag.\n"
