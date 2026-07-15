@@ -985,21 +985,25 @@ function JobsPage() {
         eyebrow="Verified opportunities"
         title="Open positions"
         aside={
-          activeCampaign ? (
-            <button
-              className="secondary-button"
-              disabled={busy}
-              onClick={() =>
-                void act(`/campaigns/${activeCampaign.id}/refresh`)
-              }
+          <div className="page-header-actions">
+            {activeCampaign && (
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={() =>
+                  void act(`/campaigns/${activeCampaign.id}/refresh`)
+                }
+              >
+                Refresh search
+              </button>
+            )}
+            <Link
+              className="primary-button"
+              to="/campaigns/new?type=listed_job_search"
             >
-              Refresh search
-            </button>
-          ) : (
-            <Link className="primary-button" to="/campaigns/new">
-              Start a job search
+              New job search
             </Link>
-          )
+          </div>
         }
       />
       <p className="page-intro">
@@ -1021,7 +1025,10 @@ function JobsPage() {
           title="No verified positions yet"
           body="Start a job-listing campaign or refresh an existing one. Your Vacancy Scout will search broad sources and follow promising employers to their career pages."
           action={
-            <Link className="primary-button" to="/campaigns/new">
+            <Link
+              className="primary-button"
+              to="/campaigns/new?type=listed_job_search"
+            >
               Create job campaign
             </Link>
           }
@@ -1355,13 +1362,21 @@ function CampaignWorkspaceBar({
 function CampaignWizard() {
   const navigate = useNavigate();
   const { delivery, profile, refresh } = useWorkspace();
+  const [searchParams] = useSearchParams();
+  const initialCampaignType =
+    searchParams.get("type") === "listed_job_search"
+      ? "listed_job_search"
+      : "initiative_outreach";
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
-    campaign_type: "initiative_outreach" as
+    campaign_type: initialCampaignType as
       "initiative_outreach" | "listed_job_search",
-    name: "My next opportunity",
+    name:
+      initialCampaignType === "listed_job_search"
+        ? "My next job search"
+        : "My next opportunity",
     role_focus: "",
     locations: "",
     company_preferences: "",
@@ -1399,7 +1414,7 @@ function CampaignWizard() {
     setBusy(true);
     setError("");
     try {
-      await mutate("/campaigns", "POST", {
+      const campaign = await mutate<Campaign>("/campaigns", "POST", {
         ...form,
         locations: form.locations
           .split(",")
@@ -1407,7 +1422,11 @@ function CampaignWizard() {
           .filter(Boolean),
       });
       await refresh();
-      navigate(isJobs ? "/jobs" : "/");
+      navigate(
+        isJobs
+          ? `/jobs?campaign=${encodeURIComponent(campaign.id)}`
+          : "/",
+      );
     } catch (cause) {
       setError(messageOf(cause));
     } finally {

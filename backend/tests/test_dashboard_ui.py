@@ -110,6 +110,8 @@ def test_dashboard_assets_reference_guided_product_endpoints(client):
         "Company outreach",
         "All company campaigns",
         "All open-position campaigns",
+        "New job search",
+        "Refresh search",
         "Who is continuing?",
         "A short inbox, not another task list",
         "What kind of work should we pursue?",

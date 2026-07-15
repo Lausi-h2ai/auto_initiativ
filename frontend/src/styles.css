@@ -58,6 +58,7 @@ h2, h3 { font-weight: 650; }
 .page { width: min(1500px, calc(100vw - 258px)); min-height: 100vh; margin: 0 auto; padding: 42px 48px 70px; }
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; min-height: 70px; margin-bottom: 30px; }
 .page-header h1 { max-width: 850px; margin: 5px 0 0; font-size: clamp(32px, 3vw, 46px); line-height: 1.06; }
+.page-header-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .eyebrow { margin: 0 0 7px; color: #718077; font-size: 10px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
 .eyebrow.light { color: #a9beb3; }
 .muted { color: var(--muted); }
@@ -352,6 +353,7 @@ h2, h3 { font-weight: 650; }
   .page-header { min-height: 0; flex-direction: column; align-items: stretch; gap: 14px; margin-bottom: 22px; }
   .page-header h1 { font-size: clamp(30px, 10vw, 40px); }
   .page-header > :last-child:not(:first-child) { align-self: flex-start; }
+  .page-header-actions { justify-content: flex-start; }
   .page-intro { margin-top: -10px; }
   .primary-button, .secondary-button, .google-button { min-height: 46px; }
 
