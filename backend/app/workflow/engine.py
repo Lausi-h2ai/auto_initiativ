@@ -341,16 +341,26 @@ class WorkflowEngine:
         task.narrative = f"Research found {int(counts.get('companies', 0))} companies and is checking fit."
         task.updated_at = utc_now()
         self.session.add(task)
-        if state not in TERMINAL_RUNTIME_STATUSES:
-            self.session.commit()
-            return
-        if state in FAILED_RUNTIME_STATUSES:
-            raise ValueError(f"Company research ended with {state}.")
         campaign = self.session.get(Campaign, task.campaign_id)
         if campaign is None:
             raise ValueError("Campaign no longer exists.")
         file_ids = self.session.exec(select(ImportedFile.id).where(ImportedFile.run_id == task.run_id)).all()
         companies = self.session.exec(select(Company).where(Company.imported_file_id.in_(file_ids))).all() if file_ids else []
+        for company in companies:
+            if self._campaign_company(campaign.id, company.id) is None:
+                self.session.add(
+                    CampaignCompany(
+                        campaign_id=campaign.id,
+                        company_id=company.id,
+                        stage="discovered",
+                        stage_reason="Schema-valid research imported while discovery continues.",
+                    )
+                )
+        if state not in TERMINAL_RUNTIME_STATUSES:
+            self.session.commit()
+            return
+        if state in FAILED_RUNTIME_STATUSES:
+            raise ValueError(f"Company research ended with {state}.")
         for company in companies:
             link = self._campaign_company(campaign.id, company.id)
             if link is None:
@@ -364,6 +374,13 @@ class WorkflowEngine:
                 )
                 self.session.add(link)
                 self.session.flush()
+            elif link.stage == "discovered" and link.stage_reason == "Schema-valid research imported while discovery continues.":
+                conflicts = json.loads(company.policy_conflicts_json or "[]")
+                link.stage = "archived" if conflicts else "qualified"
+                link.disposition = "policy_excluded" if conflicts else None
+                link.stage_reason = "Excluded by campaign policy." if conflicts else "Research and fit evidence imported."
+                link.updated_at = utc_now()
+                self.session.add(link)
             if link.stage != "archived":
                 contact = self._latest_contact(company.id)
                 if contact is None:
@@ -388,16 +405,25 @@ class WorkflowEngine:
         task.narrative = f"Vacancy research found {int(counts.get('jobs', 0))} listings and is checking validity and fit."
         task.updated_at = utc_now()
         self.session.add(task)
-        if state not in TERMINAL_RUNTIME_STATUSES:
-            self.session.commit()
-            return
-        if state in FAILED_RUNTIME_STATUSES:
-            raise ValueError(f"Job research ended with {state}.")
         campaign = self.session.get(Campaign, task.campaign_id)
         if campaign is None:
             raise ValueError("Campaign no longer exists.")
         file_ids = self.session.exec(select(ImportedFile.id).where(ImportedFile.run_id == task.run_id)).all()
         jobs = self.session.exec(select(JobPosting).where(JobPosting.imported_file_id.in_(file_ids))).all() if file_ids else []
+        for job in jobs:
+            existing_link = self.session.exec(
+                select(CampaignJob).where(
+                    CampaignJob.campaign_id == campaign.id,
+                    CampaignJob.job_posting_id == job.id,
+                )
+            ).first()
+            if existing_link is None:
+                self.session.add(CampaignJob(campaign_id=campaign.id, job_posting_id=job.id, application_status="discovered"))
+        if state not in TERMINAL_RUNTIME_STATUSES:
+            self.session.commit()
+            return
+        if state in FAILED_RUNTIME_STATUSES:
+            raise ValueError(f"Job research ended with {state}.")
         for job in jobs:
             link = self.session.exec(select(CampaignJob).where(CampaignJob.campaign_id == campaign.id, CampaignJob.job_posting_id == job.id)).first()
             if link is None:

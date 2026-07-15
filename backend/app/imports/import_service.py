@@ -87,9 +87,15 @@ class RunImportService:
         output_path: Path | None = None,
         run_type: str | None = None,
         expected_filenames: tuple[str, ...] = EXPECTED_FILENAMES,
+        *,
+        incremental: bool = False,
+        finalize: bool = True,
     ) -> ImportResult:
         resolved_output_path = output_path or scoped_runs_root(self.settings.runs_root) / run_id / "output"
         run = self._get_or_create_run(run_id, resolved_output_path)
+        original_run_status = run.status
+        original_started_at = run.started_at
+        original_completed_at = run.completed_at
         if run_type is not None:
             run.agent_type = run_type
             expected_artifact_filenames: tuple[str, ...] = ()
@@ -153,7 +159,8 @@ class RunImportService:
             return ImportResult(run=run, validation_results=[])
 
         try:
-            self._clear_previous_import_rows(run_id)
+            if not incremental:
+                self._clear_previous_import_rows(run_id)
 
             results: list[ValidationResult] = []
             discovered_json_files = self._discover_json_files(resolved_output_path, run_type=run_type)
@@ -173,9 +180,28 @@ class RunImportService:
                 else:
                     results.append(self._record_artifact_result(run_id, expected_path, filename=filename))
 
+            existing_hashes = (
+                {
+                    (item.filename, item.sha256)
+                    for item in self.session.exec(select(ImportedFile).where(ImportedFile.run_id == run_id)).all()
+                }
+                if incremental
+                else set()
+            )
             for path, relative_path in discovered_json_files:
+                if incremental and (relative_path, _sha256(path)) in existing_hashes:
+                    continue
                 outcome = self.validator.validate_file(path, relative_path=relative_path)
                 results.append(self._record_file_result(run_id, path, outcome, filename=relative_path))
+
+            if incremental:
+                results = list(
+                    self.session.exec(
+                        select(ValidationResult)
+                        .where(ValidationResult.run_id == run_id)
+                        .order_by(ValidationResult.filename, ValidationResult.validated_at)
+                    ).all()
+                )
 
             run.status = "imported" if all(result.status in PASSING_VALIDATION_STATUSES for result in results) else "imported_with_errors"
             normalization_result = None
@@ -200,24 +226,29 @@ class RunImportService:
                     normalization_metadata["job_reason_codes"] = job_result.reason_codes
                     if job_result.reason_codes:
                         run.status = "imported_with_errors"
+            import_status = run.status
             run.completed_at = utc_now()
             run.updated_at = utc_now()
-            self.session.add(run)
             self._audit(
                 run_id=run_id,
                 action="import_completed",
                 entity_type="run",
                 entity_id=run_id,
-                result_status=run.status,
+                result_status=import_status,
                 reason_codes=(
                     []
-                    if run.status == "imported"
+                    if import_status == "imported"
                     else normalization_result.reason_codes
                     if normalization_metadata is not None
                     else ["validation_errors_present"]
                 ),
                 metadata={"file_count": len(results), "domain_normalization": normalization_metadata},
             )
+            if not finalize:
+                run.status = original_run_status
+                run.started_at = original_started_at
+                run.completed_at = original_completed_at
+            self.session.add(run)
             self.session.commit()
             self.session.refresh(run)
             for result in results:

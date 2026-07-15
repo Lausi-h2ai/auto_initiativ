@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -127,6 +129,58 @@ def test_company_research_runtime_detects_run_orphaned_by_process_restart(tmp_pa
     )
 
 
+def test_company_research_watcher_imports_stable_artifacts_while_agent_is_running(tmp_path: Path, monkeypatch):
+    imports: list[tuple[str, bool, bool]] = []
+
+    class FakeSession:
+        def __init__(self, engine) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeRun:
+        status = "imported"
+
+    class FakeResult:
+        run = FakeRun()
+        validation_results = []
+
+    class FakeImportService:
+        def __init__(self, *, session, settings) -> None:
+            pass
+
+        def import_run(self, run_id: str, *, run_type: str, incremental: bool = False, finalize: bool = True):
+            imports.append((run_type, incremental, finalize))
+            return FakeResult()
+
+    output = tmp_path / "run-1" / "output" / "companies"
+    output.mkdir(parents=True)
+    (output / "company-1.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(company_research_runtime, "Session", FakeSession)
+    monkeypatch.setattr(company_research_runtime, "RunImportService", FakeImportService)
+    monkeypatch.setattr(company_research_runtime, "INCREMENTAL_IMPORT_POLL_SECONDS", 0.01)
+    runtime = CompanyResearchRuntime(settings=_settings(tmp_path), clients={})
+    runtime._mark_run = lambda *args, **kwargs: None
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=runtime._watch_research_artifacts,
+        args=("run-1", "company_research", 50, time.monotonic(), stop),
+    )
+
+    thread.start()
+    deadline = time.monotonic() + 1
+    while not imports and time.monotonic() < deadline:
+        time.sleep(0.01)
+    stop.set()
+    thread.join(timeout=1)
+
+    assert imports == [("company_research", True, False)]
+
+
 def test_company_research_runtime_cancel_closes_live_client_and_marks_run(tmp_path: Path):
     class Client:
         closed = False
@@ -217,7 +271,9 @@ def test_company_research_runtime_continues_until_target_company_count(tmp_path:
         def __init__(self, *, session, settings) -> None:
             pass
 
-        def import_run(self, run_id: str, *, run_type: str):
+        def import_run(self, run_id: str, *, run_type: str, incremental: bool = False, finalize: bool = True):
+            assert incremental is True
+            assert finalize is True
             import_counts.append(len(list((output_root / "companies").glob("*.json"))))
             return FakeImportResult()
 
@@ -243,7 +299,7 @@ def test_company_research_runtime_continues_until_target_company_count(tmp_path:
 
     assert len(client.prompts) == 2
     assert "Continue the prepared company research task" in client.prompts[1]
-    assert import_counts == [1, 2]
+    assert import_counts == [2]
     assert client.closed is True
     state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))
     assert state["status"] == "imported"
@@ -300,7 +356,9 @@ def test_company_research_runtime_imports_existing_partial_artifacts_before_prom
         def __init__(self, *, session, settings) -> None:
             pass
 
-        def import_run(self, run_id: str, *, run_type: str):
+        def import_run(self, run_id: str, *, run_type: str, incremental: bool = False, finalize: bool = True):
+            assert incremental is True
+            assert finalize is (len(list((output_root / "companies").glob("*.json"))) == 2)
             import_counts.append(len(list((output_root / "companies").glob("*.json"))))
             return FakeImportResult()
 
@@ -357,7 +415,9 @@ def test_company_research_runtime_imports_existing_artifacts_without_prompting(t
         def __init__(self, *, session, settings) -> None:
             pass
 
-        def import_run(self, run_id: str, *, run_type: str):
+        def import_run(self, run_id: str, *, run_type: str, incremental: bool = False, finalize: bool = True):
+            assert incremental is True
+            assert finalize is True
             return FakeImportResult()
 
     run_root = tmp_path / "run-1"

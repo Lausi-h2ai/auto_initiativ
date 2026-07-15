@@ -158,6 +158,34 @@ def test_company_research_import_ignores_non_research_outputs(db_session, runs_r
     assert db_session.exec(select(UserProfileSnapshot)).all() == []
 
 
+def test_incremental_research_import_does_not_duplicate_unchanged_files(db_session, runs_root):
+    copy_valid_run(runs_root, "run-company-research-incremental")
+    service = RunImportService(db_session)
+
+    first = service.import_run(
+        "run-company-research-incremental",
+        run_type="company_research",
+        incremental=True,
+    )
+    imported_file_count = len(
+        db_session.exec(
+            select(ImportedFile).where(ImportedFile.run_id == "run-company-research-incremental")
+        ).all()
+    )
+    second = service.import_run(
+        "run-company-research-incremental",
+        run_type="company_research",
+        incremental=True,
+    )
+
+    assert len(second.validation_results) == len(first.validation_results)
+    assert len(
+        db_session.exec(
+            select(ImportedFile).where(ImportedFile.run_id == "run-company-research-incremental")
+        ).all()
+    ) == imported_file_count
+
+
 def test_application_draft_import_validates_expected_resume_artifacts(db_session, runs_root):
     run_id = "run-application-draft"
     run_path = runs_root / run_id

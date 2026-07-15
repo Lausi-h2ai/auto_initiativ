@@ -621,6 +621,16 @@ function CompaniesPage() {
       .finally(() => setLoading(false));
   }, [campaign?.id]);
 
+  useEffect(() => {
+    if (!campaign?.active_task_count) return;
+    const timer = window.setInterval(() => {
+      void request<Company[]>(`/campaigns/${campaign.id}/pipeline`)
+        .then((items) => setCompanies(items.map(normalizeCompany)))
+        .catch((cause) => setError(messageOf(cause)));
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [campaign?.id, campaign?.active_task_count]);
+
   const chooseCampaign = (campaignId: string) => {
     const next = new URLSearchParams(searchParams);
     next.set("campaign", campaignId);
@@ -974,6 +984,11 @@ function JobsPage() {
     if (selected)
       setSelected(next.find((job) => job.id === selected.id) || null);
   };
+  useEffect(() => {
+    if (!activeCampaign?.active_task_count) return;
+    const timer = window.setInterval(() => void reload().catch((cause) => setError(messageOf(cause))), 2000);
+    return () => window.clearInterval(timer);
+  }, [activeCampaign?.id, activeCampaign?.active_task_count]);
   const act = async (path: string, method = "POST", payload?: unknown) => {
     setBusy(true);
     setError("");
@@ -1610,8 +1625,14 @@ function CampaignWizard() {
               <span>Search breadth</span>
               {[15, 30, 50].map((count) => (
                 <button
-                  className={form.max_companies === count ? "selected" : ""}
-                  onClick={() => setForm({ ...form, max_companies: count })}
+                  className={(isJobs ? form.max_jobs : form.max_companies) === count ? "selected" : ""}
+                  onClick={() =>
+                    setForm(
+                      isJobs
+                        ? { ...form, max_jobs: count }
+                        : { ...form, max_companies: count },
+                    )
+                  }
                   key={count}
                 >
                   {count === 15
@@ -1619,7 +1640,7 @@ function CampaignWizard() {
                     : count === 30
                       ? "Balanced"
                       : "Broad"}
-                  <small>about {count} companies</small>
+                  <small>about {count} {isJobs ? "positions" : "companies"}</small>
                 </button>
               ))}
             </div>

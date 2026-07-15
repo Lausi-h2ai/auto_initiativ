@@ -30,6 +30,7 @@ DEFAULT_TARGET_COMPANY_COUNT = 30
 MAX_CONTINUATION_PROMPTS = 24
 MIN_CONTINUATION_TIMEOUT_SECONDS = 15
 MIN_PROMPT_TIMEOUT_SECONDS = 1
+INCREMENTAL_IMPORT_POLL_SECONDS = 1.0
 
 _RESEARCH_CLIENTS: dict[str, PiRpcClientProtocol] = {}
 _RESEARCH_THREADS: dict[str, threading.Thread] = {}
@@ -250,6 +251,8 @@ class CompanyResearchRuntime:
         return (datetime.now(timezone.utc) - updated_at).total_seconds() > stale_after_seconds
 
     def _run_agent(self, run_id: str) -> None:
+        watcher_stop: threading.Event | None = None
+        watcher_thread: threading.Thread | None = None
         try:
             prompt_timeout = self._prompt_timeout_seconds(run_id)
             target_company_count = self._target_company_count(run_id)
@@ -290,6 +293,12 @@ class CompanyResearchRuntime:
                         result_status="completed",
                     )
                 client = self._client(run_id)
+                watcher_stop, watcher_thread = self._start_import_watcher(
+                    run_id,
+                    run_type=COMPANY_RESEARCH_RUN_TYPE,
+                    target_count=target_company_count,
+                    started_monotonic=started_monotonic,
+                )
                 prompt = self._prompt(run_id)
                 while True:
                     remaining_timeout = self._remaining_prompt_timeout(
@@ -322,21 +331,6 @@ class CompanyResearchRuntime:
                     )
                     if not should_continue:
                         break
-                    if counts["companies"] > 0:
-                        self._import_research_artifacts(
-                            run_id,
-                            state_status="running",
-                            counts=counts,
-                            target_company_count=target_company_count,
-                            elapsed_seconds=elapsed_seconds,
-                            continuation_count=continuation_count,
-                        )
-                        self._mark_run(
-                            run_id,
-                            "research_running",
-                            action="company_research_partial_import_completed",
-                            result_status="completed",
-                        )
                     continuation_count += 1
                     prompt = self._continuation_prompt(
                         run_id,
@@ -379,6 +373,10 @@ class CompanyResearchRuntime:
                 )
             final_counts = self._artifact_counts(run_id)
             elapsed_seconds = round(time.monotonic() - started_monotonic, 3)
+            if watcher_stop is not None:
+                watcher_stop.set()
+            if watcher_thread is not None:
+                watcher_thread.join(timeout=5)
             self._write_state(run_id, "importing", last_reply=final_reply, importing_at=_utc_now())
             self._mark_run(run_id, "research_importing", action="company_research_agent_completed", result_status="completed")
             self._import_research_artifacts(
@@ -394,6 +392,10 @@ class CompanyResearchRuntime:
             self._append_event(run_id, {"type": "company_research_failed", "error": str(exc), "error_type": type(exc).__name__})
             self._mark_run(run_id, "research_failed", action="company_research_failed", result_status="failed", reason_codes=["runtime_error"])
         finally:
+            if watcher_stop is not None:
+                watcher_stop.set()
+            if watcher_thread is not None and watcher_thread.is_alive():
+                watcher_thread.join(timeout=5)
             client = self.clients.pop(run_id, None)
             if client is not None:
                 client.close()
@@ -412,6 +414,8 @@ class CompanyResearchRuntime:
             import_result = RunImportService(session=session, settings=self.settings).import_run(
                 run_id,
                 run_type=COMPANY_RESEARCH_RUN_TYPE,
+                incremental=True,
+                finalize=state_status is None,
             )
             self._write_state(
                 run_id,
@@ -425,6 +429,93 @@ class CompanyResearchRuntime:
                 elapsed_seconds=elapsed_seconds,
                 continuation_count=continuation_count,
             )
+
+    def _start_import_watcher(
+        self,
+        run_id: str,
+        *,
+        run_type: str,
+        target_count: int,
+        started_monotonic: float,
+    ) -> tuple[threading.Event, threading.Thread]:
+        stop = threading.Event()
+        context = copy_context()
+        thread = threading.Thread(
+            target=context.run,
+            args=(self._watch_research_artifacts, run_id, run_type, target_count, started_monotonic, stop),
+            name=f"research-import-{run_id}",
+            daemon=True,
+        )
+        thread.start()
+        return stop, thread
+
+    def _watch_research_artifacts(
+        self,
+        run_id: str,
+        run_type: str,
+        target_count: int,
+        started_monotonic: float,
+        stop: threading.Event,
+    ) -> None:
+        previous_fingerprint: tuple[tuple[str, int, int], ...] = ()
+        imported_fingerprint: tuple[tuple[str, int, int], ...] = ()
+        while not stop.wait(INCREMENTAL_IMPORT_POLL_SECONDS):
+            fingerprint = self._artifact_fingerprint(run_id)
+            if not fingerprint or fingerprint != previous_fingerprint or fingerprint == imported_fingerprint:
+                previous_fingerprint = fingerprint
+                continue
+            counts = self._artifact_counts(run_id)
+            elapsed_seconds = round(time.monotonic() - started_monotonic, 3)
+            try:
+                with Session(db_session_module.engine) as session:
+                    result = RunImportService(session=session, settings=self.settings).import_run(
+                        run_id,
+                        run_type=run_type,
+                        incremental=True,
+                        finalize=False,
+                    )
+                imported_fingerprint = fingerprint
+                self._write_state(
+                    run_id,
+                    "running",
+                    imported_at=_utc_now(),
+                    import_status=result.run.status,
+                    validation_results=len(result.validation_results),
+                    artifact_counts=counts,
+                    last_company_count=counts.get("companies", 0),
+                    target_company_count=target_count,
+                    elapsed_seconds=elapsed_seconds,
+                )
+                self._mark_run(
+                    run_id,
+                    "research_running",
+                    action=f"{run_type}_partial_import_completed",
+                    result_status="completed",
+                )
+            except Exception as exc:
+                self._append_event(
+                    run_id,
+                    {
+                        "type": f"{run_type}_partial_import_failed",
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            previous_fingerprint = fingerprint
+
+    def _artifact_fingerprint(self, run_id: str) -> tuple[tuple[str, int, int], ...]:
+        output = self._run_root(run_id) / "output"
+        if not output.exists():
+            return ()
+        fingerprints: list[tuple[str, int, int]] = []
+        for path in sorted(output.rglob("*.json")):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if path.is_file():
+                fingerprints.append((path.relative_to(output).as_posix(), stat.st_size, stat.st_mtime_ns))
+        return tuple(fingerprints)
 
     def _ensure_prepared_run(self, run_id: str) -> None:
         with Session(db_session_module.engine) as session:
