@@ -762,7 +762,7 @@ function CompanyCard({
       </div>
       <p className="company-snippet">
         {company.description ||
-          "Your research agent is building a concise company brief."}
+          "No sourced company brief is available for this company yet."}
       </p>
       <div className="company-card-footer">
         <span>{score == null ? "Fit pending" : `${score}% fit`}</span>
@@ -871,7 +871,7 @@ function CompanyDrawer({
         <DrawerSection title="Why your recruiter noticed it">
           <p>
             {company.description ||
-              "A sourced company brief is being prepared."}
+              "No sourced company brief is available for this company yet."}
           </p>
         </DrawerSection>
         <DrawerSection title="Evidence-backed fit">
