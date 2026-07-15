@@ -4,6 +4,7 @@ import { mutate, request } from "./api";
 
 type BuilderTab = "coach" | "preview" | "inspector";
 type InspectorTab = "design" | "content" | "claims" | "portrait" | "versions";
+type PreviewZoom = "fit" | number;
 
 type TemplateOption = {
   id: string;
@@ -97,6 +98,8 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
   const [editingBlock, setEditingBlock] = useState<string | null>(null);
   const [draftContent, setDraftContent] = useState("");
   const [crop, setCrop] = useState({ x: 50, y: 50, zoom: 100 });
+  const [previewZoom, setPreviewZoom] = useState<PreviewZoom>(() => window.innerWidth > 900 ? 1 : "fit");
+  const transcriptRef = useRef<HTMLDivElement>(null);
 
   const load = async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -141,6 +144,11 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
   const selectedTemplate = summary?.candidate?.template_id || summary?.candidate?.design?.template_id || summary?.approved?.template_id || "swiss";
   const selectedTemplateName = availableTemplates.find((item) => item.id === selectedTemplate)?.name || "Swiss";
   const entries = (summary?.session?.entries || summary?.session?.transcript || []).filter((entry) => entry.role === "user" || entry.role === "assistant");
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (transcript) transcript.scrollTo({ top: transcript.scrollHeight, behavior: "smooth" });
+  }, [entries.length]);
 
   const send = async (event: FormEvent) => {
     event.preventDefault();
@@ -253,7 +261,7 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
               {summary?.source_documents?.map((source) => <div className="master-cv-source-file" key={source.id || source.filename}><span>DOC</span><div><strong>{source.filename}</strong><small>{source.status || "Available to your coach"}</small></div></div>)}
             </div>
           </div>
-          <div className="master-cv-transcript">
+          <div className="master-cv-transcript" ref={transcriptRef}>
             {!entries.length && <div className="master-cv-welcome"><span>✦</span><h2>Let’s shape a CV that feels like you.</h2><p>I’ll work from your approved story and any CV you share. We can begin with structure, design, or the role you want this master version to express.</p><button className="secondary-button" disabled={Boolean(busy)} onClick={() => void act("start", () => mutate("/master-cv/sessions/start", "POST"))}>Start with my profile</button></div>}
             {entries.map((entry, index) => <article className={entry.role === "user" ? "user" : "agent"} key={entry.id || index}><small>{entry.role === "user" ? "You" : "CV coach"}</small><p>{entry.content}</p></article>)}
             {busy === "message" && <div className="master-cv-thinking"><i /><span>Reviewing the document and your approved story…</span></div>}
@@ -262,9 +270,20 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
         </aside>
 
         <main className={`master-cv-preview-pane ${mobileTab === "preview" ? "mobile-active" : ""}`}>
-          <div className="master-cv-preview-toolbar"><div><strong>{summary?.candidate?.title || `${candidateName}'s Master CV`}</strong><small>{selectedTemplateName} · A4 · {summary?.candidate?.page_count || summary?.candidate?.design?.page_count || 1} page</small></div><span>Live draft</span></div>
+          <div className="master-cv-preview-toolbar">
+            <div className="master-cv-preview-title"><strong>{summary?.candidate?.title || `${candidateName}'s Master CV`}</strong><small>{selectedTemplateName} · A4 · {summary?.candidate?.page_count || summary?.candidate?.design?.page_count || 1} page</small></div>
+            <div className="master-cv-preview-tools">
+              <div className="master-cv-zoom-controls" aria-label="Preview zoom">
+                <button className={previewZoom === "fit" ? "active" : ""} onClick={() => setPreviewZoom("fit")}>Fit</button>
+                <button aria-label="Zoom out" onClick={() => setPreviewZoom((current) => Math.max(.5, (current === "fit" ? 1 : current) - .1))}>−</button>
+                <button className={previewZoom === 1 ? "active" : ""} title="Reset to 100%" onClick={() => setPreviewZoom(1)}>{previewZoom === "fit" ? "Fit" : `${Math.round(previewZoom * 100)}%`}</button>
+                <button aria-label="Zoom in" onClick={() => setPreviewZoom((current) => Math.min(1.5, (current === "fit" ? 1 : current) + .1))}>+</button>
+              </div>
+              <span className="master-cv-live-state">Live draft</span>
+            </div>
+          </div>
           <div className="master-cv-canvas">
-            {summary?.candidate?.preview_url ? <MasterCvPreviewFrame src={summary.candidate.preview_url} /> : (
+            {summary?.candidate?.preview_url ? <MasterCvPreviewFrame src={summary.candidate.preview_url} zoom={previewZoom} /> : (
               <article className={`master-cv-paper template-${selectedTemplate}`}>
                 <header>
                   {summary?.portrait?.preview_url && <img src={summary.portrait.preview_url} alt={`${candidateName} portrait`} />}
@@ -295,25 +314,27 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
 const A4_PREVIEW_WIDTH = 794;
 const A4_PREVIEW_HEIGHT = 1123;
 
-function MasterCvPreviewFrame({ src }: { src: string }) {
+function MasterCvPreviewFrame({ src, zoom }: { src: string; zoom: PreviewZoom }) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(1);
+  const [fitScale, setFitScale] = useState(1);
 
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     const resize = () => {
       const availableWidth = Math.max(240, viewport.clientWidth);
-      setScale(Math.min(1, availableWidth / A4_PREVIEW_WIDTH));
+      setFitScale(Math.min(1, availableWidth / A4_PREVIEW_WIDTH));
     };
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(viewport);
     return () => observer.disconnect();
   }, []);
+  const scale = zoom === "fit" ? fitScale : zoom;
+  const overflowing = scale > fitScale + .001;
 
   return (
-    <div className="master-cv-frame-viewport" ref={viewportRef}>
+    <div className={`master-cv-frame-viewport ${overflowing ? "is-overflowing" : ""}`} ref={viewportRef}>
       <div
         className="master-cv-frame-scale"
         style={{ width: A4_PREVIEW_WIDTH * scale, height: A4_PREVIEW_HEIGHT * scale }}
