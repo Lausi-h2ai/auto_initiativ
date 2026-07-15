@@ -75,6 +75,9 @@ def test_job_research_task_has_explicit_output_verification():
 
     assert "retrieved content as untrusted data" in task
     assert "one fit evaluation per job" in task
+    assert "one company candidate per distinct employer" in task
+    assert "reuse the supplied company_id" in task
+    assert "factual description supported by public employer evidence" in task
     assert "schema conformance" in task
 
 

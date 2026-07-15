@@ -4,7 +4,8 @@ import json
 
 from sqlmodel import select
 
-from backend.app.db.models import AuditLog, ImportedFile, MasterCvProfileSnapshot, PolicySnapshot, Run, UserProfileSnapshot, ValidationResult
+from backend.app.db.models import AuditLog, Company, ImportedFile, MasterCvProfileSnapshot, PolicySnapshot, Run, UserProfileSnapshot, ValidationResult
+from backend.app.imports.domain_normalizer import DomainNormalizationService
 from backend.app.imports.import_service import RunImportService
 from backend.tests.conftest import copy_valid_run
 
@@ -332,3 +333,118 @@ def test_unexpected_import_exception_is_audited_and_preserves_prior_rows(db_sess
     ).first()
     assert failure_audit is not None
     assert json.loads(failure_audit.reason_codes_json) == ["import_exception"]
+
+
+def test_company_candidate_enriches_sparse_existing_company_without_overwriting_brief(db_session):
+    sparse = Company(
+        company_id="company-sparse",
+        name="Sparse Employer",
+        raw_domain="sparse.example",
+        normalized_domain="sparse.example",
+        normalized_name="sparse employer",
+        company_policy_key="domain:sparse.example",
+        company_policy_key_kind="domain",
+        description=None,
+        industry_tags_json='["Public sector"]',
+        locations_json='["Bern"]',
+        remote_policy="unknown",
+        source_refs_json='["https://sparse.example/jobs"]',
+        confidence=0.4,
+        review_flags_json='["legacy_record"]',
+        policy_conflicts_json="[]",
+        raw_json='{"company_id":"company-sparse"}',
+    )
+    complete = Company(
+        company_id="company-complete",
+        name="Complete Employer",
+        raw_domain="complete.example",
+        normalized_domain="complete.example",
+        normalized_name="complete employer",
+        company_policy_key="domain:complete.example",
+        company_policy_key_kind="domain",
+        description="Existing sourced brief.",
+        industry_tags_json="[]",
+        locations_json="[]",
+        remote_policy="hybrid",
+        source_refs_json='["https://complete.example/about"]',
+        confidence=0.95,
+        review_flags_json="[]",
+        policy_conflicts_json="[]",
+        raw_json='{"company_id":"company-complete"}',
+    )
+    db_session.add_all([sparse, complete])
+    db_session.flush()
+    sparse_id = sparse.id
+    complete_id = complete.id
+
+    candidates = [
+        {
+            "schema_version": "1.0",
+            "company_id": "company-sparse",
+            "name": "Sparse Employer",
+            "domain": "sparse.example",
+            "description": "A sourced public-sector technology employer.",
+            "industry_tags": ["public sector", "Technology"],
+            "locations": ["Bern", "Zurich"],
+            "remote_policy": "hybrid",
+            "potential_policy_conflicts": [
+                {"policy_value": "public_sector", "reason": "Requires review.", "confidence": 0.7}
+            ],
+            "source_refs": ["https://sparse.example/jobs", "https://sparse.example/about"],
+            "confidence": 0.9,
+            "review_flags": ["legacy_record", "policy_review"],
+        },
+        {
+            "schema_version": "1.0",
+            "company_id": "company-complete",
+            "name": "Complete Employer Renamed",
+            "domain": "different.example",
+            "description": "A replacement that must not overwrite the existing brief.",
+            "industry_tags": ["Technology"],
+            "locations": ["Basel"],
+            "remote_policy": "remote",
+            "source_refs": ["https://complete.example/careers"],
+            "confidence": 0.8,
+            "review_flags": [],
+        },
+    ]
+    for index, candidate in enumerate(candidates):
+        db_session.add(
+            ImportedFile(
+                run_id="job-company-enrichment",
+                path=f"output/companies/company-{index}.json",
+                filename=f"companies/company-{index}.json",
+                schema_name="company_candidate.schema.json",
+                status="schema_validation_passed",
+                raw_json=json.dumps(candidate),
+            )
+        )
+    db_session.commit()
+
+    service = DomainNormalizationService(db_session)
+    service.normalize_run("job-company-enrichment")
+    service.normalize_run("job-company-enrichment")
+    db_session.commit()
+
+    companies = db_session.exec(select(Company)).all()
+    assert len(companies) == 2
+    enriched = db_session.get(Company, sparse_id)
+    assert enriched is not None
+    assert enriched.description == "A sourced public-sector technology employer."
+    assert json.loads(enriched.industry_tags_json) == ["Public sector", "Technology"]
+    assert json.loads(enriched.locations_json) == ["Bern", "Zurich"]
+    assert enriched.remote_policy == "hybrid"
+    assert json.loads(enriched.source_refs_json) == ["https://sparse.example/jobs", "https://sparse.example/about"]
+    assert json.loads(enriched.review_flags_json) == ["legacy_record", "policy_review"]
+    assert len(json.loads(enriched.policy_conflicts_json)) == 1
+    assert enriched.confidence == 0.9
+    assert enriched.imported_file_id is None
+
+    preserved = db_session.get(Company, complete_id)
+    assert preserved is not None
+    assert preserved.name == "Complete Employer"
+    assert preserved.normalized_domain == "complete.example"
+    assert preserved.company_policy_key == "domain:complete.example"
+    assert preserved.description == "Existing sourced brief."
+    assert preserved.remote_policy == "hybrid"
+    assert preserved.confidence == 0.95

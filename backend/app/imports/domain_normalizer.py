@@ -21,6 +21,7 @@ from backend.app.db.models import (
     Run,
     SendIntent,
     UserProfileSnapshot,
+    utc_now,
 )
 from backend.app.db.normalization import (
     build_company_policy_key,
@@ -392,6 +393,7 @@ class DomainNormalizationService:
                 continue
             existing_company = self.session.exec(select(Company).where(Company.company_id == company_id)).first()
             if existing_company is not None:
+                self._enrich_existing_company(existing_company, payload)
                 companies_by_external_id[company_id] = existing_company
                 seen_company_ids.add(company_id)
                 continue
@@ -473,6 +475,64 @@ class DomainNormalizationService:
             reason_codes=reason_codes,
             unresolved_references=all_unresolved,
         )
+
+    def _enrich_existing_company(
+        self,
+        company: Company,
+        data: dict[str, Any],
+    ) -> None:
+        changed = False
+        incoming_description = str(data.get("description") or "").strip()
+        if not str(company.description or "").strip() and incoming_description:
+            company.description = incoming_description
+            changed = True
+
+        incoming_remote_policy = str(data.get("remote_policy") or "").strip()
+        current_remote_policy = str(company.remote_policy or "").strip()
+        unknown_remote_values = {"", "unknown", "not specified", "not published"}
+        if (
+            current_remote_policy.casefold() in unknown_remote_values
+            and incoming_remote_policy
+            and incoming_remote_policy.casefold() not in unknown_remote_values
+        ):
+            company.remote_policy = incoming_remote_policy
+            changed = True
+
+        json_merges = (
+            ("industry_tags_json", data.get("industry_tags") or []),
+            ("locations_json", data.get("locations") or []),
+            ("source_refs_json", data.get("source_refs") or []),
+            ("review_flags_json", data.get("review_flags") or []),
+            ("policy_conflicts_json", data.get("potential_policy_conflicts") or []),
+        )
+        for attribute, incoming_values in json_merges:
+            current_values = json.loads(getattr(company, attribute) or "[]")
+            merged_values = self._merge_unique_values(current_values, incoming_values)
+            serialized = _json_dumps(merged_values)
+            if serialized != getattr(company, attribute):
+                setattr(company, attribute, serialized)
+                changed = True
+
+        incoming_confidence = float(data.get("confidence") or 0)
+        if incoming_confidence > company.confidence:
+            company.confidence = incoming_confidence
+            changed = True
+
+        if changed:
+            company.updated_at = utc_now()
+            self.session.add(company)
+
+    @staticmethod
+    def _merge_unique_values(current: list[Any], incoming: list[Any]) -> list[Any]:
+        merged: list[Any] = []
+        seen: set[str] = set()
+        for value in [*current, *incoming]:
+            key = value.strip().casefold() if isinstance(value, str) else _json_dumps(value)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(value.strip() if isinstance(value, str) else value)
+        return merged
 
     def _normalize_application_draft(
         self,
