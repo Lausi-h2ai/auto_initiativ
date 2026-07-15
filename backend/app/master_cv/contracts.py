@@ -89,6 +89,21 @@ class MasterCvSection(BaseModel):
 class MasterCvDocument(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_design_density(cls, value: Any) -> Any:
+        """Accept historical catalog labels while persisting schema literals."""
+
+        if not isinstance(value, dict) or not isinstance(value.get("design"), dict):
+            return value
+        density = value["design"].get("density")
+        normalized = {"comfortable": "balanced", "medium": "balanced"}.get(density)
+        if normalized is None:
+            return value
+        payload = dict(value)
+        payload["design"] = {**value["design"], "density": normalized}
+        return payload
+
     schema_version: Literal["1.0"] = "1.0"
     document_snapshot_id: str = Field(min_length=1)
     profile_id: str = Field(min_length=1)

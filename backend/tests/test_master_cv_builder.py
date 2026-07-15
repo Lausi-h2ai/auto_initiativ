@@ -135,6 +135,28 @@ def test_service_creates_candidate_and_immutable_approved_documents(db_session, 
     assert "Led a documented transformation program." in downstream_html
 
 
+def test_agent_candidate_import_normalizes_legacy_catalog_density(db_session, runs_root):
+    profile = _profile()
+    db_session.add(MasterCvProfileSnapshot(
+        profile_id=profile["profile_id"], schema_version="1.0", content_hash="profile-density-hash",
+        status="approved", raw_json=json.dumps(profile), source_created_at=datetime.now(timezone.utc),
+    ))
+    db_session.commit()
+    service = MasterCvService(session=db_session, settings=get_settings())
+    builder = service.start_session()
+    payload = json.loads(builder.candidate_json)
+    payload["design"]["density"] = "comfortable"
+    output = runs_root / builder.run_id / "output"
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "master_cv_document.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    imported = service.import_agent_candidate(builder)
+
+    assert imported is not None
+    assert imported.design.density == "balanced"
+    assert json.loads(builder.candidate_json)["design"]["density"] == "balanced"
+
+
 def test_service_blocks_unapproved_claim_reference(db_session):
     profile = _profile()
     db_session.add(MasterCvProfileSnapshot(

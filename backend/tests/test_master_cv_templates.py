@@ -37,7 +37,7 @@ def test_catalog_exposes_every_vendored_template_with_design_metadata() -> None:
     for template in MASTER_CV_TEMPLATES:
         assert template.page_size == "A4"
         assert template.ats_compatibility in {"high", "medium", "low"}
-        assert template.density in {"comfortable", "compact"}
+        assert template.density in {"balanced", "compact"}
         assert template.supports_photo is True
         assert "international" in template.markets
         assert upstream_template_path(template.template_id).is_file()

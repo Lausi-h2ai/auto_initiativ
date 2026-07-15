@@ -68,6 +68,29 @@ def test_master_cv_contract_rejects_raw_extra_content():
         MasterCvDocument.model_validate(payload)
 
 
+@pytest.mark.parametrize("legacy_density", ["comfortable", "medium"])
+def test_master_cv_document_normalizes_legacy_density_to_schema_literal(
+    legacy_density, schemas_root
+):
+    payload = _document_payload()
+    payload["design"]["density"] = legacy_density
+
+    parsed = MasterCvDocument.model_validate(payload)
+    canonical = parsed.model_dump(mode="json", exclude_none=True)
+    schema = json.loads((schemas_root / "master_cv_document.schema.json").read_text(encoding="utf-8"))
+
+    assert parsed.design.density == "balanced"
+    Draft202012Validator(schema).validate(canonical)
+
+
+def test_master_cv_document_still_rejects_unknown_density():
+    payload = _document_payload()
+    payload["design"]["density"] = "spacious"
+
+    with pytest.raises(ValidationError, match="design.density"):
+        MasterCvDocument.model_validate(payload)
+
+
 def test_portrait_crop_must_stay_inside_normalized_bounds():
     with pytest.raises(ValidationError, match="within normalized image bounds"):
         PortraitCrop(x=0.8, y=0, width=0.3, height=1)

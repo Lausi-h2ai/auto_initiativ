@@ -76,23 +76,23 @@ class MasterCvTemplate:
 MASTER_CV_TEMPLATES: tuple[MasterCvTemplate, ...] = (
     MasterCvTemplate(
         "classic-ats", "Classic ATS", "Traditional single-column layout with maximum parser clarity.",
-        "high", "comfortable", ("international", "germany", "switzerland"),
+        "high", "balanced", ("international", "germany", "switzerland"),
     ),
     MasterCvTemplate(
         "atelier", "Atelier", "Editorial typography for creative and design-oriented profiles.",
-        "medium", "comfortable", ("international", "germany", "switzerland"),
+        "medium", "balanced", ("international", "germany", "switzerland"),
     ),
     MasterCvTemplate(
         "editorial-banner", "Editorial Banner", "Distinctive banner and balanced editorial sections.",
-        "medium", "comfortable", ("international", "germany", "switzerland"),
+        "medium", "balanced", ("international", "germany", "switzerland"),
     ),
     MasterCvTemplate(
         "elegant-serif", "Elegant Serif", "Refined serif treatment for experienced professional profiles.",
-        "high", "comfortable", ("international", "germany", "switzerland"),
+        "high", "balanced", ("international", "germany", "switzerland"),
     ),
     MasterCvTemplate(
         "executive", "Executive", "Structured leadership-focused layout with restrained visual hierarchy.",
-        "high", "comfortable", ("international", "germany", "switzerland"),
+        "high", "balanced", ("international", "germany", "switzerland"),
     ),
     MasterCvTemplate(
         "ledger", "Ledger", "Compact, precise layout for finance and operations experience.",
@@ -104,12 +104,12 @@ MASTER_CV_TEMPLATES: tuple[MasterCvTemplate, ...] = (
     ),
     MasterCvTemplate(
         "photo-corporate", "Photo Corporate", "Corporate banner with a prominent circular portrait.",
-        "medium", "comfortable", ("germany", "switzerland", "international"),
+        "medium", "balanced", ("germany", "switzerland", "international"),
         native_photo_layout=True,
     ),
     MasterCvTemplate(
         "photo-minimal", "Photo Minimal", "Minimal editorial composition with a dedicated portrait area.",
-        "medium", "comfortable", ("germany", "switzerland", "international"),
+        "medium", "balanced", ("germany", "switzerland", "international"),
         native_photo_layout=True,
     ),
     MasterCvTemplate(
@@ -118,7 +118,7 @@ MASTER_CV_TEMPLATES: tuple[MasterCvTemplate, ...] = (
     ),
     MasterCvTemplate(
         "swiss", "Swiss", "Grid-led Swiss typography with clear information hierarchy.",
-        "medium", "comfortable", ("switzerland", "germany", "international"),
+        "medium", "balanced", ("switzerland", "germany", "international"),
     ),
     MasterCvTemplate(
         "tech-compact", "Tech Compact", "Dense engineering layout optimized for technical evidence.",
