@@ -141,14 +141,14 @@ class MasterCvService:
             raise MasterCvValidationError("Candidate must reference the current approved master CV profile.")
         document = self._enforce_claim_text_integrity(document, approved[1])
         get_master_cv_template(document.design.template_id)
+        snapshot, document = self._ensure_mutable_candidate_snapshot(
+            record, document, approved[0]
+        )
         document.content_hash = self._document_hash(document)
         record.candidate_json = document.model_dump_json()
         record.candidate_revision = document.revision
         record.updated_at = utc_now()
         self.session.add(record)
-        snapshot = self._candidate_snapshot(document.document_snapshot_id)
-        if snapshot is None or snapshot.status != "candidate":
-            raise MasterCvValidationError("Candidate snapshot is unavailable or immutable.")
         snapshot.title = document.title
         snapshot.template_id = document.design.template_id
         snapshot.locale = document.locale
@@ -531,6 +531,56 @@ class MasterCvService:
         return self.session.exec(select(MasterCvDocumentSnapshot).where(
             MasterCvDocumentSnapshot.document_snapshot_id == document_snapshot_id,
         )).first()
+
+    def _ensure_mutable_candidate_snapshot(
+        self,
+        record: MasterCvBuilderSession,
+        document: MasterCvDocument,
+        profile_snapshot: MasterCvProfileSnapshot,
+    ) -> tuple[MasterCvDocumentSnapshot, MasterCvDocument]:
+        """Materialize legacy session-only drafts without mutating approved versions."""
+
+        existing = self._candidate_snapshot(document.document_snapshot_id)
+        if existing is not None and existing.status == "candidate":
+            record.current_candidate_snapshot_id = existing.id
+            return existing, document
+
+        parent_id = existing.id if existing is not None and existing.status == "approved" else record.base_document_snapshot_id
+        if existing is not None:
+            document.document_snapshot_id = f"mastercv_{uuid4().hex}"
+            document.created_at = utc_now()
+        document.lifecycle_status = "needs_review" if document.review_flags else "candidate"
+        document.content_hash = self._document_hash(document)
+        snapshot = MasterCvDocumentSnapshot(
+            document_snapshot_id=document.document_snapshot_id,
+            master_cv_profile_snapshot_id=profile_snapshot.id,
+            user_profile_snapshot_id=self._approved_user_profile_id(),
+            parent_snapshot_id=parent_id,
+            schema_version=document.schema_version,
+            version_number=self._next_version_number(),
+            title=document.title,
+            template_id=document.design.template_id,
+            template_version=document.design.template_version,
+            locale=document.locale,
+            market=document.market,
+            page_count=document.design.page_count,
+            page_goal=document.page_goal,
+            portrait_variant_id=document.portrait_variant_id,
+            review_flags_json=json.dumps(document.review_flags),
+            content_hash=document.content_hash,
+            status="candidate",
+            raw_json=document.model_dump_json(),
+        )
+        self.session.add(snapshot)
+        self.session.flush()
+        record.current_candidate_snapshot_id = snapshot.id
+        self._audit(
+            "master_cv_legacy_candidate_materialized",
+            "master_cv_document_snapshot",
+            snapshot.document_snapshot_id,
+            run_id=record.run_id,
+        )
+        return snapshot, document
 
     def _approved_user_profile_id(self) -> int | None:
         approved = self.approved_user_profile()

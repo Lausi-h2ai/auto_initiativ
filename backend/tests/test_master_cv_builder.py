@@ -8,7 +8,7 @@ from pypdf import PdfReader
 from sqlmodel import select
 
 from backend.app.core.config import get_settings
-from backend.app.db.models import Document, MasterCvProfileSnapshot
+from backend.app.db.models import Document, MasterCvBuilderSession, MasterCvProfileSnapshot
 from backend.app.master_cv.contracts import MasterCvDocument
 from backend.app.master_cv.downstream import approved_master_cv_html
 from backend.app.master_cv.rendering import render_master_cv_html
@@ -168,6 +168,34 @@ def test_downstream_resolver_preserves_an_explicit_campaign_pin(db_session):
         db_session, settings, document_snapshot_id=first.id,
     )
     assert second.id != first.id
+
+
+def test_template_change_materializes_a_legacy_session_only_candidate(db_session):
+    profile = _profile()
+    db_session.add(MasterCvProfileSnapshot(
+        profile_id=profile["profile_id"], schema_version="1.0", content_hash="profile-hash-legacy",
+        status="approved", raw_json=json.dumps(profile), source_created_at=datetime.now(timezone.utc),
+    ))
+    db_session.commit()
+    service = MasterCvService(session=db_session, settings=get_settings())
+    candidate = service._default_candidate(profile)
+    candidate.pop("revision", None)
+    legacy = MasterCvBuilderSession(
+        session_id="legacy-master-cv-session", run_id="legacy-master-cv-run",
+        candidate_json=json.dumps(candidate), status="active",
+    )
+    db_session.add(legacy)
+    db_session.commit()
+
+    updated = service.patch_design({"template_id": "swiss"})
+
+    assert updated.design.template_id == "swiss"
+    assert updated.revision == 2
+    assert legacy.current_candidate_snapshot_id is not None
+    durable = service.candidate(updated.document_snapshot_id)
+    assert durable is not None
+    assert durable.status == "candidate"
+    assert durable.template_id == "swiss"
 
 
 def test_master_cv_summary_exposes_full_template_catalog(client):
