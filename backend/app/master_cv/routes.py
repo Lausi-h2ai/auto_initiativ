@@ -42,7 +42,7 @@ def _candidate(record: MasterCvBuilderSession | None) -> dict | None:
     if record is None or not record.candidate_json:
         return None
     candidate = json.loads(record.candidate_json)
-    candidate["preview_url"] = "/master-cv/preview"
+    candidate["preview_url"] = f"/master-cv/preview?revision={candidate.get('revision', 1)}"
     return candidate
 
 

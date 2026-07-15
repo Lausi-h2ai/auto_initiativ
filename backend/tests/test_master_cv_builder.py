@@ -66,6 +66,44 @@ def test_renderer_escapes_content_and_keeps_only_verified_portrait_uri():
         render_master_cv_html(document, portrait_data_uri="https://example.test/photo.jpg")
 
 
+@pytest.mark.parametrize(
+    ("template_id", "expected_style"),
+    [
+        ("classic-ats", "justify-content:center"),
+        ("atelier", "border-left:8mm solid"),
+        ("editorial-banner", "grid-template-columns:1fr 1fr 1fr"),
+        ("elegant-serif", "Palatino Linotype"),
+        ("executive", "border-top:7mm solid"),
+        ("ledger", "Courier New"),
+        ("modern-sidebar", "linear-gradient(90deg"),
+        ("photo-corporate", "border-radius:50%"),
+        ("photo-minimal", "flex-direction:row-reverse"),
+        ("pillar", "grid-template-columns:1fr 1fr"),
+        ("swiss", "display:contents"),
+        ("tech-compact", "grid-template-columns:1.25fr .75fr"),
+        ("timeline", "border-left:3px solid"),
+    ],
+)
+def test_renderer_applies_a_distinct_safe_adapter_for_every_template(template_id, expected_style):
+    payload = {
+        "schema_version": "1.0", "document_snapshot_id": f"snapshot-{template_id}",
+        "profile_id": "profile_test", "created_at": datetime.now(timezone.utc).isoformat(),
+        "title": "Master Lebenslauf", "locale": "de-CH",
+        "design": {"template_id": template_id, "page_size": "A4", "page_count": 1, "density": "balanced"},
+        "sections": [{
+            "section_id": "experience", "type": "experience", "title": "Berufserfahrung",
+            "blocks": [{"block_id": "claim-1", "kind": "entry", "text": "Approved experience.", "claim_refs": ["claim-1"], "visible": True}],
+        }],
+    }
+
+    html = render_master_cv_html(MasterCvDocument.model_validate(payload))
+
+    assert f"master-cv-template-{template_id}" in html
+    assert expected_style in html
+    assert 'lang="de-CH"' in html
+    assert "overflow-x:hidden" in html
+
+
 def test_service_creates_candidate_and_immutable_approved_documents(db_session, runs_root):
     profile = _profile()
     db_session.add(MasterCvProfileSnapshot(
