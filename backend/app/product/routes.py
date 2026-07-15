@@ -998,6 +998,20 @@ def refresh_job_campaign(
         .order_by(AgentTask.created_at.desc())
     ).first()
     if active_task is not None:
+        if active_task.status == "running":
+            if active_task.run_id:
+                from backend.app.agents.job_research_runtime import JobResearchRuntime
+
+                JobResearchRuntime().cancel(active_task.run_id, reason="search_scope_changed")
+            active_task.status = "retry"
+            active_task.attempt_count = max(0, active_task.attempt_count - 1)
+            active_task.available_at = utc_now()
+            active_task.locked_at = None
+            active_task.locked_by = None
+            active_task.last_error = None
+            active_task.narrative = "Search scope changed; restarting vacancy discovery with the updated brief."
+            active_task.updated_at = utc_now()
+            session.add(active_task)
         campaign.status = "researching"
         campaign.updated_at = utc_now()
         session.add(campaign)

@@ -52,8 +52,9 @@ def test_refresh_updates_scope_and_reuses_active_research_task(tmp_path):
         session.refresh(campaign)
         brief = json.loads(campaign.brief_json)
         tasks = session.exec(select(AgentTask).where(AgentTask.campaign_id == campaign.id)).all()
-        assert result == {"campaign_id": campaign.campaign_id, "task_id": task.task_id, "status": "running"}
+        assert result == {"campaign_id": campaign.campaign_id, "task_id": task.task_id, "status": "retry"}
         assert brief["locations"] == ["Switzerland", "Lake Constance region"]
         assert brief["role_focus"] == "Public administration and NGO entry roles"
         assert brief["max_jobs"] == 40
         assert len(tasks) == 1
+        assert tasks[0].narrative.startswith("Search scope changed")

@@ -143,6 +143,24 @@ class CompanyResearchRuntime:
             thread.start()
         return ResearchLaunchResult(run_id=run_id, status="running", command=command, workdir=workspace)
 
+    def cancel(self, run_id: str, *, reason: str = "research_restart_requested") -> bool:
+        with _THREAD_LOCK:
+            client = self.clients.pop(run_id, None)
+            thread = _RESEARCH_THREADS.get(run_id)
+            active = client is not None or (thread is not None and thread.is_alive())
+        if client is not None:
+            client.close()
+        self._write_state(run_id, "failed", last_error=reason, failed_at=_utc_now(), error_type="ResearchRestart")
+        self._append_event(run_id, {"type": "company_research_cancelled", "error": reason, "error_type": "ResearchRestart"})
+        self._mark_run(
+            run_id,
+            "research_failed",
+            action="company_research_cancelled",
+            result_status="cancelled",
+            reason_codes=[reason],
+        )
+        return active
+
     def status(self, run_id: str) -> dict[str, Any]:
         state = self._read_state(run_id)
         run, validation_results, imported_files = self._read_import_state(run_id)

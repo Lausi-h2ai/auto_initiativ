@@ -127,6 +127,27 @@ def test_company_research_runtime_detects_run_orphaned_by_process_restart(tmp_pa
     )
 
 
+def test_company_research_runtime_cancel_closes_live_client_and_marks_run(tmp_path: Path):
+    class Client:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    client = Client()
+    runtime = CompanyResearchRuntime(settings=_settings(tmp_path), clients={"run-1": client})
+    marked = []
+    runtime._mark_run = lambda run_id, status, **kwargs: marked.append((run_id, status, kwargs))
+
+    assert runtime.cancel("run-1", reason="search_scope_changed") is True
+    assert client.closed is True
+    assert "run-1" not in runtime.clients
+    assert marked[0][0:2] == ("run-1", "research_failed")
+    state = json.loads((tmp_path / "run-1" / "logs" / "company_research_state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "failed"
+    assert state["last_error"] == "search_scope_changed"
+
+
 def test_company_research_runtime_uses_campaign_time_budget_for_prompt_timeout(tmp_path: Path):
     run_root = tmp_path / "run-1"
     input_root = run_root / "input"
