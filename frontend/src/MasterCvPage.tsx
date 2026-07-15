@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { mutate, request } from "./api";
 
@@ -264,7 +264,7 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
         <main className={`master-cv-preview-pane ${mobileTab === "preview" ? "mobile-active" : ""}`}>
           <div className="master-cv-preview-toolbar"><div><strong>{summary?.candidate?.title || `${candidateName}'s Master CV`}</strong><small>{selectedTemplateName} · A4 · {summary?.candidate?.page_count || summary?.candidate?.design?.page_count || 1} page</small></div><span>Live draft</span></div>
           <div className="master-cv-canvas">
-            {summary?.candidate?.preview_url ? <iframe title="Master CV preview" src={summary.candidate.preview_url} /> : (
+            {summary?.candidate?.preview_url ? <MasterCvPreviewFrame src={summary.candidate.preview_url} /> : (
               <article className={`master-cv-paper template-${selectedTemplate}`}>
                 <header>
                   {summary?.portrait?.preview_url && <img src={summary.portrait.preview_url} alt={`${candidateName} portrait`} />}
@@ -288,6 +288,46 @@ export function MasterCvPage({ candidateName }: { candidateName: string }) {
           </div>
         </aside>
       </section>
+    </div>
+  );
+}
+
+const A4_PREVIEW_WIDTH = 794;
+const A4_PREVIEW_HEIGHT = 1123;
+
+function MasterCvPreviewFrame({ src }: { src: string }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const resize = () => {
+      const availableWidth = Math.max(240, viewport.clientWidth);
+      setScale(Math.min(1, availableWidth / A4_PREVIEW_WIDTH));
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div className="master-cv-frame-viewport" ref={viewportRef}>
+      <div
+        className="master-cv-frame-scale"
+        style={{ width: A4_PREVIEW_WIDTH * scale, height: A4_PREVIEW_HEIGHT * scale }}
+      >
+        <iframe
+          title="Master CV preview"
+          src={src}
+          style={{
+            width: A4_PREVIEW_WIDTH,
+            height: A4_PREVIEW_HEIGHT,
+            transform: `scale(${scale})`,
+          }}
+        />
+      </div>
     </div>
   );
 }
