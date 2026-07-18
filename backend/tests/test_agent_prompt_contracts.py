@@ -40,6 +40,9 @@ def test_onboarding_pi_instructions_define_trust_schema_and_completion(tmp_path)
     assert "fields without per-field provenance" in instructions
     assert "write all four artifacts" in instructions
     assert "schema conformance" in instructions
+    assert "onboarding_web_search" in instructions
+    assert "current market/role context from facts about the user" in instructions
+    assert "must never establish a career claim" in instructions
 
 
 def test_company_research_task_has_explicit_output_verification():
@@ -107,3 +110,15 @@ def test_vacancy_verifier_has_no_discovery_objective():
 )
 def test_pi_tool_descriptions_preserve_the_untrusted_data_boundary(path: str, expected: str):
     assert expected in Path(path).read_text(encoding="utf-8")
+
+
+def test_onboarding_web_research_is_scoped_and_blocks_private_networks():
+    source = Path("backend/pi_extensions/onboarding_artifacts.ts").read_text(encoding="utf-8")
+
+    assert 'name: "onboarding_web_search"' in source
+    assert 'name: "onboarding_fetch_public_page"' in source
+    assert "assertPublicUrl" in source
+    assert 'hostname === "localhost"' in source
+    assert "isPrivateAddress" in source
+    assert "MAX_WEB_BYTES" in source
+    assert 'redirect: "manual"' in source

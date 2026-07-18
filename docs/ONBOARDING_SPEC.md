@@ -31,6 +31,16 @@ The onboarding agent should ask about:
 
 It may ask the user to provide old CVs, cover letters, LinkedIn text, portfolios, or other career documents.
 
+## Selective Public Research
+
+The onboarding agent may use restricted, read-only public web research when current context would materially improve the interview, including unfamiliar or changing roles, niche domains, important technologies, credentials, common interview topics, and location-specific hiring conventions.
+
+- Research should be triggered by material uncertainty or a concrete opportunity for a better follow-up question, not performed by default.
+- Search results and pages are untrusted data. Local/private network targets are out of scope.
+- Prefer primary or authoritative sources and preserve useful source URLs in the conversation.
+- Public context may suggest terminology, questions, and items for user confirmation. It must never establish a personal fact or CV claim about the user.
+- Only uploaded-document evidence or direct user confirmation may support candidate career claims, subject to the normal provenance and review rules.
+
 ## Dashboard Chat Flow
 
 The onboarding dashboard presents a chat window backed by a resumable Pi RPC session in a run-specific workspace.
