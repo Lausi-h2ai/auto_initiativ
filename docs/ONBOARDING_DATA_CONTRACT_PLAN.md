@@ -114,6 +114,7 @@ Promotion requirements:
 - Required identity and preferences must be approved or explicitly left absent when optional.
 - Low-confidence preferences remain review items.
 - Work authorization and availability are policy-relevant and require direct user confirmation or verified-document provenance before approved promotion.
+- The final profile-approval checkbox is one explicit user-confirmation action for every remaining profile-level `needs_review` item shown in the prepared review. The backend records that confirmation in provenance and audit history atomically; users do not need to approve those fields one by one.
 
 ### `master_cv_profile.json`
 

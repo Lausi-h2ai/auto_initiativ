@@ -190,6 +190,8 @@ class OnboardingPromotionService:
         return issues
 
     def _validate_user_profile(self, snapshot: UserProfileSnapshot, *, confirmed: bool) -> list[SnapshotPromotionIssue]:
+        if confirmed:
+            return []
         data = _json_object(snapshot.raw_json)
         return [
             SnapshotPromotionIssue(
@@ -200,18 +202,18 @@ class OnboardingPromotionService:
             )
             for path, provenance in _iter_provenance(data)
             if _provenance_requires_review(provenance)
-            and not (confirmed and provenance.get("source_type") == "user_claim")
         ]
 
     def _record_user_profile_confirmation(self, snapshot: UserProfileSnapshot) -> None:
         data = _json_object(snapshot.raw_json)
         changed = False
         for _path, provenance in _iter_provenance(data):
-            if not _provenance_requires_review(provenance) or provenance.get("source_type") != "user_claim":
+            if not _provenance_requires_review(provenance):
                 continue
             source_refs = provenance.get("source_refs") if isinstance(provenance.get("source_refs"), list) else []
             provenance.update(
                 {
+                    "source_type": "user_claim",
                     "confidence": 1.0,
                     "needs_review": False,
                     "source_refs": list(dict.fromkeys([*source_refs, "profile_review:user_confirmation"])),

@@ -1783,6 +1783,7 @@ function CampaignWizard() {
 }
 
 function ProfilePage() {
+  const navigate = useNavigate();
   const { profile, me, refresh } = useWorkspace();
   const [profileParams] = useSearchParams();
   const runId = `onboarding-${me.workspace.id}`.replace(/[^a-zA-Z0-9_-]/g, "-");
@@ -1989,7 +1990,7 @@ function ProfilePage() {
         "Approved. Your profile is now the source of truth for your recruiter team.",
       );
       await refresh();
-      await loadReview();
+      navigate("/campaigns/new?type=listed_job_search");
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -2385,8 +2386,9 @@ function ProfilePage() {
                   <h3>Make this your approved profile foundation</h3>
                   <p>
                     Approval makes the validated profile, CV claims, and policy
-                    available to the recruiter team. Review flags remain visible
-                    and unapproved CV claims remain unavailable for tailoring.
+                    available to the recruiter team. This one confirmation also
+                    accepts the remaining profile questions shown above.
+                    Unapproved CV claims remain unavailable for tailoring.
                   </p>
                 </div>
                 <label>
@@ -2399,8 +2401,8 @@ function ProfilePage() {
                     }
                   />
                   <span>
-                    I reviewed the prepared profile, CV claims, policy, and open
-                    questions.
+                    I reviewed and confirm the prepared profile, policy, and
+                    remaining open questions.
                   </span>
                 </label>
                 <button
