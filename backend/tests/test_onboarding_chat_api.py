@@ -106,13 +106,13 @@ def test_onboarding_finalization_prompt_uses_workspace_relative_paths():
 
     assert "output/user_profile.json" in prompt
     assert "output/master_cv_profile.json" in prompt
-    assert "JSON Schemas:" in prompt
-    assert "user_profile.schema.json" in prompt
-    assert '"profile_id"' in prompt
+    assert "onboarding_read_schema" in prompt
+    assert "JSON Schemas:" not in prompt
+    assert '"profile_id"' not in prompt
     assert "runs/run-1/output" not in prompt
 
 
-def test_onboarding_repair_prompt_includes_validation_failures_and_schema_definitions():
+def test_onboarding_repair_prompt_includes_validation_failures_and_schema_tool():
     prompt = _onboarding_artifact_repair_prompt(
         "run-1",
         [
@@ -128,9 +128,8 @@ def test_onboarding_repair_prompt_includes_validation_failures_and_schema_defini
 
     assert "Validation failures JSON" in prompt
     assert "profile_id is required" in prompt
-    assert "JSON Schemas:" in prompt
-    assert "user_profile.schema.json" in prompt
-    assert '"profile_id"' in prompt
+    assert "onboarding_read_schema" in prompt
+    assert "JSON Schemas:" not in prompt
 
 
 def test_internal_onboarding_events_and_prompts_are_excluded_from_chat_responses():

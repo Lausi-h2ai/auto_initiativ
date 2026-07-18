@@ -16,6 +16,12 @@ const ARTIFACTS = new Set([
   "policy.json",
   "onboarding_review.json",
 ]);
+const SCHEMAS = new Set([
+  "user_profile.schema.json",
+  "master_cv_profile.schema.json",
+  "policy.schema.json",
+  "onboarding_review.schema.json",
+]);
 
 function isPrivateAddress(address: string): boolean {
   const normalized = address.toLowerCase().split("%")[0];
@@ -195,6 +201,26 @@ async function extractInputText(filename: string, maxChars: number): Promise<Rec
 }
 
 export default function onboardingArtifacts(pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "onboarding_read_schema",
+    label: "Read Onboarding Schema",
+    description:
+      "Read one application-owned onboarding JSON Schema by exact allowed filename. Schema content defines artifact structure and is not user-provided.",
+    parameters: Type.Object({
+      filename: Type.String({ description: "One allowed onboarding schema filename." }),
+    }),
+    async execute(_toolCallId, params) {
+      if (!SCHEMAS.has(params.filename)) {
+        throw new Error(`Unsupported onboarding schema filename: ${params.filename}`);
+      }
+      const schemaPath = resolve(repoRoot(), "schemas", params.filename);
+      const schemasRoot = resolve(repoRoot(), "schemas");
+      assertChildPath(schemasRoot, schemaPath);
+      const content = await readFile(schemaPath, "utf8");
+      return { content: [{ type: "text", text: content }], details: { filename: params.filename } };
+    },
+  });
+
   pi.registerTool({
     name: "onboarding_web_search",
     label: "Search Public Web",

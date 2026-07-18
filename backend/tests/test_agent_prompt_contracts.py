@@ -41,6 +41,7 @@ def test_onboarding_pi_instructions_define_trust_schema_and_completion(tmp_path)
     assert "write all four artifacts" in instructions
     assert "schema conformance" in instructions
     assert "onboarding_web_search" in instructions
+    assert "onboarding_read_schema" in instructions
     assert "current market/role context from facts about the user" in instructions
     assert "must never establish a career claim" in instructions
 
@@ -117,6 +118,7 @@ def test_onboarding_web_research_is_scoped_and_blocks_private_networks():
 
     assert 'name: "onboarding_web_search"' in source
     assert 'name: "onboarding_fetch_public_page"' in source
+    assert 'name: "onboarding_read_schema"' in source
     assert "assertPublicUrl" in source
     assert 'hostname === "localhost"' in source
     assert "isPrivateAddress" in source

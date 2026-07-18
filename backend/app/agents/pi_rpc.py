@@ -134,7 +134,7 @@ class PiRpcClient:
                     if isinstance(delta, str):
                         text_chunks.append(delta)
                 continue
-            if event.get("type") == "agent_end":
+            if event.get("type") == "agent_end" and response_seen:
                 break
 
         if not response_seen:
@@ -356,11 +356,26 @@ class PiRpcOnboardingChatAdapter:
         self._state_store(run_id).write("running")
         return True
 
-    def send_message(self, run_id: str, message: str, timeout: float | None = 10) -> ChatReply:
+    def send_message(self, run_id: str, message: str, timeout: float | None = None) -> ChatReply:
         transcript = self._transcript_store(run_id)
         transcript.append(ChatTranscriptEntry(run_id=run_id, role="user", content=message, created_at=_utc_now()))
         self._state_store(run_id).write("waiting")
-        result = self._client(run_id).prompt(message, timeout_seconds=self.settings.pi_rpc_onboarding_timeout_seconds)
+        timeout_seconds = self.settings.pi_rpc_onboarding_timeout_seconds if timeout is None else timeout
+        try:
+            result = self._client(run_id).prompt(message, timeout_seconds=timeout_seconds)
+        except PiRpcError as exc:
+            self._close_client(run_id)
+            self._state_store(run_id).write("failed", last_error=str(exc))
+            transcript.append(
+                ChatTranscriptEntry(
+                    run_id=run_id,
+                    role="system",
+                    content=str(exc),
+                    created_at=_utc_now(),
+                    event="failed",
+                )
+            )
+            raise
         self._append_events(run_id, result.events)
         transcript.append(
             ChatTranscriptEntry(

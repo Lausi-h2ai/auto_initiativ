@@ -46,6 +46,10 @@ class Settings(BaseSettings):
         default=180,
         validation_alias="PI_RPC_ONBOARDING_TIMEOUT_SECONDS",
     )
+    pi_rpc_onboarding_finish_timeout_seconds: float = Field(
+        default=600,
+        validation_alias="PI_RPC_ONBOARDING_FINISH_TIMEOUT_SECONDS",
+    )
     pi_rpc_research_provider: str = Field(default="openai-codex", validation_alias="PI_RPC_RESEARCH_PROVIDER")
     pi_rpc_research_model: str = Field(
         default=agent_model_for("company_research"),

@@ -342,29 +342,17 @@ def get_application_draft_runtime(settings: Settings = Depends(get_settings)) ->
 
 def _onboarding_finalization_prompt(run_id: str) -> str:
     artifact_list = ", ".join(f"`../output/{filename}`" for filename in ONBOARDING_ARTIFACT_FILENAMES)
-    schema_bundle = _onboarding_schema_bundle()
     return (
         "Finalize this onboarding interview. Create the directory "
         f"`../output` if needed and write candidate artifacts for onboarding run `{run_id}`: {artifact_list}. "
-        "Each JSON file must conform exactly to its matching JSON Schema. The complete schemas are included below; "
-        "do not guess alternate field names. "
+        "Before writing, use `onboarding_read_schema` to read each matching application-owned JSON Schema. "
+        "Each JSON file must conform exactly to its matching schema; do not guess alternate field names. "
         "Use only facts stated by the user in this chat or backed by local input files; clearly mark "
         "uncertain, inferred, or incomplete fields with needs_review provenance and/or "
         "`onboarding_review.json` items. Keep all artifacts candidate/unapproved. "
         "Do not create outreach, gate, reservation, or sending state. After writing the files, "
-        "reply briefly with the paths written and any review caveats.\n\n"
-        "JSON Schemas:\n"
-        f"{schema_bundle}"
+        "reply briefly with the paths written and any review caveats."
     )
-
-
-def _onboarding_schema_bundle() -> str:
-    bundled: dict[str, Any] = {}
-    for filename in ONBOARDING_ARTIFACT_FILENAMES:
-        schema_name = filename.replace(".json", ".schema.json")
-        schema_path = get_settings().schemas_root / schema_name
-        bundled[schema_name] = json.loads(schema_path.read_text(encoding="utf-8"))
-    return json.dumps(bundled, ensure_ascii=False, indent=2)
 
 
 def _onboarding_validation_failures(import_result: Any) -> list[dict[str, Any]]:
@@ -386,17 +374,15 @@ def _onboarding_validation_failures(import_result: Any) -> list[dict[str, Any]]:
 
 
 def _onboarding_artifact_repair_prompt(run_id: str, failures: list[dict[str, Any]], attempt: int, max_attempts: int) -> str:
-    schema_bundle = _onboarding_schema_bundle()
     return (
         f"Attempt {attempt}/{max_attempts}: backend schema validation failed for onboarding run `{run_id}`.\n\n"
         "Repair the candidate artifact files using only the allowed onboarding artifact write tool. "
         "Rewrite complete JSON documents, not patches. Do not create any files except "
         "`user_profile.json`, `master_cv_profile.json`, `policy.json`, and `onboarding_review.json` under `../output`. "
-        "The complete JSON Schemas are included below; conform to them exactly and do not guess alternate field names. "
+        "Use `onboarding_read_schema` to reread the exact schema for every failed artifact; conform to it exactly "
+        "and do not guess alternate field names. "
         "Do not invent facts to satisfy required fields; use `needs_review` provenance or review items where evidence is missing. "
         "After rewriting, reply briefly with what you changed.\n\n"
-        "JSON Schemas:\n"
-        f"{schema_bundle}\n\n"
         "Validation failures JSON:\n"
         f"{json.dumps(failures, ensure_ascii=False, indent=2)}"
     )
@@ -2064,7 +2050,11 @@ def finish_onboarding_chat(
     try:
         adapter.start_or_attach(run_id)
         adapter.accept_trust_prompt_if_present()
-        reply = adapter.send_message(run_id, _onboarding_finalization_prompt(run_id))
+        reply = adapter.send_message(
+            run_id,
+            _onboarding_finalization_prompt(run_id),
+            timeout=settings.pi_rpc_onboarding_finish_timeout_seconds,
+        )
     except ONBOARDING_RUNTIME_ERRORS as exc:
         raise HTTPException(status_code=502, detail=f"Onboarding agent runtime unavailable: {exc}") from exc
 
@@ -2080,6 +2070,7 @@ def finish_onboarding_chat(
             repair_reply = adapter.send_message(
                 run_id,
                 _onboarding_artifact_repair_prompt(run_id, failures, attempt, max_repair_attempts),
+                timeout=settings.pi_rpc_onboarding_finish_timeout_seconds,
             )
         except ONBOARDING_RUNTIME_ERRORS as exc:
             raise HTTPException(status_code=502, detail=f"Onboarding agent artifact repair unavailable: {exc}") from exc

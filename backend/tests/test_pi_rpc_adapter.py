@@ -122,6 +122,33 @@ def test_pi_rpc_adapter_sends_prompt_persists_transcript_and_event_log(tmp_path:
     assert adapter.session_state("run-1").status == "running"
 
 
+def test_pi_rpc_adapter_uses_caller_timeout_and_discards_failed_client(tmp_path: Path):
+    class TimeoutClient(FakePiRpcClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.timeout_seconds = None
+
+        def prompt(self, message: str, *, timeout_seconds: float) -> PiRpcPromptResult:
+            self.timeout_seconds = timeout_seconds
+            from backend.app.agents.pi_rpc import PiRpcError
+
+            raise PiRpcError("timed out")
+
+    failed_client = TimeoutClient()
+    clients = {"run-1": failed_client}
+    adapter = PiRpcOnboardingChatAdapter(settings=_settings(tmp_path), clients=clients)
+
+    import pytest
+
+    with pytest.raises(Exception, match="timed out"):
+        adapter.send_message("run-1", "finish", timeout=600)
+
+    assert failed_client.timeout_seconds == 600
+    assert failed_client.closed is True
+    assert "run-1" not in clients
+    assert adapter.session_state("run-1").status == "failed"
+
+
 def test_pi_rpc_adapter_reset_closes_process_and_clears_transcript(tmp_path: Path):
     fake_client = FakePiRpcClient()
     adapter = PiRpcOnboardingChatAdapter(
