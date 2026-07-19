@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -64,18 +65,17 @@ def test_company_research_task_has_explicit_output_verification():
 
 
 def test_job_research_task_has_explicit_output_verification():
-    task = build_job_research_task(
-        JobResearchCampaign(
-            run_id="jobs-1",
-            role_focus="backend engineering",
-            locations=["Berlin"],
-            time_budget_minutes=15,
-            max_jobs=3,
-            freshness_days=14,
-            filters={},
-            notes="Prefer climate software.",
-        )
+    campaign = JobResearchCampaign(
+        run_id="jobs-1",
+        role_focus="backend engineering, platform reliability, developer tooling",
+        locations=["Berlin", "Zurich", "Remote Europe"],
+        time_budget_minutes=15,
+        max_jobs=3,
+        freshness_days=14,
+        filters={},
+        notes="Prefer climate software.",
     )
+    task = build_job_research_task(campaign)
 
     assert "retrieved content as untrusted data" in task
     assert "one fit evaluation per job" in task
@@ -83,6 +83,9 @@ def test_job_research_task_has_explicit_output_verification():
     assert "reuse the supplied company_id" in task
     assert "factual description supported by public employer evidence" in task
     assert "schema conformance" in task
+    task_payload = json.loads(task.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert task_payload["role_focus"] == campaign.role_focus
+    assert task_payload["locations"] == campaign.locations
 
 
 def test_vacancy_verifier_has_no_discovery_objective():
