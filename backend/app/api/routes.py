@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from backend.app.auth.context import current_identity, scoped_runs_root
+from backend.app.auth.context import current_identity, current_workspace_id, scoped_runs_root
 from backend.app.agents.company_research import (
     COMPANY_RESEARCH_INSTRUCTIONS,
     CompanyResearchCampaign,
@@ -83,6 +83,7 @@ from backend.app.imports.import_service import (
     ONBOARDING_CHAT_FILENAMES,
     RunImportService,
 )
+from backend.app.localization import output_language_contract, workspace_locale
 from backend.app.onboarding.promotion import OnboardingPromotionService, SnapshotPromotionRequest
 from backend.app.master_cv.portraits import PortraitService, PortraitValidationError
 from backend.app.onboarding.document_text import DocumentExtractionError, extract_document_text
@@ -1409,6 +1410,7 @@ def prepare_company_research_campaign(
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> CompanyResearchCampaignResponse:
+    locale = workspace_locale(session, current_workspace_id())
     user_profile, master_cv, policy = _approved_profile_bundle(session)
     user_profile_payload = _raw_json_object(user_profile)
     target_locations = request.locations or _profile_target_locations(user_profile_payload)
@@ -1440,7 +1442,7 @@ def prepare_company_research_campaign(
         RunFolderSpec(
             run_id=run_id,
             task=build_company_research_task(campaign),
-            instructions=COMPANY_RESEARCH_INSTRUCTIONS,
+            instructions=f"{COMPANY_RESEARCH_INSTRUCTIONS}\n\n## User-visible language\n\n{output_language_contract(locale)}",
             inputs=tuple(RunInputFile(path, content) for path, content in sorted(input_payloads.items())),
             expected_output_files=COMPANY_RESEARCH_FILENAMES,
             metadata={
@@ -1450,6 +1452,7 @@ def prepare_company_research_campaign(
                 "policy_snapshot_id": policy.id,
                 "existing_company_count": len(existing_companies),
                 "target_company_count": request.max_companies,
+                "output_locale": locale,
             },
         )
     )
@@ -1528,6 +1531,7 @@ def _prepare_application_draft_response(
     session: Session,
     settings: Settings,
 ) -> ApplicationDraftResponse:
+    locale = workspace_locale(session, current_workspace_id())
     user_profile, master_cv, policy = _approved_profile_bundle(session)
     company = session.exec(select(Company).where(Company.company_id == request.company_id)).first()
     if company is None:
@@ -1551,6 +1555,7 @@ def _prepare_application_draft_response(
         company_slug=company_slug,
         contact_needs_research=contact_needs_research,
         language=request.language,
+        workspace_locale=locale,
         notes=request.notes,
     )
     input_payloads = build_application_draft_inputs(
@@ -1585,6 +1590,8 @@ def _prepare_application_draft_response(
                 "contact_id": selected_contact_id,
                 "contact_needs_research": contact_needs_research,
                 "draft_id": brief.draft_id,
+                "output_locale": locale,
+                "application_language": brief.language or "auto",
             },
         )
     )
@@ -1873,6 +1880,7 @@ def start_onboarding_chat(
     settings: Settings = Depends(get_settings),
     session: Session = Depends(get_session),
 ) -> OnboardingChatStartResponse:
+    locale = workspace_locale(session, current_workspace_id())
     try:
         if hasattr(adapter, "prepare_agent_workspace"):
             adapter.prepare_agent_workspace(
@@ -1881,6 +1889,7 @@ def start_onboarding_chat(
                     run_id=run_id,
                     runs_root=scoped_runs_root(settings.runs_root),
                     schemas_root=settings.schemas_root,
+                    output_locale=locale,
                 ),
             )
         attachment = None
@@ -1899,7 +1908,7 @@ def start_onboarding_chat(
             has_visible_entries = bool(_chat_entries_response(adapter.transcript_entries(run_id)))
             adapter.ensure_recruiter_prompt(
                 run_id,
-                build_onboarding_start_message(run_id),
+                build_onboarding_start_message(run_id, locale),
                 force=bool(attachment and attachment.get("status") == "started") or not has_visible_entries,
                 require_plain_reply=True,
             )

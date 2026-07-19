@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from backend.app.localization import output_language_contract
 
 def build_master_cv_builder_instructions(
     *,
@@ -11,6 +12,7 @@ def build_master_cv_builder_instructions(
     template_catalog: list[dict[str, Any]],
     starting_document: dict[str, Any] | None = None,
     upstream_guidance: str = "",
+    output_locale: str = "en",
 ) -> str:
     """Build the restricted specialist contract for an iterative master-CV session."""
 
@@ -35,6 +37,10 @@ You collaborate with the user to create one beautiful, informative master CV tha
 - The backend owns validation, rendering, portrait assets, approval, versioning, and database state.
 - After each substantive turn, write the complete candidate JSON with `master_cv_write_candidate`. Put unsupported factual suggestions in `master_cv_claim_proposals.json` with `master_cv_write_claim_proposals`. Also write the exact clean user-visible reply with `master_cv_write_latest_reply`.
 
+## User-visible language
+
+{output_language_contract(output_locale)}
+
 ## Candidate document shape
 
 Write one JSON object matching `master_cv_document.schema.json`: stable snapshot/profile IDs, timestamps, locale/market, lifecycle and revision fields, optional portrait references, design, review flags, and sections. A design contains a catalog template ID/version, A4 page goal, density, optional accent/font choices, and photo inclusion policy. Sections contain blocks with stable IDs, claim/profile-field references, visibility, and optional metadata. Put any contradiction or unsupported proposal in block metadata as `needs_review`; never convert it into an approved claim reference.
@@ -53,9 +59,10 @@ The following MIT-licensed guidance is bundled from the pinned `yanliudesign/res
 """
 
 
-def build_master_cv_start_message(run_id: str) -> str:
+def build_master_cv_start_message(run_id: str, output_locale: str = "en") -> str:
     return (
         f"Begin master CV builder session `{run_id}`. Review the approved claim ledger and starting document. "
         "Briefly summarize the strongest starting structure, recommend one template and portrait choice, then ask one focused question. "
+        f"{output_language_contract(output_locale)} "
         "Persist the initial candidate and your clean reply with the provided master_cv tools."
     )

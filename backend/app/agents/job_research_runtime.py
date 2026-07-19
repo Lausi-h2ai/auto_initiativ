@@ -16,6 +16,7 @@ from backend.app.db import session as db_session_module
 from backend.app.db.models import Campaign, Company, JobPosting, JobSourceTrust, MasterCvProfileSnapshot, PolicySnapshot, ResearchPlan, ResearchTarget, Run, UserProfileSnapshot
 from backend.app.imports.import_service import JOB_RESEARCH_RUN_TYPE, RunImportService
 from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
+from backend.app.localization import output_language_contract, workspace_locale
 
 
 class JobResearchRuntime(CompanyResearchRuntime):
@@ -213,6 +214,7 @@ def prepare_job_research_run(
         target_kind=research_target.target_kind if research_target else None,
         required_search_attempts=research_target.required_attempts if research_target else 3,
     )
+    locale = workspace_locale(session, campaign.workspace_id)
     companies = [{"company_id": item.company_id, "name": item.name, "domain": item.normalized_domain or item.raw_domain} for item in session.exec(select(Company)).all()]
     jobs = [{"job_id": item.job_id, "canonical_url": item.canonical_url, "title": item.title, "company_id": item.external_company_id, "vacancy_status": item.vacancy_status} for item in session.exec(select(JobPosting)).all()]
     existing_sources = {item.domain: item for item in session.exec(select(JobSourceTrust)).all()}
@@ -224,7 +226,7 @@ def prepare_job_research_run(
     session.flush()
     sources = [{"domain": item.domain, "trust_level": item.trust_level, "enabled": item.enabled} for item in existing_sources.values()]
     inputs = build_job_research_inputs(campaign=spec, user_profile=json.loads(profile.raw_json), master_cv_profile=json.loads(master_cv.raw_json), policy=json.loads(policy.raw_json), existing_companies=companies, existing_jobs=jobs, trusted_sources=sources, schemas={name: (settings.schemas_root / name).read_text(encoding="utf-8") for name in ("company_candidate.schema.json", "job_posting_candidate.schema.json", "job_fit_evaluation.schema.json")})
-    RunFolderGenerator(settings=settings, session=session).prepare(RunFolderSpec(run_id=run_id, task=build_job_research_task(spec), instructions=JOB_RESEARCH_INSTRUCTIONS, inputs=tuple(RunInputFile(path, content) for path, content in sorted(inputs.items())), expected_output_files=("companies/*.json", "jobs/*.json", "job_fit_evaluations/*.json"), metadata={"task_type": JOB_RESEARCH_RUN_TYPE, "campaign_id": campaign.campaign_id, "target_job_count": spec.max_jobs, "research_target_id": research_target.id if research_target else None}))
+    RunFolderGenerator(settings=settings, session=session).prepare(RunFolderSpec(run_id=run_id, task=build_job_research_task(spec), instructions=f"{JOB_RESEARCH_INSTRUCTIONS}\n\n## User-visible language\n\n{output_language_contract(locale)}", inputs=tuple(RunInputFile(path, content) for path, content in sorted(inputs.items())), expected_output_files=("companies/*.json", "jobs/*.json", "job_fit_evaluations/*.json"), metadata={"task_type": JOB_RESEARCH_RUN_TYPE, "campaign_id": campaign.campaign_id, "target_job_count": spec.max_jobs, "research_target_id": research_target.id if research_target else None, "output_locale": locale}))
     run = session.exec(select(Run).where(Run.run_id == run_id)).first()
     if run:
         run.agent_type = JOB_RESEARCH_RUN_TYPE

@@ -38,6 +38,7 @@ from backend.app.db.models import (
     utc_now,
 )
 from backend.app.monitoring.issues import record_issue
+from backend.app.localization import localized_text, workspace_locale
 
 
 TERMINAL_RUNTIME_STATUSES = {"imported", "imported_with_errors", "import_failed", "research_failed", "failed"}
@@ -57,6 +58,9 @@ class WorkflowEngine:
     def __init__(self, session: Session, settings: Settings | None = None) -> None:
         self.session = session
         self.settings = settings or get_settings()
+
+    def _text(self, workspace_id: int | None, english: str, german: str) -> str:
+        return localized_text(workspace_locale(self.session, workspace_id), english, german)
 
     def enqueue(
         self,
@@ -181,7 +185,7 @@ class WorkflowEngine:
         CompanyResearchRuntime(settings=self.settings).launch(prepared.run_id)
         task.run_id = prepared.run_id
         task.progress = 15
-        task.narrative = "The research agent is discovering and evaluating companies."
+        task.narrative = self._text(task.workspace_id, "The research agent is discovering and evaluating companies.", "Der Recherche-Agent entdeckt und bewertet Unternehmen.")
         task.output_json = json.dumps({"run_id": prepared.run_id})
         task.updated_at = utc_now()
         campaign.status = "researching"
@@ -205,7 +209,7 @@ class WorkflowEngine:
         JobResearchRuntime(settings=self.settings).launch(run_id)
         task.run_id = run_id
         task.progress = 15
-        task.narrative = "The vacancy scout is searching broad sources and verifying application routes."
+        task.narrative = self._text(task.workspace_id, "The vacancy scout is searching broad sources and verifying application routes.", "Der Stellen-Scout durchsucht vielfältige Quellen und prüft Bewerbungswege.")
         task.output_json = json.dumps({"run_id": run_id})
         task.updated_at = utc_now()
         campaign.status = "researching"
@@ -258,7 +262,7 @@ class WorkflowEngine:
         target.updated_at = utc_now()
         task.run_id = run_id
         task.progress = 15
-        task.narrative = f"Searching {target.label} in an isolated coverage pass."
+        task.narrative = self._text(task.workspace_id, f"Searching {target.label} in an isolated coverage pass.", f"{target.label} wird in einem eigenen Abdeckungslauf durchsucht.")
         task.output_json = json.dumps({"run_id": run_id, "research_target_id": target.id}, sort_keys=True)
         task.updated_at = utc_now()
         self.session.add_all([target, task])
@@ -278,7 +282,7 @@ class WorkflowEngine:
         JobVerificationRuntime(settings=self.settings).launch(run_id)
         task.run_id = run_id
         task.progress = 15
-        task.narrative = f"The vacancy verifier is checking only {job.title} and its supplied application route."
+        task.narrative = self._text(task.workspace_id, f"The vacancy verifier is checking only {job.title} and its supplied application route.", f"Der Stellenprüfer prüft ausschließlich {job.title} und den angegebenen Bewerbungsweg.")
         task.output_json = json.dumps({"run_id": run_id, "job_id": job.job_id})
         task.updated_at = utc_now()
         self.session.add(task)
@@ -292,15 +296,20 @@ class WorkflowEngine:
         company = self.session.get(Company, task.company_id)
         if company is None:
             raise ValueError("Company no longer exists.")
+        campaign = self.session.get(Campaign, task.campaign_id)
+        campaign_brief = json_object(campaign.brief_json) if campaign is not None else {}
         prepared = _prepare_application_draft_response(
-            ApplicationDraftRequest(company_id=company.company_id),
+            ApplicationDraftRequest(
+                company_id=company.company_id,
+                language=str(campaign_brief.get("application_language") or "auto"),
+            ),
             session=self.session,
             settings=self.settings,
         )
         ApplicationDraftRuntime(settings=self.settings).launch(prepared.run_id)
         task.run_id = prepared.run_id
         task.progress = 20
-        task.narrative = f"The CV and writing specialists are preparing {company.name}."
+        task.narrative = self._text(task.workspace_id, f"The CV and writing specialists are preparing {company.name}.", f"Die CV- und Textspezialisten bereiten die Unterlagen für {company.name} vor.")
         task.output_json = json.dumps({"run_id": prepared.run_id, "draft_id": prepared.draft_id})
         task.updated_at = utc_now()
         link = self._campaign_company(task.campaign_id, company.id)
@@ -328,7 +337,7 @@ class WorkflowEngine:
         ApplicationDraftRuntime(settings=self.settings).launch(run_id)
         task.run_id = run_id
         task.progress = 20
-        task.narrative = f"The CV and writing specialists are tailoring the application to {job.title}."
+        task.narrative = self._text(task.workspace_id, f"The CV and writing specialists are tailoring the application to {job.title}.", f"Die CV- und Textspezialisten passen die Bewerbung an {job.title} an.")
         task.output_json = json.dumps({"run_id": run_id, "job_id": job.job_id})
         task.updated_at = utc_now()
         self.session.add(task)
@@ -360,7 +369,7 @@ class WorkflowEngine:
         CompanyResearchRuntime(settings=self.settings).launch(prepared.run_id)
         task.run_id = prepared.run_id
         task.progress = 20
-        task.narrative = f"The research specialist is looking for a suitable public contact at {company.name}."
+        task.narrative = self._text(task.workspace_id, f"The research specialist is looking for a suitable public contact at {company.name}.", f"Der Recherche-Spezialist sucht einen geeigneten öffentlichen Kontakt bei {company.name}.")
         task.output_json = json.dumps({"run_id": prepared.run_id})
         task.updated_at = utc_now()
         self.session.add(task)
@@ -374,7 +383,7 @@ class WorkflowEngine:
         if campaign is None or company is None:
             raise ValueError("Campaign company no longer exists.")
         if campaign.sending_mode != "gated_autosend":
-            self._complete(task, "Application is ready; this campaign stops at drafts.")
+            self._complete(task, self._text(task.workspace_id, "Application is ready; this campaign stops at drafts.", "Die Bewerbung ist bereit; diese Kampagne endet bei den Entwürfen."))
             return
         intent = self.session.exec(
             select(SendIntent)
@@ -396,13 +405,13 @@ class WorkflowEngine:
             link.entered_stage_at = utc_now()
             link.updated_at = utc_now()
             self.session.add(link)
-        self._complete(task, f"Outreach to {company.name} passed the gate and was sent.")
+        self._complete(task, self._text(task.workspace_id, f"Outreach to {company.name} passed the gate and was sent.", f"Die Kontaktaufnahme mit {company.name} hat die Prüfung bestanden und wurde gesendet."))
 
     def _reconcile_research(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")
         counts = status.get("artifact_counts") or {}
         task.progress = min(90, max(task.progress, int(counts.get("companies", 0)) * 2))
-        task.narrative = f"Research found {int(counts.get('companies', 0))} companies and is checking fit."
+        task.narrative = self._text(task.workspace_id, f"Research found {int(counts.get('companies', 0))} companies and is checking fit.", f"Die Recherche hat {int(counts.get('companies', 0))} Unternehmen gefunden und prüft die Passung.")
         task.updated_at = utc_now()
         self.session.add(task)
         campaign = self.session.get(Campaign, task.campaign_id)
@@ -453,14 +462,14 @@ class WorkflowEngine:
                         company=company,
                         task_type="contact_research",
                         agent_role="contact_researcher",
-                        narrative=f"Finding a suitable public recruiting contact for {company.name}.",
+                        narrative=self._text(campaign.workspace_id, f"Finding a suitable public recruiting contact for {company.name}.", f"Ein geeigneter öffentlicher Recruiting-Kontakt bei {company.name} wird gesucht."),
                     )
                 else:
                     self._enqueue_application_draft(campaign, company)
         campaign.status = "preparing"
         campaign.updated_at = utc_now()
         self.session.add(campaign)
-        self._complete(task, f"Research completed with {len(companies)} companies ready for the next specialist.")
+        self._complete(task, self._text(task.workspace_id, f"Research completed with {len(companies)} companies ready for the next specialist.", f"Die Recherche ist abgeschlossen; {len(companies)} Unternehmen sind für den nächsten Spezialisten bereit."))
 
     def _sync_target_attempts(self, campaign: Campaign, target: ResearchTarget, run_id: str) -> int:
         path = scoped_runs_root(self.settings.runs_root) / run_id / "logs" / "search_attempts.jsonl"
@@ -555,7 +564,7 @@ class WorkflowEngine:
             jobs=task.task_type == "job_research_target",
         )
         task.progress = min(90, max(task.progress, 20 + attempts * 15))
-        task.narrative = f"{target.label}: {attempts}/{target.required_attempts} search attempts, {count} candidates."
+        task.narrative = self._text(task.workspace_id, f"{target.label}: {attempts}/{target.required_attempts} search attempts, {count} candidates.", f"{target.label}: {attempts}/{target.required_attempts} Suchversuche, {count} Kandidaten.")
         task.updated_at = utc_now()
         target.updated_at = utc_now()
         self.session.add_all([task, target])
@@ -575,7 +584,7 @@ class WorkflowEngine:
         task.completed_at = utc_now()
         task.locked_at = None
         task.locked_by = None
-        task.narrative = f"{target.label} finished with {count} candidates ({target.status})."
+        task.narrative = self._text(task.workspace_id, f"{target.label} finished with {count} candidates ({target.status}).", f"{target.label} wurde mit {count} Kandidaten abgeschlossen ({target.status}).")
         self.session.add_all([target, task])
         self.session.flush()
         self._maybe_finalize_balanced_campaign(campaign)
@@ -773,10 +782,14 @@ class WorkflowEngine:
                                 else "contact_researcher"
                             ),
                             task_type=next_task_type,
-                            narrative=(
+                            narrative=self._text(
+                                campaign.workspace_id,
                                 f"Preparing a tailored application for {company.name}."
                                 if next_task_type == "application_draft"
-                                else f"Finding a suitable public recruiting contact for {company.name}."
+                                else f"Finding a suitable public recruiting contact for {company.name}.",
+                                f"Eine individuelle Bewerbung für {company.name} wird vorbereitet."
+                                if next_task_type == "application_draft"
+                                else f"Ein geeigneter öffentlicher Recruiting-Kontakt bei {company.name} wird gesucht.",
                             ),
                             workspace_id=campaign.workspace_id,
                         )
@@ -800,7 +813,7 @@ class WorkflowEngine:
         state = str(status.get("status") or "running")
         counts = status.get("artifact_counts") or {}
         task.progress = min(90, max(task.progress, int(counts.get("jobs", 0)) * 3))
-        task.narrative = f"Vacancy research found {int(counts.get('jobs', 0))} listings and is checking validity and fit."
+        task.narrative = self._text(task.workspace_id, f"Vacancy research found {int(counts.get('jobs', 0))} listings and is checking validity and fit.", f"Die Stellenrecherche hat {int(counts.get('jobs', 0))} Ausschreibungen gefunden und prüft Gültigkeit und Passung.")
         task.updated_at = utc_now()
         self.session.add(task)
         campaign = self.session.get(Campaign, task.campaign_id)
@@ -829,12 +842,12 @@ class WorkflowEngine:
         campaign.status = "active"
         campaign.updated_at = utc_now()
         self.session.add(campaign)
-        self._complete(task, f"Vacancy research completed with {len(jobs)} listings retained with verification evidence.")
+        self._complete(task, self._text(task.workspace_id, f"Vacancy research completed with {len(jobs)} listings retained with verification evidence.", f"Die Stellenrecherche ist abgeschlossen; {len(jobs)} Ausschreibungen wurden mit Prüfbelegen übernommen."))
 
     def _reconcile_job_verification(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")
         task.progress = 70 if state not in TERMINAL_RUNTIME_STATUSES else task.progress
-        task.narrative = "The vacancy verifier is checking the selected listing and application route; no discovery is running."
+        task.narrative = self._text(task.workspace_id, "The vacancy verifier is checking the selected listing and application route; no discovery is running.", "Der Stellenprüfer kontrolliert die ausgewählte Ausschreibung und den Bewerbungsweg; es läuft keine weitere Suche.")
         task.updated_at = utc_now()
         self.session.add(task)
         if state not in TERMINAL_RUNTIME_STATUSES:
@@ -847,7 +860,7 @@ class WorkflowEngine:
         jobs = self.session.exec(select(JobPosting).where(JobPosting.imported_file_id.in_(file_ids))).all() if file_ids else []
         if len(jobs) != 1 or jobs[0].job_id != payload.get("job_id"):
             raise ValueError("Vacancy verification completed without updating exactly the selected vacancy.")
-        self._complete(task, "The selected vacancy was verified from its current source evidence; no other jobs were searched or imported.")
+        self._complete(task, self._text(task.workspace_id, "The selected vacancy was verified from its current source evidence; no other jobs were searched or imported.", "Die ausgewählte Stelle wurde anhand der aktuellen Quellenbelege geprüft; weitere Stellen wurden weder gesucht noch importiert."))
 
     def _reconcile_contact_research(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")
@@ -868,7 +881,7 @@ class WorkflowEngine:
             self._block_no_contact(task, company)
             return
         self._enqueue_application_draft(campaign, company)
-        self._complete(task, f"A suitable public contact for {company.name} was imported; application preparation is queued.")
+        self._complete(task, self._text(task.workspace_id, f"A suitable public contact for {company.name} was imported; application preparation is queued.", f"Ein geeigneter öffentlicher Kontakt für {company.name} wurde importiert; die Bewerbungsvorbereitung ist eingeplant."))
 
     def _enqueue_application_draft(self, campaign: Campaign, company: Company) -> AgentTask:
         return self.enqueue(
@@ -876,7 +889,7 @@ class WorkflowEngine:
             company=company,
             task_type="application_draft",
             agent_role="resume_and_email_team",
-            narrative=f"Preparing a tailored application for {company.name}.",
+            narrative=self._text(campaign.workspace_id, f"Preparing a tailored application for {company.name}.", f"Eine individuelle Bewerbung für {company.name} wird vorbereitet."),
         )
 
     def _latest_contact(self, company_id: int | None) -> Contact | None:
@@ -889,7 +902,7 @@ class WorkflowEngine:
     def _block_no_contact(self, task: AgentTask, company: Company) -> None:
         task.status = "blocked"
         task.progress = 100
-        task.last_error = f"No suitable public professional contact was found for {company.name}."
+        task.last_error = self._text(task.workspace_id, f"No suitable public professional contact was found for {company.name}.", f"Für {company.name} wurde kein geeigneter öffentlicher beruflicher Kontakt gefunden.")
         task.narrative = task.last_error
         task.completed_at = utc_now()
         task.locked_at = None
@@ -903,12 +916,13 @@ class WorkflowEngine:
                 company_id=company.id,
                 agent_task_id=task.id,
                 category="contact_not_found",
-                title=f"No suitable contact found for {company.name}",
-                explanation=(
-                    f"Contact research completed for {company.name}, but no schema-valid, sourced public professional "
-                    "email address was imported. Application drafting has not been started."
+                title=self._text(task.workspace_id, f"No suitable contact found for {company.name}", f"Kein geeigneter Kontakt für {company.name} gefunden"),
+                explanation=self._text(
+                    task.workspace_id,
+                    f"Contact research completed for {company.name}, but no schema-valid, sourced public professional email address was imported. Application drafting has not been started.",
+                    f"Die Kontaktrecherche für {company.name} ist abgeschlossen, aber es wurde keine schema-gültige, belegte öffentliche berufliche E-Mail-Adresse importiert. Die Bewerbungserstellung wurde nicht gestartet.",
                 ),
-                recommended_action="Retry contact research with new guidance or skip this company.",
+                recommended_action=self._text(task.workspace_id, "Retry contact research with new guidance or skip this company.", "Starte die Kontaktrecherche mit neuen Hinweisen erneut oder überspringe dieses Unternehmen."),
             )
         )
         self.session.commit()
@@ -945,9 +959,9 @@ class WorkflowEngine:
                 company=company,
                 task_type="gated_send",
                 agent_role="delivery_coordinator",
-                narrative=f"Running final deterministic checks for {company.name}.",
+                narrative=self._text(campaign.workspace_id, f"Running final deterministic checks for {company.name}.", f"Die abschließenden deterministischen Prüfungen für {company.name} laufen."),
             )
-        self._complete(task, f"The tailored CV and email for {company.name} are ready.")
+        self._complete(task, self._text(task.workspace_id, f"The tailored CV and email for {company.name} are ready.", f"Der angepasste Lebenslauf und die E-Mail für {company.name} sind bereit."))
 
     def _reconcile_job_application_draft(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")
@@ -991,7 +1005,7 @@ class WorkflowEngine:
         link.application_status = "ready"
         link.updated_at = utc_now()
         self.session.add_all([package, link])
-        self._complete(task, f"The vacancy-tailored CV and cover letter for {job.title} are ready.")
+        self._complete(task, self._text(task.workspace_id, f"The vacancy-tailored CV and cover letter for {job.title} are ready.", f"Der auf die Stelle zugeschnittene Lebenslauf und das Anschreiben für {job.title} sind bereit."))
 
     def _index_documents(self, task: AgentTask, company: Company, *, job_id: str | None = None, job_title: str | None = None) -> None:
         if not task.run_id:
@@ -1047,10 +1061,10 @@ class WorkflowEngine:
         if task.attempt_count < task.max_attempts:
             task.status = "retry"
             task.available_at = utc_now() + timedelta(seconds=min(300, 5 * (2 ** task.attempt_count)))
-            task.narrative = "A specialist hit a problem and will retry automatically."
+            task.narrative = self._text(task.workspace_id, "A specialist hit a problem and will retry automatically.", "Bei einem Spezialisten ist ein Problem aufgetreten; der Versuch wird automatisch wiederholt.")
         else:
             task.status = "blocked"
-            task.narrative = "The specialist could not resolve this without your help."
+            task.narrative = self._text(task.workspace_id, "The specialist could not resolve this without your help.", "Der Spezialist konnte das Problem nicht ohne deine Hilfe lösen.")
             record_issue(
                 "workflow_task_blocked",
                 str(exc),

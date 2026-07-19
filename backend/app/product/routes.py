@@ -52,6 +52,7 @@ from backend.app.jobs.application_packages import JobApplicationPackageService, 
 from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
 from backend.app.imports.job_normalizer import JobNormalizationService
 from backend.app.master_cv.contracts import MasterCvDocument
+from backend.app.localization import localized_text, workspace_locale
 from backend.app.research.planning import compile_research_plan, confirm_plan, plan_hash, replace_pending_plan
 
 
@@ -75,6 +76,7 @@ class CampaignCreate(BaseModel):
     work_modes: list[str] = Field(default_factory=list, max_length=10)
     minimum_salary: int | None = Field(default=None, ge=0)
     languages: list[str] = Field(default_factory=list, max_length=20)
+    application_language: Literal["auto", "de-DE", "en"] = "auto"
     sending_mode: Literal["prepare_only", "gated_autosend"] = "prepare_only"
 
 
@@ -250,6 +252,7 @@ def create_campaign(
                 "work_modes": payload.work_modes,
                 "minimum_salary": payload.minimum_salary,
                 "languages": payload.languages,
+                "application_language": payload.application_language,
             },
             sort_keys=True,
         ),
@@ -285,6 +288,7 @@ def get_campaign(campaign_id: str, session: Session = Depends(get_session)) -> d
 @router.post("/campaigns/{campaign_id}/research-plan/confirm", status_code=202)
 def confirm_campaign_research_plan(campaign_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
     campaign = _campaign(session, campaign_id)
+    locale = workspace_locale(session, campaign.workspace_id)
     plan = session.exec(
         select(ResearchPlan)
         .where(ResearchPlan.campaign_id == campaign.id, ResearchPlan.status == "pending_confirmation")
@@ -310,7 +314,11 @@ def confirm_campaign_research_plan(campaign_id: str, session: Session = Depends(
                 campaign_id=campaign.id,
                 agent_role=agent_role,
                 task_type=task_type,
-                narrative=f"Queued an independent research pass for {target.label}.",
+                narrative=localized_text(
+                    locale,
+                    f"Queued an independent research pass for {target.label}.",
+                    f"Ein eigenständiger Recherchelauf für {target.label} wurde eingeplant.",
+                ),
                 input_json=json.dumps({"research_target_id": target.id, "target_id": target.target_id}, sort_keys=True),
                 workspace_id=campaign.workspace_id,
             )
@@ -510,15 +518,20 @@ def prepare_company_application(company_id: str, session: Session = Depends(get_
         select(Contact).where(Contact.company_id == company.id).order_by(Contact.created_at.desc())
     ).first()
     task_type = "application_draft" if contact is not None else "contact_research"
+    locale = workspace_locale(session, campaign.workspace_id)
     task = WorkflowEngine(session).enqueue(
         campaign=campaign,
         company=company,
         task_type=task_type,
         agent_role="resume_and_email_team" if contact is not None else "contact_researcher",
-        narrative=(
+        narrative=localized_text(
+            locale,
             f"Preparing tailored outreach documents for {company.name}."
             if contact is not None
-            else f"Finding a suitable public contact before preparing documents for {company.name}."
+            else f"Finding a suitable public contact before preparing documents for {company.name}.",
+            f"Individuelle Kontaktunterlagen für {company.name} werden vorbereitet."
+            if contact is not None
+            else f"Vor der Dokumenterstellung für {company.name} wird ein geeigneter öffentlicher Kontakt gesucht.",
         ),
     )
     return {"company_id": company.company_id, "task_id": task.task_id, "status": task.status}
@@ -1157,7 +1170,11 @@ def refresh_job_campaign(
         return {"campaign_id": campaign.campaign_id, "task_id": active_task.task_id, "status": active_task.status}
     task = AgentTask(
         task_id=f"task-{uuid4()}", campaign_id=campaign.id, agent_role="vacancy_scout", task_type="job_research",
-        narrative="Refreshing discovery and revalidating active vacancies.", workspace_id=campaign.workspace_id,
+        narrative=localized_text(
+            workspace_locale(session, campaign.workspace_id),
+            "Refreshing discovery and revalidating active vacancies.",
+            "Die Suche wird aktualisiert und aktive Stellen werden erneut geprüft.",
+        ), workspace_id=campaign.workspace_id,
     )
     session.add(task)
     campaign.status = "researching"
@@ -1211,7 +1228,11 @@ def prepare_job_application(campaign_id: str, job_id: str, session: Session = De
     task = AgentTask(
         task_id=f"task-{uuid4()}", campaign_id=campaign.id, company_id=job.company_id,
         agent_role="resume_and_email_team", task_type="job_application_draft",
-        narrative=f"Tailoring the CV and cover letter to {job.title}.",
+        narrative=localized_text(
+            workspace_locale(session, campaign.workspace_id),
+            f"Tailoring the CV and cover letter to {job.title}.",
+            f"Lebenslauf und Anschreiben werden auf {job.title} zugeschnitten.",
+        ),
         input_json=json.dumps({"job_id": job.job_id}), workspace_id=campaign.workspace_id,
     )
     link.application_status = "preparing"
@@ -1265,7 +1286,7 @@ def revalidate_job(job_id: str, session: Session = Depends(get_session)) -> dict
                 )
                 session.commit()
                 return {"job_id": job.job_id, "status": status, "reassessed_existing_evidence": True}
-    task = AgentTask(task_id=f"task-{uuid4()}", campaign_id=campaign.id, company_id=job.company_id, agent_role="vacancy_verifier", task_type="job_verification", narrative=f"Verifying only {job.title} at its supplied source.", input_json=json.dumps({"job_id": job.job_id}), workspace_id=campaign.workspace_id)
+    task = AgentTask(task_id=f"task-{uuid4()}", campaign_id=campaign.id, company_id=job.company_id, agent_role="vacancy_verifier", task_type="job_verification", narrative=localized_text(workspace_locale(session, campaign.workspace_id), f"Verifying only {job.title} at its supplied source.", f"Nur {job.title} wird anhand der angegebenen Quelle geprüft."), input_json=json.dumps({"job_id": job.job_id}), workspace_id=campaign.workspace_id)
     session.add(task)
     session.commit()
     return {"job_id": job.job_id, "task_id": task.task_id, "status": "queued"}

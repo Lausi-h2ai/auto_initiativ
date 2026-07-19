@@ -20,6 +20,7 @@ from backend.app.auth.context import current_workspace_id, scoped_runs_root
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.models import Document, MasterCvBuilderSession, MasterCvDocumentSnapshot, ProfileAsset
 from backend.app.db.session import get_session
+from backend.app.localization import workspace_locale
 from backend.app.master_cv.contracts import BuilderChatRequest, FocalPoint, MasterCvDocument, PortraitCrop
 from backend.app.master_cv.portraits import PortraitService, PortraitValidationError
 from backend.app.master_cv.service import MasterCvService, MasterCvValidationError, utc_now
@@ -104,6 +105,7 @@ def summary(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     service = _service(session, settings)
+    locale = workspace_locale(session, current_workspace_id())
     approved_profile = service.approved_profile()
     active = service.active_session()
     approved = service.latest_document()
@@ -168,12 +170,13 @@ def start_session(
                 template_catalog=[asdict(item) for item in MASTER_CV_TEMPLATES],
                 starting_document=json.loads(record.candidate_json),
                 upstream_guidance=guidance,
+                output_locale=locale,
             ),
         )
         adapter.start_or_attach(record.run_id)
         adapter.ensure_recruiter_prompt(
             record.run_id,
-            build_master_cv_start_message(record.run_id),
+            build_master_cv_start_message(record.run_id, locale),
             require_plain_reply=False,
         )
         service.import_agent_candidate(record)

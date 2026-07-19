@@ -34,6 +34,7 @@ Create one evidence-backed unsolicited application package from the prepared com
 
 - Write only `../output/email_draft.json`, `../output/contact_candidate.json` when explicitly required, and files under `../output/attachments`.
 - Match the supplied JSON schemas exactly, preserve the brief's IDs and attachment paths, and use only observed public URLs in `source_refs`.
+- Treat `run.language` as the application-document language. When it is `auto`, use the clearly evidenced vacancy or recipient-facing recruiting language; if that is ambiguous, use `run.workspace_locale` and add a language review flag. This rule affects CV, cover letter, and email content, not source quotations.
 
 Use the compact tone and workflow notes in `../input/draft_context.json`. Use the approved master CV HTML in `../input/master_cv/de_ch_master.html` as the visual starting point for the tailored CV.
 Preserve its template identity, design tokens, and any existing `data:image/jpeg;base64,` portrait exactly. Do not add, replace, reinterpret, or remove a portrait. Never add an object, external stylesheet, local/remote asset, or any other data URI.
@@ -66,6 +67,7 @@ class ApplicationDraftBrief:
     company_slug: str
     contact_needs_research: bool = False
     language: str | None = None
+    workspace_locale: str = "en"
     notes: str | None = None
 
     @property
@@ -253,6 +255,7 @@ def build_application_draft_context(
             "company_id": brief.company_id,
             "contact_id": brief.contact_id,
             "language": brief.language or "auto",
+            "workspace_locale": brief.workspace_locale,
             "notes": brief.notes or "",
             "outputs": {
                 "email_draft": "../output/email_draft.json",
@@ -296,6 +299,7 @@ def build_application_draft_task(brief: ApplicationDraftBrief) -> str:
         "contact_id": brief.contact_id,
         "contact_needs_research": brief.contact_needs_research,
         "language": brief.language or "auto",
+        "workspace_locale": brief.workspace_locale,
         "notes": brief.notes or "",
         "outputs": {
             "email_draft": "../output/email_draft.json",
@@ -402,6 +406,7 @@ def build_application_draft_inputs(
                 "contact_needs_research": brief.contact_needs_research,
                 "company_slug": brief.company_slug,
                 "language": brief.language or "auto",
+                "workspace_locale": brief.workspace_locale,
                 "notes": brief.notes or "",
                 "outputs": {
                     "email_draft": "../output/email_draft.json",

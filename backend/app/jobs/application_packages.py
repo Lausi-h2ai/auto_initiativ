@@ -22,6 +22,7 @@ from backend.app.agents.application_draft import (
     slugify,
 )
 from backend.app.master_cv.downstream import approved_master_cv_html
+from backend.app.localization import workspace_locale
 from backend.app.agents.run_folder import RunFolderGenerator, RunFolderSpec, RunInputFile
 
 
@@ -121,6 +122,9 @@ class JobApplicationPackageService:
         company_raw = json.loads(getattr(company, "raw_json", "{}") or "{}")
         company_raw.update({"company_id": company_id, "name": company_name})
         application_language = _listed_job_application_language(job)
+        configured_language = str(json.loads(campaign.brief_json or "{}").get("application_language") or "auto")
+        if configured_language != "auto":
+            application_language = configured_language
         brief = ApplicationDraftBrief(
             run_id=run_id,
             draft_id=f"draft-{run_id}",
@@ -128,6 +132,7 @@ class JobApplicationPackageService:
             contact_id=f"application-portal-{job.job_id}",
             company_slug=slugify(company_name, fallback="employer"),
             language=application_language,
+            workspace_locale=workspace_locale(self.session, campaign.workspace_id),
             notes="This is a response to a published vacancy, not an unsolicited application.",
         )
         master_data = json.loads(master.raw_json)
