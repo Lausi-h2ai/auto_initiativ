@@ -60,6 +60,15 @@ The frontend should show:
 - Audit log entries before and after every important action.
 - Settings for user policy, limits, blocked domains, and dry-run mode.
 
+## Localization
+
+- English and German for Germany (`de-DE`) are application-owned workspace locales; existing workspaces remain English until changed.
+- Login and registration use the saved preference or browser language before a workspace exists. Authenticated UI, dates, statuses, errors, and new user-visible agent explanations use the workspace locale.
+- Localization uses stable semantic message keys and a central locale registry. Adding a language requires one complete frontend catalog and one agent-language definition, not locale conditionals across product code.
+- Agents may reason in English, but visible generated summaries, descriptions, fit explanations, review guidance, onboarding replies, and Master-CV coaching follow the pinned run locale. Stable JSON keys, IDs, codes, flags, and provenance identifiers remain language-neutral.
+- User-authored content, historical agent prose, vacancy text, quotations, proper names, and external source material remain in their original language.
+- Application language is separate from UI locale: an explicit campaign choice wins, otherwise listed vacancies use their evidenced language and initiative outreach falls back from evidenced recipient language to workspace locale.
+
 ## Success Criteria
 
 - A user can inspect what agents did and why.

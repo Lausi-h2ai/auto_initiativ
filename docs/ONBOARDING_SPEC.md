@@ -45,6 +45,8 @@ The onboarding agent may use restricted, read-only public web research when curr
 
 The onboarding dashboard presents a chat window backed by a resumable Pi RPC session in a run-specific workspace.
 
+The workspace locale is included in the agent contract. The agent may work internally in English, but every newly generated user-visible reply and review explanation must use the selected locale and its configured address style. Uploaded and quoted source text remains unchanged.
+
 The backend should:
 
 - Start or resume the run-specific Pi RPC session using the onboarding workload policy.
