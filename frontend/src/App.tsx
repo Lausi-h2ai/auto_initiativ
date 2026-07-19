@@ -29,6 +29,7 @@ import {
   request,
 } from "./api";
 import { MasterCvPage } from "./MasterCvPage";
+import { AppLocale, LanguageToggle, useLocale } from "./i18n";
 
 type WorkspaceData = Awaited<ReturnType<typeof loadWorkspace>>;
 type WorkspaceContextValue = WorkspaceData & { refresh: () => Promise<void> };
@@ -50,12 +51,15 @@ export function App() {
 }
 
 function WorkspaceProvider() {
+  const { setLocale } = useLocale();
   const [data, setData] = useState<WorkspaceData | null>(null);
   const [error, setError] = useState("");
 
   const refresh = async () => {
     try {
-      setData(await loadWorkspace());
+      const workspace = await loadWorkspace();
+      setData(workspace);
+      setLocale(workspace.me.workspace.locale || "en");
       setError("");
     } catch (cause) {
       setError(messageOf(cause));
@@ -91,6 +95,7 @@ function useWorkspace() {
 function Login() {
   return (
     <main className="login-page">
+      <LanguageToggle compact />
       <section className="login-story">
         <Brand />
         <div className="login-copy">
@@ -142,6 +147,7 @@ function Registration() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const { locale } = useLocale();
 
   useEffect(() => {
     request<LocalAccount[]>("/auth/local/accounts")
@@ -173,6 +179,7 @@ function Registration() {
       await mutate("/auth/local/register", "POST", {
         display_name: displayName,
         email,
+        locale,
       });
       window.location.assign("/dashboard#/profile");
     } catch (cause) {
@@ -183,6 +190,7 @@ function Registration() {
 
   return (
     <main className="login-page">
+      <LanguageToggle compact />
       <section className="login-story">
         <Brand />
         <div className="login-copy">
@@ -1568,6 +1576,7 @@ function CampaignWizard() {
     max_companies: 30,
     max_jobs: 30,
     freshness_days: 30,
+    application_language: "auto",
     sending_mode: "prepare_only",
   });
   const steps = ["Direction", "Places", "Guidance", "Autonomy", "Review"];
@@ -1737,6 +1746,18 @@ function CampaignWizard() {
                   setForm({ ...form, additional_guidance: e.target.value })
                 }
               />
+            </Field>
+            <Field label="Application language">
+              <select
+                value={form.application_language}
+                onChange={(event) =>
+                  setForm({ ...form, application_language: event.target.value })
+                }
+              >
+                <option value="auto">Match the vacancy or recipient</option>
+                <option value="de-DE">German</option>
+                <option value="en">English</option>
+              </select>
             </Field>
             <div className="range-choice">
               <span>Search breadth</span>
@@ -3479,6 +3500,7 @@ function ExceptionsPage() {
 
 function SettingsPage() {
   const { me, delivery, refresh } = useWorkspace();
+  const { locale, setLocale, t } = useLocale();
   const [busy, setBusy] = useState(false);
   const [connectionError, setConnectionError] = useState("");
   const connect = async () => {
@@ -3507,6 +3529,16 @@ function SettingsPage() {
   };
   const canConnect = delivery.gmail_connection_available;
   const localFileConnection = delivery.gmail_connection_source === "local_file";
+  const updateLocale = async (nextLocale: AppLocale) => {
+    setBusy(true);
+    try {
+      await mutate("/workspace/preferences", "PATCH", { locale: nextLocale });
+      setLocale(nextLocale);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
   const connectionCopy = localFileConnection
     ? "Using the existing Gmail token configured in your local .env. No additional Google sign-in is required."
     : canConnect
@@ -3564,6 +3596,33 @@ function SettingsPage() {
             </button>
           ) : null}
           {connectionError && <InlineError message={connectionError} />}
+        </section>
+        <section className="settings-card">
+          <p className="eyebrow">{t("language.label")}</p>
+          <h3>{t("settings.language.title")}</h3>
+          <p>
+            {t("settings.language.description")}
+          </p>
+          <div
+            className="settings-language-options"
+            role="group"
+            aria-label={t("language.label")}
+          >
+            <button
+              className={`secondary-button ${locale === "en" ? "active" : ""}`}
+              disabled={busy}
+              onClick={() => void updateLocale("en")}
+            >
+              {t("language.english")}
+            </button>
+            <button
+              className={`secondary-button ${locale === "de-DE" ? "active" : ""}`}
+              disabled={busy}
+              onClick={() => void updateLocale("de-DE")}
+            >
+              {t("language.german")}
+            </button>
+          </div>
         </section>
         <section className="settings-card wide">
           <p className="eyebrow">Delivery boundary</p>

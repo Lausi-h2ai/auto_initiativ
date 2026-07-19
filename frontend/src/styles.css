@@ -682,3 +682,9 @@ h2, h3 { font-weight: 650; }
   background: rgba(250, 248, 239, 0.72);
   color: var(--ink, #24342d);
 }
+.language-toggle { position: fixed; z-index: 20; top: 18px; right: 20px; display: flex; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,253,248,.92); }
+.language-toggle button { min-width: 34px; padding: 6px 8px; border: 0; border-radius: 999px; color: #68746d; background: transparent; font-size: 9px; font-weight: 800; cursor: pointer; }
+.language-toggle button.active { color: var(--paper); background: var(--ink); }
+.settings-language-options { display: flex; gap: 8px; margin-top: 18px; }
+.settings-language-options button { margin-top: 0; }
+.settings-language-options button.active { border-color: var(--ink); color: var(--ink); }

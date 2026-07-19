@@ -4,7 +4,7 @@ export type Me = {
   display_name: string;
   avatar_url?: string | null;
   role: "user" | "admin";
-  workspace: { id: string; name: string };
+  workspace: { id: string; name: string; locale?: "en" | "de-DE" };
   csrf_token: string;
   local_registration_enabled: boolean;
 };
