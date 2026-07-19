@@ -1420,6 +1420,10 @@ def prepare_company_research_campaign(
         time_budget_minutes=request.time_budget_minutes,
         max_companies=request.max_companies,
         notes=request.notes,
+        additional_guidance=request.additional_guidance,
+        target_id=request.target_id,
+        target_kind=request.target_kind,
+        required_search_attempts=request.required_search_attempts,
     )
     existing_companies = _known_company_summaries(session, user_profile)
     input_payloads = build_company_research_inputs(

@@ -24,9 +24,14 @@ from backend.app.db.models import (
     EmailDraft,
     FitEvaluation,
     JobPosting,
+    JobFitEvaluation,
     JobApplicationPackage,
     ImportedFile,
     ReviewException,
+    ResearchDiscovery,
+    ResearchPlan,
+    ResearchSearchAttempt,
+    ResearchTarget,
     SendIntent,
     User,
     Workspace,
@@ -103,6 +108,8 @@ class WorkflowEngine:
                 self._launch_research(task)
             elif task.task_type == "job_research":
                 self._launch_job_research(task)
+            elif task.task_type in {"company_research_target", "job_research_target"}:
+                self._launch_target_research(task)
             elif task.task_type == "job_verification":
                 self._launch_job_verification(task)
             elif task.task_type == "contact_research":
@@ -128,6 +135,12 @@ class WorkflowEngine:
             elif task.task_type == "job_research":
                 from backend.app.agents.job_research_runtime import JobResearchRuntime
                 self._reconcile_job_research(task, JobResearchRuntime(settings=self.settings).status(task.run_id or ""))
+            elif task.task_type in {"company_research_target", "job_research_target"}:
+                from backend.app.agents.job_research_runtime import JobResearchRuntime
+                from backend.app.agents.company_research_runtime import CompanyResearchRuntime
+
+                runtime = JobResearchRuntime(settings=self.settings) if task.task_type == "job_research_target" else CompanyResearchRuntime(settings=self.settings)
+                self._reconcile_target_research(task, runtime.status(task.run_id or ""))
             elif task.task_type == "job_verification":
                 from backend.app.agents.job_verification_runtime import JobVerificationRuntime
                 self._reconcile_job_verification(task, JobVerificationRuntime(settings=self.settings).status(task.run_id or ""))
@@ -198,6 +211,57 @@ class WorkflowEngine:
         campaign.status = "researching"
         campaign.updated_at = utc_now()
         self.session.add_all([task, campaign])
+        self.session.commit()
+
+    def _launch_target_research(self, task: AgentTask) -> None:
+        payload = json_object(task.input_json)
+        target = self.session.get(ResearchTarget, payload.get("research_target_id"))
+        campaign = self.session.get(Campaign, task.campaign_id)
+        if target is None or campaign is None or target.campaign_id != campaign.id:
+            raise ValueError("Targeted research requires a valid campaign target.")
+        if task.task_type == "job_research_target":
+            from backend.app.agents.job_research_runtime import JobResearchRuntime, prepare_job_research_run
+
+            run_id = prepare_job_research_run(
+                campaign=campaign,
+                research_target=target,
+                session=self.session,
+                settings=self.settings,
+            )
+            JobResearchRuntime(settings=self.settings).launch(run_id)
+        else:
+            from backend.app.agents.company_research_runtime import CompanyResearchRuntime
+            from backend.app.api.routes import prepare_company_research_campaign
+            from backend.app.schemas.api import CompanyResearchCampaignRequest
+
+            brief = json_object(campaign.brief_json)
+            prepared = prepare_company_research_campaign(
+                CompanyResearchCampaignRequest(
+                    run_id=f"campaign-{campaign.campaign_id}-{target.target_id}-{uuid4().hex[:8]}",
+                    role_focus=str(brief.get("role_focus") or "Profile-aligned roles"),
+                    locations=[target.label],
+                    time_budget_minutes=int(brief.get("time_budget_minutes") or 30),
+                    max_companies=int(brief.get("max_companies") or 30),
+                    notes=str(brief.get("notes")) if brief.get("notes") else None,
+                    additional_guidance=str(brief.get("additional_guidance") or brief.get("company_preferences") or ""),
+                    target_id=target.target_id,
+                    target_kind=target.target_kind,
+                    required_search_attempts=target.required_attempts,
+                ),
+                session=self.session,
+                settings=self.settings,
+            )
+            run_id = prepared.run_id
+            CompanyResearchRuntime(settings=self.settings).launch(run_id)
+        target.status = "searching"
+        target.run_id = run_id
+        target.updated_at = utc_now()
+        task.run_id = run_id
+        task.progress = 15
+        task.narrative = f"Searching {target.label} in an isolated coverage pass."
+        task.output_json = json.dumps({"run_id": run_id, "research_target_id": target.id}, sort_keys=True)
+        task.updated_at = utc_now()
+        self.session.add_all([target, task])
         self.session.commit()
 
     def _launch_job_verification(self, task: AgentTask) -> None:
@@ -397,6 +461,340 @@ class WorkflowEngine:
         campaign.updated_at = utc_now()
         self.session.add(campaign)
         self._complete(task, f"Research completed with {len(companies)} companies ready for the next specialist.")
+
+    def _sync_target_attempts(self, campaign: Campaign, target: ResearchTarget, run_id: str) -> int:
+        path = scoped_runs_root(self.settings.runs_root) / run_id / "logs" / "search_attempts.jsonl"
+        if not path.is_file():
+            return target.completed_attempts
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            attempt_key = str(item.get("attempt_key") or "").strip()
+            if not attempt_key:
+                continue
+            existing = self.session.exec(
+                select(ResearchSearchAttempt).where(
+                    ResearchSearchAttempt.target_id == target.id,
+                    ResearchSearchAttempt.attempt_key == attempt_key,
+                )
+            ).first()
+            if existing is not None:
+                continue
+            self.session.add(
+                ResearchSearchAttempt(
+                    campaign_id=campaign.id,
+                    target_id=target.id,
+                    attempt_key=attempt_key,
+                    source_category=str(item.get("source_category") or "general_web"),
+                    query=str(item.get("query") or ""),
+                    outcome=str(item.get("outcome") or "completed"),
+                    result_count=max(0, int(item.get("result_count") or 0)),
+                    metadata_json=json.dumps(item.get("metadata") or {}, sort_keys=True),
+                    workspace_id=campaign.workspace_id,
+                )
+            )
+        self.session.flush()
+        target.completed_attempts = len(
+            self.session.exec(select(ResearchSearchAttempt).where(ResearchSearchAttempt.target_id == target.id)).all()
+        )
+        return target.completed_attempts
+
+    def _record_target_discoveries(self, campaign: Campaign, target: ResearchTarget, run_id: str, *, jobs: bool) -> int:
+        file_ids = self.session.exec(select(ImportedFile.id).where(ImportedFile.run_id == run_id)).all()
+        candidates: list[Any]
+        if jobs:
+            candidates = self.session.exec(select(JobPosting).where(JobPosting.imported_file_id.in_(file_ids))).all() if file_ids else []
+        else:
+            candidates = self.session.exec(select(Company).where(Company.imported_file_id.in_(file_ids))).all() if file_ids else []
+        kind = "job" if jobs else "company"
+        for candidate in candidates:
+            external_id = candidate.job_id if jobs else candidate.company_id
+            existing = self.session.exec(
+                select(ResearchDiscovery).where(
+                    ResearchDiscovery.target_id == target.id,
+                    ResearchDiscovery.candidate_kind == kind,
+                    ResearchDiscovery.candidate_external_id == external_id,
+                )
+            ).first()
+            if existing is None:
+                self.session.add(
+                    ResearchDiscovery(
+                        campaign_id=campaign.id,
+                        target_id=target.id,
+                        candidate_kind=kind,
+                        candidate_external_id=external_id,
+                        run_id=run_id,
+                        workspace_id=campaign.workspace_id,
+                    )
+                )
+        self.session.flush()
+        target.candidate_count = len(
+            self.session.exec(
+                select(ResearchDiscovery).where(
+                    ResearchDiscovery.target_id == target.id,
+                    ResearchDiscovery.candidate_kind == kind,
+                )
+            ).all()
+        )
+        return target.candidate_count
+
+    def _reconcile_target_research(self, task: AgentTask, status: dict[str, Any]) -> None:
+        payload = json_object(task.input_json)
+        target = self.session.get(ResearchTarget, payload.get("research_target_id"))
+        campaign = self.session.get(Campaign, task.campaign_id)
+        if target is None or campaign is None:
+            raise ValueError("Research target no longer exists.")
+        state = str(status.get("status") or "running")
+        attempts = self._sync_target_attempts(campaign, target, task.run_id or "")
+        count = self._record_target_discoveries(
+            campaign,
+            target,
+            task.run_id or "",
+            jobs=task.task_type == "job_research_target",
+        )
+        task.progress = min(90, max(task.progress, 20 + attempts * 15))
+        task.narrative = f"{target.label}: {attempts}/{target.required_attempts} search attempts, {count} candidates."
+        task.updated_at = utc_now()
+        target.updated_at = utc_now()
+        self.session.add_all([task, target])
+        if state not in TERMINAL_RUNTIME_STATUSES:
+            self.session.commit()
+            return
+        if state in FAILED_RUNTIME_STATUSES:
+            target.status = "failed"
+            target.last_error = f"Research runtime ended with {state}."
+        elif attempts >= target.required_attempts:
+            target.status = "covered"
+        else:
+            target.status = "exhausted"
+            target.last_error = f"Only {attempts} of {target.required_attempts} required attempts were recorded."
+        task.status = "completed"
+        task.progress = 100
+        task.completed_at = utc_now()
+        task.locked_at = None
+        task.locked_by = None
+        task.narrative = f"{target.label} finished with {count} candidates ({target.status})."
+        self.session.add_all([target, task])
+        self.session.flush()
+        self._maybe_finalize_balanced_campaign(campaign)
+        self.session.commit()
+
+    @staticmethod
+    def _remote_scope_status(job: JobPosting) -> tuple[str, list[str]]:
+        if job.work_mode == "fully_remote":
+            regions = {str(item).casefold() for item in json.loads(job.remote_regions_json or "[]")}
+            if regions and not any("europe" in item or item in {"eu", "eea", "worldwide", "global"} for item in regions):
+                return "conflict", ["remote_region_conflict"]
+            return "match", []
+        if job.work_mode in {"hybrid", "onsite"}:
+            return "conflict", ["remote_target_but_not_fully_remote"]
+        value = (job.remote_policy or "").casefold()
+        if any(token in value for token in ("hybrid", "partly remote", "teilweise remote", "onsite", "on-site")):
+            return "conflict", ["remote_target_but_not_fully_remote"]
+        if "remote" in value:
+            if any(token in value for token in ("us only", "united states only", "north america only")):
+                return "conflict", ["remote_region_conflict"]
+            return "match", []
+        return "needs_review", ["remote_policy_unconfirmed"]
+
+    def _maybe_finalize_balanced_campaign(self, campaign: Campaign) -> None:
+        plan = self.session.exec(
+            select(ResearchPlan)
+            .where(ResearchPlan.campaign_id == campaign.id, ResearchPlan.status == "confirmed")
+            .order_by(ResearchPlan.version.desc())
+        ).first()
+        if plan is None:
+            return
+        targets = self.session.exec(select(ResearchTarget).where(ResearchTarget.research_plan_id == plan.id)).all()
+        if not targets or any(target.status not in {"covered", "exhausted", "failed"} for target in targets):
+            return
+        raw_plan = json_object(plan.raw_json)
+        brief = json_object(campaign.brief_json)
+        discoveries = self.session.exec(select(ResearchDiscovery).where(ResearchDiscovery.campaign_id == campaign.id)).all()
+        target_by_id = {target.id: target for target in targets}
+        if campaign.campaign_type == "listed_job_search":
+            jobs = {
+                item.job_id: item
+                for item in self.session.exec(
+                    select(JobPosting).where(JobPosting.job_id.in_({item.candidate_external_id for item in discoveries if item.candidate_kind == "job"}))
+                ).all()
+            }
+            assessed: dict[str, tuple[JobPosting, str, list[str]]] = {}
+            for discovery in discoveries:
+                job = jobs.get(discovery.candidate_external_id)
+                target = target_by_id.get(discovery.target_id)
+                if job is None or target is None or discovery.candidate_kind != "job":
+                    continue
+                status, reasons = ("match", [])
+                if target.target_kind == "remote":
+                    status, reasons = self._remote_scope_status(job)
+                else:
+                    normalized_locations = " | ".join(json.loads(job.locations_json or "[]")).casefold()
+                    target_value = target.normalized_value.casefold()
+                    if target_value and target_value not in normalized_locations:
+                        status, reasons = "needs_review", ["geographic_match_unconfirmed"]
+                minimum_duration = next(
+                    (
+                        int(item["value"])
+                        for item in raw_plan.get("hard_constraints", [])
+                        if item.get("key") == "minimum_duration_weeks" and isinstance(item.get("value"), int)
+                    ),
+                    None,
+                )
+                if minimum_duration is not None:
+                    if job.duration_max_weeks is not None and job.duration_max_weeks < minimum_duration:
+                        status, reasons = "conflict", ["duration_below_campaign_minimum"]
+                    elif job.duration_min_weeks is None and job.duration_max_weeks is None and status == "match":
+                        status, reasons = "needs_review", ["duration_unconfirmed"]
+                previous = assessed.get(job.job_id)
+                if previous is None or {"match": 2, "needs_review": 1, "conflict": 0}[status] > {"match": 2, "needs_review": 1, "conflict": 0}[previous[1]]:
+                    assessed[job.job_id] = (job, status, reasons)
+                discovery.scope_status = status
+                discovery.reason_codes_json = json.dumps(reasons, sort_keys=True)
+                self.session.add(discovery)
+            ranked: list[tuple[JobPosting, str, float, float]] = []
+            for job, scope_status, reasons in assessed.values():
+                if scope_status == "conflict":
+                    self.session.add(AuditLog(actor_type="backend", action="research_candidate_excluded", entity_type="job_posting", entity_id=job.job_id, result_status="excluded", reason_codes_json=json.dumps(reasons), metadata_json=json.dumps({"campaign_id": campaign.campaign_id})))
+                    continue
+                fit = self.session.exec(
+                    select(JobFitEvaluation).where(JobFitEvaluation.job_posting_id == job.id).order_by(JobFitEvaluation.created_at.desc())
+                ).first()
+                ranked.append((job, scope_status, fit.role_fit_score if fit else 0.0, fit.company_fit_score if fit else 0.0))
+            ranked.sort(
+                key=lambda item: (
+                    0 if item[1] == "match" else 1,
+                    0 if item[0].vacancy_status == "verified_open" else 1,
+                    -item[2],
+                    -item[3],
+                    -(item[0].date_posted.timestamp() if item[0].date_posted else 0),
+                    -item[0].confidence,
+                    item[0].job_id,
+                )
+            )
+            retained = ranked[: int(brief.get("max_jobs") or 30)]
+            retained_ids = {job.job_id for job, *_ in retained}
+            for job, scope_status, *_ in retained:
+                link = self.session.exec(
+                    select(CampaignJob).where(CampaignJob.campaign_id == campaign.id, CampaignJob.job_posting_id == job.id)
+                ).first()
+                if link is None:
+                    self.session.add(CampaignJob(campaign_id=campaign.id, job_posting_id=job.id, application_status="discovered", status_note="Location scope needs review." if scope_status == "needs_review" else None, workspace_id=campaign.workspace_id))
+            for target in targets:
+                target.retained_count = len(
+                    {
+                        item.candidate_external_id
+                        for item in discoveries
+                        if item.target_id == target.id and item.candidate_external_id in retained_ids
+                    }
+                )
+                self.session.add(target)
+        else:
+            companies = {
+                item.company_id: item
+                for item in self.session.exec(
+                    select(Company).where(Company.company_id.in_({item.candidate_external_id for item in discoveries if item.candidate_kind == "company"}))
+                ).all()
+            }
+            assessed_companies: dict[str, tuple[Company, str, list[str]]] = {}
+            for discovery in discoveries:
+                company = companies.get(discovery.candidate_external_id)
+                target = target_by_id.get(discovery.target_id)
+                if company is None or target is None or discovery.candidate_kind != "company":
+                    continue
+                conflicts = json.loads(company.policy_conflicts_json or "[]")
+                status, reasons = ("conflict", ["company_policy_conflict"]) if conflicts else ("match", [])
+                if not conflicts and target.target_kind == "remote":
+                    remote_policy = (company.remote_policy or "").casefold()
+                    if any(token in remote_policy for token in ("onsite only", "on-site only", "no remote")):
+                        status, reasons = "conflict", ["remote_target_but_company_is_onsite_only"]
+                    elif not any(token in remote_policy for token in ("remote", "distributed", "work from home")):
+                        status, reasons = "needs_review", ["company_remote_policy_unconfirmed"]
+                elif not conflicts:
+                    locations = " | ".join(json.loads(company.locations_json or "[]")).casefold()
+                    if target.normalized_value.casefold() not in locations:
+                        status, reasons = "needs_review", ["company_geographic_match_unconfirmed"]
+                previous = assessed_companies.get(company.company_id)
+                if previous is None or {"match": 2, "needs_review": 1, "conflict": 0}[status] > {
+                    "match": 2,
+                    "needs_review": 1,
+                    "conflict": 0,
+                }[previous[1]]:
+                    assessed_companies[company.company_id] = (company, status, reasons)
+                discovery.scope_status = status
+                discovery.reason_codes_json = json.dumps(reasons, sort_keys=True)
+                self.session.add(discovery)
+            ordered = sorted(
+                (item for item in assessed_companies.values() if item[1] != "conflict"),
+                key=lambda item: (
+                    0 if item[1] == "match" else 1,
+                    -item[0].confidence,
+                    item[0].normalized_name,
+                    item[0].company_id,
+                ),
+            )
+            retained = ordered[: int(brief.get("max_companies") or 30)]
+            retained_ids = {item.company_id for item, *_ in retained}
+            for company, scope_status, _ in retained:
+                if self._campaign_company(campaign.id, company.id) is None:
+                    self.session.add(
+                        CampaignCompany(
+                            campaign_id=campaign.id,
+                            company_id=company.id,
+                            stage="qualified",
+                            stage_reason=(
+                                "Retained after balanced target coverage; location or remote scope needs review."
+                                if scope_status == "needs_review"
+                                else "Retained after balanced target coverage."
+                            ),
+                            workspace_id=campaign.workspace_id,
+                        )
+                    )
+                next_task_type = "application_draft" if self._latest_contact(company.id) is not None else "contact_research"
+                existing_task = self.session.exec(
+                    select(AgentTask).where(
+                        AgentTask.campaign_id == campaign.id,
+                        AgentTask.company_id == company.id,
+                        AgentTask.task_type == next_task_type,
+                        AgentTask.status.in_(["queued", "retry", "running", "completed"]),
+                    )
+                ).first()
+                if existing_task is None:
+                    self.session.add(
+                        AgentTask(
+                            task_id=f"task-{uuid4()}",
+                            campaign_id=campaign.id,
+                            company_id=company.id,
+                            agent_role=(
+                                "resume_and_email_team"
+                                if next_task_type == "application_draft"
+                                else "contact_researcher"
+                            ),
+                            task_type=next_task_type,
+                            narrative=(
+                                f"Preparing a tailored application for {company.name}."
+                                if next_task_type == "application_draft"
+                                else f"Finding a suitable public recruiting contact for {company.name}."
+                            ),
+                            workspace_id=campaign.workspace_id,
+                        )
+                    )
+            for target in targets:
+                target.retained_count = len(
+                    {
+                        item.candidate_external_id
+                        for item in discoveries
+                        if item.target_id == target.id and item.candidate_external_id in retained_ids
+                    }
+                )
+                self.session.add(target)
+        plan.status = "completed"
+        plan.updated_at = utc_now()
+        campaign.status = "preparing" if campaign.campaign_type == "initiative_outreach" and retained else "active"
+        campaign.updated_at = utc_now()
+        self.session.add_all([plan, campaign])
 
     def _reconcile_job_research(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")
@@ -711,7 +1109,9 @@ class WorkflowWorker:
                     AgentTask.status == "running",
                     AgentTask.task_type.in_([
                         "company_research",
+                        "company_research_target",
                         "job_research",
+                        "job_research_target",
                         "job_verification",
                         "contact_research",
                         "application_draft",

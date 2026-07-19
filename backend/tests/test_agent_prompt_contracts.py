@@ -116,6 +116,17 @@ def test_pi_tool_descriptions_preserve_the_untrusted_data_boundary(path: str, ex
     assert expected in Path(path).read_text(encoding="utf-8")
 
 
+def test_research_extension_records_target_bound_search_coverage():
+    source = Path("backend/pi_extensions/company_research.ts").read_text(encoding="utf-8")
+
+    assert 'name: "research_target_search"' in source
+    assert "Search target does not match the prepared isolated research pass" in source
+    assert "search_attempts.jsonl" in source
+    assert 'Type.Literal("general_web")' in source
+    assert 'Type.Literal("portal_or_directory")' in source
+    assert 'Type.Literal("employer_or_regional")' in source
+
+
 def test_onboarding_web_research_is_scoped_and_blocks_private_networks():
     source = Path("backend/pi_extensions/onboarding_artifacts.ts").read_text(encoding="utf-8")
 

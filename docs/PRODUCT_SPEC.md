@@ -33,14 +33,19 @@ One local user who wants to run proactive job applications without losing contro
 ## Core Workflows
 
 1. Onboarding collects the user's career data, preferences, constraints, tone, and exclusion criteria.
-2. Company research creates `company_candidate.json` files with sources and confidence.
-3. Contact research creates `contact_candidate.json` files with evidence and review flags.
-4. Fit evaluation creates `fit_evaluation.json` files using the profile and policy.
-5. CV tailoring creates draft CV artifacts from approved claim IDs in an immutable `master_cv_profile.json` snapshot only.
-6. Email drafting creates `email_draft.json` files with sourced personalization.
-7. Send intent creation creates `send_intent.json` files.
-8. Backend import validates outputs, stores them, and displays them in the dashboard.
-9. Backend send gate decides whether an intent is eligible for dry-run approval or future sending.
+2. A new campaign compiles its role, ordered locations, and additional search guidance into a versioned research plan. The user confirms that interpretation before research starts.
+3. Company research creates `company_candidate.json` files with sources and confidence.
+4. Contact research creates `contact_candidate.json` files with evidence and review flags.
+5. Fit evaluation creates `fit_evaluation.json` files using the profile and policy.
+6. CV tailoring creates draft CV artifacts from approved claim IDs in an immutable `master_cv_profile.json` snapshot only.
+7. Email drafting creates `email_draft.json` files with sourced personalization.
+8. Send intent creation creates `send_intent.json` files.
+9. Backend import validates outputs, stores them, and displays them in the dashboard.
+10. Backend send gate decides whether an intent is eligible for dry-run approval or future sending.
+
+Research executes one independently tracked run per confirmed target. Each target receives the same minimum set of source-category attempts; zero-result attempts count as completed coverage, so naturally sparse locations do not block the campaign or cause richer locations to consume their search effort. A bare `Remote` target means fully remote work available in Europe. Explicit conflicts are excluded deterministically, while missing or ambiguous location, remote-policy, or duration evidence remains visible as `needs_review`.
+
+The campaign's free-text `additional_guidance` is included in both vacancy and company research. It is guidance rather than hidden policy: agents use it for interpretation and ranking, while only structured, confirmed constraints drive deterministic exclusion.
 
 ## Dashboard Requirements
 

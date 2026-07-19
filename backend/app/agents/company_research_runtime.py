@@ -569,7 +569,7 @@ class CompanyResearchRuntime:
             f"{instructions}\n\n"
             "Task:\n"
             f"{task}\n\n"
-            "Use `company_research_list_inputs`, `company_research_read_input`, `company_research_shell`, "
+            "Use `company_research_list_inputs`, `company_research_read_input`, `research_target_search`, `company_research_shell`, "
             "`company_research_write_company`, `company_research_write_contact`, "
             "and `company_research_write_fit_evaluation` as needed. "
             "Stop after writing JSON artifacts. Do not create draft, send, Gmail, SMTP, or outreach files."

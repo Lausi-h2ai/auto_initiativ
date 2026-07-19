@@ -38,6 +38,9 @@ from backend.app.db.models import (
     JobSourceTrust,
     OutreachRecord,
     PolicySnapshot,
+    ResearchPlan,
+    ResearchTarget,
+    ResearchSearchAttempt,
     ReviewException,
     SentMessage,
     UserProfileSnapshot,
@@ -49,6 +52,7 @@ from backend.app.jobs.application_packages import JobApplicationPackageService, 
 from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
 from backend.app.imports.job_normalizer import JobNormalizationService
 from backend.app.master_cv.contracts import MasterCvDocument
+from backend.app.research.planning import compile_research_plan, confirm_plan, plan_hash, replace_pending_plan
 
 
 router = APIRouter(tags=["product"])
@@ -60,6 +64,7 @@ class CampaignCreate(BaseModel):
     role_focus: str = Field(default="Profile-aligned roles", min_length=1, max_length=240)
     locations: list[str] = Field(default_factory=list, max_length=20)
     company_preferences: str | None = Field(default=None, max_length=2000)
+    additional_guidance: str | None = Field(default=None, max_length=2000)
     notes: str | None = Field(default=None, max_length=2000)
     time_budget_minutes: int = Field(default=30, ge=1, le=240)
     max_companies: int = Field(default=30, ge=1, le=100)
@@ -83,6 +88,13 @@ class JobCampaignRefresh(BaseModel):
     time_budget_minutes: int | None = Field(default=None, ge=1, le=240)
     max_jobs: int | None = Field(default=None, ge=1, le=100)
     freshness_days: int | None = Field(default=None, ge=1, le=180)
+    additional_guidance: str | None = Field(default=None, max_length=2000)
+
+
+class CampaignPlanUpdate(BaseModel):
+    role_focus: str | None = Field(default=None, min_length=1, max_length=240)
+    locations: list[str] | None = Field(default=None, max_length=20)
+    additional_guidance: str | None = Field(default=None, max_length=2000)
 
 
 class JobApplicationStatusUpdate(BaseModel):
@@ -136,6 +148,23 @@ def _campaign_response(campaign: Campaign, session: Session) -> dict[str, Any]:
             AgentTask.status.in_(["queued", "retry", "running", "paused"]),
         )
     ).all()
+    research_plan = session.exec(
+        select(ResearchPlan)
+        .where(
+            ResearchPlan.campaign_id == campaign.id,
+            ResearchPlan.status.in_(["pending_confirmation", "confirmed", "completed"]),
+        )
+        .order_by(ResearchPlan.version.desc())
+    ).first()
+    targets = (
+        session.exec(
+            select(ResearchTarget)
+            .where(ResearchTarget.research_plan_id == research_plan.id)
+            .order_by(ResearchTarget.id)
+        ).all()
+        if research_plan
+        else []
+    )
     return {
         "id": campaign.campaign_id,
         "name": campaign.name,
@@ -151,6 +180,22 @@ def _campaign_response(campaign: Campaign, session: Session) -> dict[str, Any]:
         "started_at": campaign.started_at,
         "created_at": campaign.created_at,
         "updated_at": campaign.updated_at,
+        "research_plan": json.loads(research_plan.raw_json) if research_plan else None,
+        "research_plan_status": research_plan.status if research_plan else None,
+        "search_coverage": [
+            {
+                "id": target.target_id,
+                "label": target.label,
+                "kind": target.target_kind,
+                "status": target.status,
+                "required_attempts": target.required_attempts,
+                "completed_attempts": target.completed_attempts,
+                "candidate_count": target.candidate_count,
+                "retained_count": target.retained_count,
+                "last_error": target.last_error,
+            }
+            for target in targets
+        ],
     }
 
 
@@ -158,6 +203,7 @@ def _campaign_response(campaign: Campaign, session: Session) -> dict[str, Any]:
 def create_campaign(
     payload: CampaignCreate,
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     identity = current_identity()
     if identity is None:
@@ -187,13 +233,13 @@ def create_campaign(
         campaign_id=f"campaign-{uuid4()}",
         name=payload.name.strip(),
         campaign_type=payload.campaign_type,
-        status="active",
+        status="planning",
         sending_mode=payload.sending_mode,
         brief_json=json.dumps(
             {
                 "role_focus": payload.role_focus,
                 "locations": payload.locations,
-                "company_preferences": payload.company_preferences,
+                "additional_guidance": (payload.additional_guidance or payload.company_preferences or "").strip(),
                 "notes": payload.notes,
                 "time_budget_minutes": payload.time_budget_minutes,
                 "max_companies": payload.max_companies,
@@ -217,20 +263,11 @@ def create_campaign(
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
-    if campaign.campaign_type == "listed_job_search":
-        WorkflowEngine(session).enqueue(
-            campaign=campaign,
-            task_type="job_research",
-            agent_role="vacancy_scout",
-            narrative="Your vacancy scout is ready to discover and verify open positions.",
-        )
-    else:
-        WorkflowEngine(session).enqueue(
-            campaign=campaign,
-            task_type="company_research",
-            agent_role="company_researcher",
-            narrative="Your research specialist is ready to discover strong-fit companies.",
-        )
+    replace_pending_plan(
+        session,
+        campaign,
+        compile_research_plan(campaign, schema_path=settings.schemas_root / "research_plan.schema.json"),
+    )
     return _campaign_response(campaign, session)
 
 
@@ -243,6 +280,81 @@ def list_campaigns(session: Session = Depends(get_session)) -> list[dict[str, An
 @router.get("/campaigns/{campaign_id}")
 def get_campaign(campaign_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
     return _campaign_response(_campaign(session, campaign_id), session)
+
+
+@router.post("/campaigns/{campaign_id}/research-plan/confirm", status_code=202)
+def confirm_campaign_research_plan(campaign_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+    campaign = _campaign(session, campaign_id)
+    plan = session.exec(
+        select(ResearchPlan)
+        .where(ResearchPlan.campaign_id == campaign.id, ResearchPlan.status == "pending_confirmation")
+        .order_by(ResearchPlan.version.desc())
+    ).first()
+    if plan is None:
+        raise HTTPException(status_code=409, detail="This campaign has no research plan awaiting confirmation.")
+    if plan.content_hash != plan_hash(json.loads(plan.raw_json)):
+        raise HTTPException(status_code=409, detail="The research plan changed and must be recompiled before confirmation.")
+    confirm_plan(plan)
+    targets = session.exec(
+        select(ResearchTarget).where(ResearchTarget.research_plan_id == plan.id).order_by(ResearchTarget.id)
+    ).all()
+    task_type = "job_research_target" if campaign.campaign_type == "listed_job_search" else "company_research_target"
+    agent_role = "vacancy_scout" if campaign.campaign_type == "listed_job_search" else "company_researcher"
+    for target in targets:
+        target.status = "queued"
+        target.updated_at = utc_now()
+        session.add(target)
+        session.add(
+            AgentTask(
+                task_id=f"task-{uuid4()}",
+                campaign_id=campaign.id,
+                agent_role=agent_role,
+                task_type=task_type,
+                narrative=f"Queued an independent research pass for {target.label}.",
+                input_json=json.dumps({"research_target_id": target.id, "target_id": target.target_id}, sort_keys=True),
+                workspace_id=campaign.workspace_id,
+            )
+        )
+    campaign.status = "researching"
+    campaign.started_at = campaign.started_at or utc_now()
+    campaign.updated_at = utc_now()
+    session.add_all([plan, campaign])
+    session.commit()
+    return _campaign_response(campaign, session)
+
+
+@router.post("/campaigns/{campaign_id}/research-plan/recompile")
+def recompile_campaign_research_plan(
+    campaign_id: str,
+    payload: CampaignPlanUpdate,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    campaign = _campaign(session, campaign_id)
+    active = session.exec(
+        select(AgentTask).where(
+            AgentTask.campaign_id == campaign.id,
+            AgentTask.status.in_(["queued", "retry", "running"]),
+        )
+    ).first()
+    if active is not None:
+        raise HTTPException(status_code=409, detail="Pause or finish active research before changing the confirmed plan.")
+    brief = json.loads(campaign.brief_json or "{}")
+    updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if "role_focus" in updates:
+        updates["role_focus"] = str(updates["role_focus"]).strip()
+    if "locations" in updates:
+        updates["locations"] = [str(value).strip() for value in updates["locations"] if str(value).strip()]
+    if "additional_guidance" in updates:
+        updates["additional_guidance"] = str(updates["additional_guidance"]).strip()
+    brief.update(updates)
+    campaign.brief_json = json.dumps(brief, sort_keys=True)
+    replace_pending_plan(
+        session,
+        campaign,
+        compile_research_plan(campaign, schema_path=settings.schemas_root / "research_plan.schema.json"),
+    )
+    return _campaign_response(campaign, session)
 
 
 @router.post("/campaigns/{campaign_id}/pause")
@@ -913,6 +1025,12 @@ def _job_response(job: JobPosting, session: Session, *, campaign_job: CampaignJo
         "description": job.description,
         "locations": json.loads(job.locations_json or "[]"),
         "remote_policy": job.remote_policy,
+        "work_mode": job.work_mode,
+        "remote_regions": json.loads(job.remote_regions_json or "[]"),
+        "duration": {
+            "minimum_weeks": job.duration_min_weeks,
+            "maximum_weeks": job.duration_max_weeks,
+        },
         "employment_types": json.loads(job.employment_types_json or "[]"),
         "compensation": json.loads(job.compensation_json or "{}"),
         "languages": json.loads(job.languages_json or "[]"),
@@ -975,6 +1093,7 @@ def refresh_job_campaign(
     campaign_id: str,
     payload: JobCampaignRefresh | None = None,
     session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     campaign = _campaign(session, campaign_id)
     if campaign.campaign_type != "listed_job_search":
@@ -988,6 +1107,25 @@ def refresh_job_campaign(
             updates["locations"] = [str(value).strip() for value in updates["locations"] if str(value).strip()]
         brief.update(updates)
         campaign.brief_json = json.dumps(brief, sort_keys=True)
+    latest_plan = session.exec(
+        select(ResearchPlan).where(ResearchPlan.campaign_id == campaign.id).order_by(ResearchPlan.version.desc())
+    ).first()
+    if latest_plan is not None:
+        active_target_task = session.exec(
+            select(AgentTask).where(
+                AgentTask.campaign_id == campaign.id,
+                AgentTask.task_type.in_(["job_research_target", "company_research_target"]),
+                AgentTask.status.in_(["queued", "retry", "running"]),
+            )
+        ).first()
+        if active_target_task is not None:
+            raise HTTPException(status_code=409, detail="Balanced target research is still active; wait for it to finish before refreshing.")
+        replace_pending_plan(
+            session,
+            campaign,
+            compile_research_plan(campaign, schema_path=settings.schemas_root / "research_plan.schema.json"),
+        )
+        return {"campaign_id": campaign.campaign_id, "status": "planning"}
     active_task = session.exec(
         select(AgentTask)
         .where(

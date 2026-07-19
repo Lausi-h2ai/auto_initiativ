@@ -592,8 +592,103 @@ function Journey({
   );
 }
 
+function ResearchPlanPanel({
+  campaign,
+  onRefresh,
+}: {
+  campaign: Campaign;
+  onRefresh: () => Promise<unknown>;
+}) {
+  const plan = campaign.research_plan;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!plan) return null;
+  const confirm = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await mutate(`/campaigns/${campaign.id}/research-plan/confirm`, "POST");
+      await onRefresh();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="research-plan-panel" aria-label="Interpreted research plan">
+      <header>
+        <div>
+          <p className="eyebrow">
+            {campaign.research_plan_status === "pending_confirmation"
+              ? "Confirm the interpretation"
+              : "Balanced search coverage"}
+          </p>
+          <h2>
+            {campaign.research_plan_status === "pending_confirmation"
+              ? "Here is how your team understood the brief"
+              : "Every target gets its own search pass"}
+          </h2>
+        </div>
+        {campaign.research_plan_status === "pending_confirmation" && (
+          <button className="primary-button" disabled={busy} onClick={() => void confirm()}>
+            {busy ? "Starting…" : "Confirm and start"}
+          </button>
+        )}
+      </header>
+      <div className="research-plan-grid">
+        <div>
+          <strong>Search targets</strong>
+          <div className="research-target-list">
+            {plan.targets.map((target) => {
+              const coverage = campaign.search_coverage?.find((item) => item.id === target.target_id);
+              return (
+                <span key={target.target_id}>
+                  <b>{target.label}</b>
+                  <small>
+                    {coverage
+                      ? `${human(coverage.status)} · ${coverage.completed_attempts}/${coverage.required_attempts} attempts · ${coverage.candidate_count} found`
+                      : `${target.required_attempts} required attempts`}
+                  </small>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <strong>Interpreted constraints</strong>
+          {plan.hard_constraints.length ? (
+            <ul>
+              {plan.hard_constraints.map((item, index) => (
+                <li key={`${item.key}-${index}`}>
+                  {human(item.key)} {human(item.operator)} {String(item.value)}
+                  <small>From “{item.source_text}”</small>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No additional hard constraints were inferred.</p>
+          )}
+          {plan.additional_guidance && (
+            <>
+              <strong>Additional guidance</strong>
+              <p>{plan.additional_guidance}</p>
+            </>
+          )}
+          {plan.review_flags.includes("vague_distance_preference") && (
+            <small className="plan-review-note">
+              Distance language will guide agent ranking; the app will not claim an exact commute calculation.
+            </small>
+          )}
+        </div>
+      </div>
+      {error && <InlineError message={error} />}
+    </section>
+  );
+}
+
 function CompaniesPage() {
-  const { campaigns } = useWorkspace();
+  const { campaigns, refresh } = useWorkspace();
   const outreachCampaigns = campaigns.filter(
     (item) => item.campaign_type === "initiative_outreach",
   );
@@ -673,6 +768,9 @@ function CompaniesPage() {
         onSelect={chooseCampaign}
         resultCount={companies.length}
       />
+      {campaign?.research_plan && (
+        <ResearchPlanPanel campaign={campaign} onRefresh={refresh} />
+      )}
       {error && <InlineError message={error} />}
       {loading ? (
         <InlineLoading />
@@ -951,7 +1049,7 @@ function JobsPage() {
   const [error, setError] = useState("");
   const [manualConfirming, setManualConfirming] = useState(false);
   const [editingSearch, setEditingSearch] = useState(false);
-  const [searchScope, setSearchScope] = useState({ role_focus: "", locations: "" });
+  const [searchScope, setSearchScope] = useState({ role_focus: "", locations: "", additional_guidance: "" });
   const selectedCampaignId = selected?.campaign_id || activeCampaign?.id;
   useEffect(() => {
     setSelected(null);
@@ -964,6 +1062,8 @@ function JobsPage() {
       locations: Array.isArray(brief?.locations)
         ? brief.locations.filter((value): value is string => typeof value === "string").join(", ")
         : "",
+      additional_guidance:
+        typeof brief?.additional_guidance === "string" ? brief.additional_guidance : "",
     });
     if (!activeCampaign) setJobs(initialJobs);
     else
@@ -1053,6 +1153,9 @@ function JobsPage() {
         onSelect={chooseCampaign}
         resultCount={jobs.length}
       />
+      {activeCampaign?.research_plan && (
+        <ResearchPlanPanel campaign={activeCampaign} onRefresh={refresh} />
+      )}
       {activeCampaign && editingSearch && (
         <section className="job-search-scope-editor" aria-label="Vacancy search scope">
           <label>
@@ -1069,16 +1172,30 @@ function JobsPage() {
               onChange={(event) => setSearchScope({ ...searchScope, locations: event.target.value })}
             />
           </label>
+          <label>
+            <span>Additional search guidance</span>
+            <textarea
+              rows={3}
+              value={searchScope.additional_guidance}
+              onChange={(event) => setSearchScope({ ...searchScope, additional_guidance: event.target.value })}
+            />
+          </label>
           <button
             className="primary-button"
             disabled={busy || !searchScope.role_focus.trim()}
             onClick={() =>
-              void act(`/campaigns/${activeCampaign.id}/refresh`, "POST", {
+              void act(
+                activeCampaign.research_plan
+                  ? `/campaigns/${activeCampaign.id}/research-plan/recompile`
+                  : `/campaigns/${activeCampaign.id}/refresh`,
+                "POST",
+                {
                 role_focus: searchScope.role_focus.trim(),
                 locations: searchScope.locations
                   .split(",")
                   .map((value) => value.trim())
                   .filter(Boolean),
+                additional_guidance: searchScope.additional_guidance.trim(),
               }).then((ok) => ok && setEditingSearch(false))
             }
           >
@@ -1446,14 +1563,14 @@ function CampaignWizard() {
         : "My next opportunity",
     role_focus: "",
     locations: "",
-    company_preferences: "",
+    additional_guidance: "",
     notes: "",
     max_companies: 30,
     max_jobs: 30,
     freshness_days: 30,
     sending_mode: "prepare_only",
   });
-  const steps = ["Direction", "Places", "Character", "Autonomy", "Review"];
+  const steps = ["Direction", "Places", "Guidance", "Autonomy", "Review"];
   const isJobs = form.campaign_type === "listed_job_search";
 
   if (!profile.has_approved_profile) {
@@ -1492,7 +1609,7 @@ function CampaignWizard() {
       navigate(
         isJobs
           ? `/jobs?campaign=${encodeURIComponent(campaign.id)}`
-          : "/",
+          : `/companies?campaign=${encodeURIComponent(campaign.id)}`,
       );
     } catch (cause) {
       setError(messageOf(cause));
@@ -1606,18 +1723,18 @@ function CampaignWizard() {
         )}
         {step === 2 && (
           <WizardStep
-            eyebrow="Help matches feel like you"
-            title="What should make a company stand out?"
-            body="Describe the environment, mission, or work you want. This is guidance, not a complex filter form."
+            eyebrow="Add context in your own words"
+            title="What else should guide the search?"
+            body="Add constraints or preferences naturally. Your team will show its interpretation before searching."
           >
-            <Field label="Company character">
+            <Field label="Additional search guidance">
               <textarea
                 autoFocus
                 rows={5}
-                placeholder="Product-minded teams using AI for useful, concrete problems…"
-                value={form.company_preferences}
+                placeholder="At least six weeks, close to Konstanz unless fully remote…"
+                value={form.additional_guidance}
                 onChange={(e) =>
-                  setForm({ ...form, company_preferences: e.target.value })
+                  setForm({ ...form, additional_guidance: e.target.value })
                 }
               />
             </Field>
@@ -1728,9 +1845,9 @@ function CampaignWizard() {
                 value={form.locations || "From approved profile"}
               />
               <ReviewRow
-                label="Character"
+                label="Additional guidance"
                 value={
-                  form.company_preferences || "Use my approved preferences"
+                  form.additional_guidance || "Use my approved preferences"
                 }
               />
               <ReviewRow

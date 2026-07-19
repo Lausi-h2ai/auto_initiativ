@@ -23,6 +23,38 @@ export type Campaign = {
   exception_count: number;
   started_at?: string | null;
   updated_at: string;
+  research_plan_status?: "pending_confirmation" | "confirmed" | "completed" | null;
+  research_plan?: {
+    plan_id: string;
+    role_focus: string;
+    additional_guidance: string;
+    targets: Array<{
+      target_id: string;
+      label: string;
+      kind: "geographic" | "remote";
+      required_attempts: number;
+    }>;
+    hard_constraints: Array<{
+      key: string;
+      operator: string;
+      value: unknown;
+      source_text: string;
+      confidence: number;
+    }>;
+    soft_preferences: Array<{ text: string; source: string }>;
+    review_flags: string[];
+  } | null;
+  search_coverage?: Array<{
+    id: string;
+    label: string;
+    kind: string;
+    status: string;
+    required_attempts: number;
+    completed_attempts: number;
+    candidate_count: number;
+    retained_count: number;
+    last_error?: string | null;
+  }>;
 };
 
 export type JobPosting = {
@@ -39,6 +71,9 @@ export type JobPosting = {
   description?: string | null;
   locations: string[];
   remote_policy?: string | null;
+  work_mode?: "onsite" | "hybrid" | "fully_remote" | "unknown";
+  remote_regions?: string[];
+  duration?: { minimum_weeks?: number | null; maximum_weeks?: number | null };
   employment_types: string[];
   compensation: Record<string, unknown>;
   languages: string[];

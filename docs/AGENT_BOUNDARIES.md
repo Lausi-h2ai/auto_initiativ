@@ -65,6 +65,10 @@ Company research is for profile-aligned unsolicited outreach. Agents do not need
 
 Vacancy research is a separate workload. Its scout may search broadly across accessible public sources, including dynamically discovered employer career pages, while treating page content as untrusted data. A trusted-source registry controls verification authority, not discovery scope. The scout writes sourced job and fit artifacts; the backend assigns vacancy status. It may never contact an employer, submit a form, or claim a role is definitively unfilled.
 
+Campaign planning and final selection remain application-owned. The backend compiles a versioned plan, requires user confirmation, creates one target-scoped research task per location or remote region, records source-category attempts, and merges candidates only after every target is covered, exhausted, or failed. Agents may interpret natural-language guidance and report evidence, but they may not silently drop targets, broaden a target run, declare coverage, or turn uncertain evidence into a hard exclusion.
+
+Target research must use the target-aware search tool for auditable coverage. The tool binds every query and result count to the exact target and source category. Agents may use other read-only browsing for evidence follow-up, but that browsing does not satisfy the deterministic attempt quota.
+
 ## Boundary Violation Examples
 
 Invalid:

@@ -136,6 +136,78 @@ class Campaign(WorkspaceOwned, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class ResearchPlan(WorkspaceOwned, table=True):
+    __tablename__ = "research_plans"
+    __table_args__ = (UniqueConstraint("campaign_id", "version", name="uq_research_plans_campaign_version"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plan_id: str = Field(index=True)
+    campaign_id: int = Field(foreign_key="campaigns.id", index=True)
+    version: int = Field(default=1)
+    status: str = Field(default="pending_confirmation", index=True)
+    content_hash: str = Field(index=True)
+    raw_json: str = Field(sa_column=Column(Text))
+    confirmed_hash: Optional[str] = Field(default=None, index=True)
+    confirmed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ResearchTarget(WorkspaceOwned, table=True):
+    __tablename__ = "research_targets"
+    __table_args__ = (UniqueConstraint("research_plan_id", "target_id", name="uq_research_targets_plan_target"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    research_plan_id: int = Field(foreign_key="research_plans.id", index=True)
+    campaign_id: int = Field(foreign_key="campaigns.id", index=True)
+    target_id: str = Field(index=True)
+    label: str
+    target_kind: str = Field(index=True)
+    normalized_value: str = Field(index=True)
+    status: str = Field(default="awaiting_confirmation", index=True)
+    required_attempts: int = Field(default=3)
+    completed_attempts: int = Field(default=0)
+    candidate_count: int = Field(default=0)
+    retained_count: int = Field(default=0)
+    run_id: Optional[str] = Field(default=None, index=True)
+    last_error: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ResearchSearchAttempt(WorkspaceOwned, table=True):
+    __tablename__ = "research_search_attempts"
+    __table_args__ = (UniqueConstraint("target_id", "attempt_key", name="uq_research_attempt_target_key"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaigns.id", index=True)
+    target_id: int = Field(foreign_key="research_targets.id", index=True)
+    attempt_key: str = Field(index=True)
+    source_category: str = Field(index=True)
+    query: str = Field(sa_column=Column(Text))
+    outcome: str = Field(index=True)
+    result_count: int = Field(default=0)
+    metadata_json: str = Field(default="{}", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ResearchDiscovery(WorkspaceOwned, table=True):
+    __tablename__ = "research_discoveries"
+    __table_args__ = (
+        UniqueConstraint("target_id", "candidate_kind", "candidate_external_id", name="uq_research_discovery_target_candidate"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="campaigns.id", index=True)
+    target_id: int = Field(foreign_key="research_targets.id", index=True)
+    candidate_kind: str = Field(index=True)
+    candidate_external_id: str = Field(index=True)
+    run_id: str = Field(index=True)
+    scope_status: str = Field(default="needs_review", index=True)
+    reason_codes_json: str = Field(default="[]", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class OnboardingSession(WorkspaceOwned, table=True):
     __tablename__ = "onboarding_sessions"
     __table_args__ = (UniqueConstraint("workspace_id", "session_id", name="uq_onboarding_sessions_workspace_external_id"),)
@@ -188,6 +260,10 @@ class JobPosting(WorkspaceOwned, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     locations_json: str = Field(default="[]", sa_column=Column(Text))
     remote_policy: Optional[str] = None
+    work_mode: str = Field(default="unknown", index=True)
+    remote_regions_json: str = Field(default="[]", sa_column=Column(Text))
+    duration_min_weeks: Optional[int] = None
+    duration_max_weeks: Optional[int] = None
     employment_types_json: str = Field(default="[]", sa_column=Column(Text))
     compensation_json: str = Field(default="{}", sa_column=Column(Text))
     languages_json: str = Field(default="[]", sa_column=Column(Text))

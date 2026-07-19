@@ -68,6 +68,11 @@ class JobNormalizationService:
             job.description = data.get("description")
             job.locations_json = _dump(data.get("locations") or [])
             job.remote_policy = data.get("remote_policy")
+            job.work_mode = data.get("work_mode") or "unknown"
+            job.remote_regions_json = _dump(data.get("remote_regions") or [])
+            duration = data.get("duration") if isinstance(data.get("duration"), dict) else {}
+            job.duration_min_weeks = duration.get("minimum_weeks")
+            job.duration_max_weeks = duration.get("maximum_weeks")
             job.employment_types_json = _dump(data.get("employment_types") or [])
             job.compensation_json = _dump(data.get("compensation") or {})
             job.languages_json = _dump(data.get("languages") or [])

@@ -143,6 +143,17 @@ h2, h3 { font-weight: 650; }
 .pipeline-toolbar { min-height: 60px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding: 0 17px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,253,248,.7); }
 .pipeline-toolbar > div { display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 650; }.pipeline-toolbar p { margin: 0; color: #7b847e; font-size: 10px; }
 .campaign-workspace { display: grid; grid-template-columns: minmax(350px, .8fr) minmax(520px, 1.2fr); gap: 18px; margin-bottom: 20px; padding: 10px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,253,248,.76); box-shadow: 0 8px 24px rgba(34,44,35,.03); }
+.research-plan-panel { margin: 0 0 20px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+.research-plan-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+.research-plan-panel > header h2 { margin: 3px 0 0; font-size: 18px; }
+.research-plan-grid { display: grid; grid-template-columns: minmax(280px, .9fr) minmax(320px, 1.1fr); gap: 22px; }
+.research-plan-grid > div { display: grid; align-content: start; gap: 9px; }
+.research-plan-grid ul { display: grid; gap: 7px; margin: 0; padding-left: 18px; }
+.research-plan-grid li small { display: block; color: var(--muted); }
+.research-target-list { display: grid; gap: 7px; }
+.research-target-list > span { display: flex; justify-content: space-between; gap: 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: #fffefa; }
+.research-target-list small { color: var(--muted); text-align: right; }
+.plan-review-note { padding: 9px 11px; border-radius: 8px; color: #765d2d; background: #fff7df; }
 .workspace-kind-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 4px; border-radius: 9px; background: #ecece5; }
 .workspace-kind-switch a { min-width: 0; display: grid; align-content: center; gap: 3px; padding: 10px 13px; border: 1px solid transparent; border-radius: 7px; color: #68746d; }
 .workspace-kind-switch a.active { border-color: #d5d8d1; color: var(--ink); background: var(--paper); box-shadow: 0 3px 10px rgba(34,44,35,.07); }
@@ -301,6 +312,12 @@ h2, h3 { font-weight: 650; }
 .answer-item { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .answer-item.needs-input { border-left: 3px solid #a66b42; padding-left: 12px; }
 @media (max-width: 720px) { .campaign-type-choice { grid-template-columns: 1fr; } }
+@media (max-width: 720px) {
+  .research-plan-panel > header { display: grid; }
+  .research-plan-grid { grid-template-columns: 1fr; }
+  .research-target-list > span { display: grid; }
+  .research-target-list small { text-align: left; }
+}
 
 /* Phone and small-tablet layout. The desktop sidebar becomes a touch-friendly,
    horizontally scrollable bottom rail so every route remains reachable. */

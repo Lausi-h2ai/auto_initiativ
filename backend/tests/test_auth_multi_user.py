@@ -421,8 +421,19 @@ def test_campaign_creation_is_on_rails_and_enqueues_research(authenticated_app):
         },
     )
     assert response.status_code == 201
-    assert response.json()["status"] == "active"
-    assert response.json()["active_task_count"] == 1
+    assert response.json()["status"] == "planning"
+    assert response.json()["research_plan_status"] == "pending_confirmation"
+    assert response.json()["active_task_count"] == 0
+    assert [item["label"] for item in response.json()["research_plan"]["targets"]] == ["Zurich", "Remote Switzerland"]
+
+    confirmed = client.post(
+        f"/campaigns/{response.json()['id']}/research-plan/confirm",
+        cookies={"ai_session": token},
+        headers=headers,
+    )
+    assert confirmed.status_code == 202
+    assert confirmed.json()["status"] == "researching"
+    assert confirmed.json()["active_task_count"] == 2
 
     summary = client.get("/product/summary", cookies={"ai_session": token})
     assert summary.status_code == 200
@@ -460,7 +471,17 @@ def test_listed_job_campaign_is_separate_and_manual_submit_only(authenticated_ap
     assert response.status_code == 201
     assert response.json()["campaign_type"] == "listed_job_search"
     assert response.json()["job_count"] == 0
-    assert response.json()["active_task_count"] == 1
+    assert response.json()["status"] == "planning"
+    assert response.json()["research_plan_status"] == "pending_confirmation"
+    assert response.json()["active_task_count"] == 0
+
+    confirmed = client.post(
+        f"/campaigns/{response.json()['id']}/research-plan/confirm",
+        cookies={"ai_session": token},
+        headers=headers,
+    )
+    assert confirmed.status_code == 202
+    assert confirmed.json()["active_task_count"] == 1
 
     blocked = client.patch(
         f"/campaigns/{response.json()['id']}/sending-mode",
@@ -475,8 +496,8 @@ def test_listed_job_campaign_is_separate_and_manual_submit_only(authenticated_ap
         cookies={"ai_session": token},
         headers=headers,
     )
-    assert refresh.status_code == 202
-    assert refresh.json()["status"] == "queued"
+    assert refresh.status_code == 409
+    assert refresh.json()["detail"] == "Balanced target research is still active; wait for it to finish before refreshing."
 
 
 def test_verified_job_queues_tailored_application_agent(authenticated_app):

@@ -1,8 +1,9 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, delimiter, relative, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 
 const MAX_COMMAND_TIMEOUT_MS = 120000;
 const MAX_COMMAND_OUTPUT_BYTES = 128000;
@@ -155,7 +156,97 @@ async function writeArtifact(kind: keyof typeof WRITE_DIRECTORIES, filename: str
   return { filename: cleanName, path: `../output/${WRITE_DIRECTORIES[kind]}/${cleanName}` };
 }
 
+function decodeXml(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function targetSearch(params: { target_id: string; source_category: string; query: string }): Promise<Record<string, unknown>> {
+  const campaign = JSON.parse(await readFile(workspacePath("../input/campaign.json"), "utf8"));
+  if (!campaign.target_id || campaign.target_id !== params.target_id) {
+    throw new Error("Search target does not match the prepared isolated research pass");
+  }
+  const target = Array.isArray(campaign.locations) ? String(campaign.locations[0] || "").trim() : "";
+  if (!target) {
+    throw new Error("Prepared research pass has no target");
+  }
+  const query = params.query.toLocaleLowerCase().includes(target.toLocaleLowerCase())
+    ? params.query.trim()
+    : `${params.query.trim()} ${target}`.trim();
+  const attemptKey = `attempt-${randomUUID()}`;
+  let outcome = "completed";
+  let results: Array<{ title: string; url: string; snippet: string }> = [];
+  let error: string | undefined;
+  try {
+    const response = await fetch(`https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`, {
+      headers: { "user-agent": "AutoInitiativ-Research/1.0" },
+      redirect: "error",
+    });
+    if (!response.ok) {
+      throw new Error(`Search returned HTTP ${response.status}`);
+    }
+    const body = await response.text();
+    if (Buffer.byteLength(body, "utf8") > 1_000_000) {
+      throw new Error("Search response exceeds the research size limit");
+    }
+    results = [...body.matchAll(/<item>([\s\S]*?)<\/item>/g)]
+      .slice(0, 10)
+      .map((match) => {
+        const item = match[1];
+        const field = (name: string) => decodeXml(item.match(new RegExp(`<${name}>([\\s\\S]*?)<\\/${name}>`))?.[1] || "");
+        return { title: field("title"), url: field("link"), snippet: field("description").slice(0, 600) };
+      })
+      .filter((item) => item.url.startsWith("http"));
+    if (!results.length) outcome = "zero_results";
+  } catch (cause) {
+    outcome = "failed";
+    error = cause instanceof Error ? cause.message : String(cause);
+  }
+  const attempt = {
+    attempt_key: attemptKey,
+    target_id: params.target_id,
+    source_category: params.source_category,
+    query,
+    outcome,
+    result_count: results.length,
+    metadata: error ? { error } : {},
+    recorded_at: new Date().toISOString(),
+  };
+  const logPath = workspacePath("../logs/search_attempts.jsonl");
+  await mkdir(workspacePath("../logs"), { recursive: true });
+  await appendFile(logPath, `${JSON.stringify(attempt)}\n`, "utf8");
+  return { ...attempt, results };
+}
+
 export default function companyResearch(pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "research_target_search",
+    label: "Search One Prepared Target",
+    description:
+      "Search the public web for the one prepared geographic or remote target. The tool automatically binds the target label, records the attempt for deterministic coverage, and returns bounded untrusted results.",
+    parameters: Type.Object({
+      target_id: Type.String({ description: "Exact target_id from campaign.json." }),
+      source_category: Type.Union([
+        Type.Literal("general_web"),
+        Type.Literal("portal_or_directory"),
+        Type.Literal("employer_or_regional"),
+      ]),
+      query: Type.String({ description: "Focused role/source query; the prepared target is added automatically when absent." }),
+    }),
+    async execute(_toolCallId, params) {
+      const details = await targetSearch(params);
+      return { content: [{ type: "text", text: JSON.stringify(details) }], details };
+    },
+  });
+
   pi.registerTool({
     name: "company_research_list_inputs",
     label: "List Research Inputs",

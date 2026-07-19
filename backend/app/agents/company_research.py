@@ -13,6 +13,10 @@ class CompanyResearchCampaign:
     time_budget_minutes: int
     max_companies: int
     notes: str | None = None
+    additional_guidance: str | None = None
+    target_id: str | None = None
+    target_kind: str | None = None
+    required_search_attempts: int = 3
 
 
 COMPANY_RESEARCH_INSTRUCTIONS = """# Company Research Specialist
@@ -64,6 +68,10 @@ def build_company_research_task(campaign: CompanyResearchCampaign) -> str:
         "time_budget_minutes": campaign.time_budget_minutes,
         "max_companies": campaign.max_companies,
         "notes": campaign.notes or "",
+        "additional_guidance": campaign.additional_guidance or "",
+        "target_id": campaign.target_id,
+        "target_kind": campaign.target_kind,
+        "required_search_attempts": campaign.required_search_attempts,
     }
     target_text = f"{campaign.max_companies} company candidates"
     return (
@@ -85,6 +93,8 @@ def build_company_research_task(campaign: CompanyResearchCampaign) -> str:
         "- Prefer company-published career contact addresses over individual people; generic company addresses are acceptable when public and valid. If no public address is found, omit the contact file instead of inventing one.\n"
         "- Each fit evaluation must reference the same `company_id`, the approved profile ID, and the approved policy ID.\n"
         "- Use the approved user profile and campaign brief for target locations; do not require currently open job listings before recording an interesting company.\n"
+        "- This run covers exactly one declared target. Use the target-aware public search tool for the required number of general-web, portal/directory, and employer/regional attempts before stopping, even when a target yields no candidates.\n"
+        "- Apply `additional_guidance` when discovering and ranking candidates. Preserve vague preferences as judgment rather than inventing a precise deterministic rule.\n"
         "- Remote policy is descriptive metadata, not a hard requirement when the profile allows hybrid or onsite. Do not add a risk just because remote policy is unverified.\n"
         f"- Keep researching until either {target_text} have been written or the time budget is exhausted. Do not stop after a small first batch.\n"
         "- If obvious leads run thin, broaden discovery sources and search angles before stopping: company directories, startup ecosystems, funding/news pages, product categories, hiring pages, and local employer lists.\n"
@@ -117,6 +127,10 @@ def build_company_research_inputs(
                 "time_budget_minutes": campaign.time_budget_minutes,
                 "max_companies": campaign.max_companies,
                 "notes": campaign.notes or "",
+                "additional_guidance": campaign.additional_guidance or "",
+                "target_id": campaign.target_id,
+                "target_kind": campaign.target_kind,
+                "required_search_attempts": campaign.required_search_attempts,
             },
             indent=2,
             sort_keys=True,

@@ -241,6 +241,10 @@ class CompanyResearchCampaignRequest(BaseModel):
     time_budget_minutes: int = Field(default=30, ge=1, le=240)
     max_companies: int = Field(default=30, ge=1, le=100)
     notes: str | None = Field(default=None, max_length=2000)
+    additional_guidance: str | None = Field(default=None, max_length=2000)
+    target_id: str | None = Field(default=None, max_length=160)
+    target_kind: str | None = Field(default=None, max_length=40)
+    required_search_attempts: int = Field(default=3, ge=1, le=10)
 
 
 class CompanyResearchCampaignResponse(BaseModel):

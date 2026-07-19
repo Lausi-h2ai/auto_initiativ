@@ -166,6 +166,11 @@ Status: implemented as a parallel campaign path.
 
 - `initiative_outreach` remains backward-compatible.
 - `listed_job_search` uses the Vacancy Scout, job-specific schemas, deterministic verification states, manual refresh, and a separate Jobs UI.
+- New company and vacancy campaigns first persist a versioned, schema-validated research plan for user confirmation.
+- Confirmed plans run one target-scoped research task per location or remote region, with equal source-category attempt quotas and explicit covered, exhausted, and failed states.
+- Bare `Remote` is normalized to fully remote within Europe. Explicit scope conflicts are excluded by the backend; missing evidence is retained with a review marker.
+- Additional search guidance is passed to both research paths and remains distinct from backend-owned hard constraints.
+- The dashboard shows the interpreted plan and per-target attempts, candidate counts, and retained counts.
 - Employer pages may be discovered dynamically; configured trust affects whether evidence can establish `verified_open`, not whether a source may be searched.
 - Application packages are schema validated, use only approved master-CV claims, require a fresh verified vacancy, and are always submitted manually by the user.
 

@@ -21,6 +21,17 @@
     "listing_language": {"type": "string", "minLength": 1},
     "locations": {"type": "array", "items": {"type": "string"}},
     "remote_policy": {"type": "string"},
+    "work_mode": {"type": "string", "enum": ["onsite", "hybrid", "fully_remote", "unknown"]},
+    "remote_regions": {"type": "array", "items": {"type": "string"}},
+    "duration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimum_weeks": {"type": "integer", "minimum": 1},
+        "maximum_weeks": {"type": "integer", "minimum": 1},
+        "source_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
     "employment_types": {"type": "array", "items": {"type": "string"}},
     "compensation": {"type": "object"},
     "languages": {"type": "array", "items": {"type": "string"}},
