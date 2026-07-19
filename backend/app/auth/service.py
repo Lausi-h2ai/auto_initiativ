@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 
 from backend.app.core.config import Settings
 from backend.app.db.models import AuthSession, Invitation, OAuthState, User, Workspace, utc_now
+from backend.app.localization import default_workspace_name
 
 
 GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -168,7 +169,7 @@ class AuthService:
         self.session.refresh(record)
         return record
 
-    def authenticate_google_identity(self, identity: GoogleIdentity) -> User:
+    def authenticate_google_identity(self, identity: GoogleIdentity, *, locale: str = "en") -> User:
         if not identity.email_verified:
             raise HTTPException(status_code=403, detail="A verified Google email is required.")
         existing = self.session.exec(select(User).where(User.google_subject == identity.subject)).first()
@@ -213,7 +214,7 @@ class AuthService:
         )
         if legacy_workspace is not None:
             legacy_workspace.owner_user_id = user.id
-            legacy_workspace.name = f"{identity.display_name}'s workspace"
+            legacy_workspace.name = default_workspace_name(identity.display_name, locale)
             legacy_workspace.updated_at = utc_now()
             self.session.add(legacy_workspace)
             legacy_user.status = "superseded"
@@ -225,7 +226,8 @@ class AuthService:
                 Workspace(
                     workspace_id=f"workspace-{uuid4()}",
                     owner_user_id=user.id,
-                    name=f"{identity.display_name}'s workspace",
+                    name=default_workspace_name(identity.display_name, locale),
+                    locale=locale,
                 )
             )
         if invitation is not None:

@@ -39,6 +39,7 @@ class Workspace(SQLModel, table=True):
     workspace_id: str = Field(index=True, unique=True)
     owner_user_id: int = Field(foreign_key="users.id", index=True, unique=True)
     name: str
+    locale: str = Field(default="en", index=True)
     status: str = Field(default="active", index=True)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

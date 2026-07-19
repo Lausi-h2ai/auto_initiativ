@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -12,6 +13,7 @@ from backend.app.auth.service import AuthService, CredentialVault, GoogleOAuthCl
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.models import AdminAccessAudit, GmailConnection, Invitation, User, Workspace, utc_now
 from backend.app.db.session import get_session
+from backend.app.localization import default_workspace_name, normalize_locale
 
 
 router = APIRouter(tags=["authentication"])
@@ -26,10 +28,15 @@ class InvitationCreate(BaseModel):
 class LocalRegistrationCreate(BaseModel):
     display_name: str = Field(min_length=2, max_length=100)
     email: EmailStr
+    locale: Literal["en", "de-DE"] = "en"
 
 
 class LocalAccountSwitch(BaseModel):
     user_id: int
+
+
+class WorkspacePreferencesUpdate(BaseModel):
+    locale: Literal["en", "de-DE"]
 
 
 def _require_local_auth(settings: Settings) -> None:
@@ -70,6 +77,7 @@ def google_start(
 def google_callback(
     code: str,
     state: str,
+    request: Request,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
@@ -80,7 +88,7 @@ def google_callback(
         verifier=oauth_state.code_verifier,
         redirect_uri=oauth_state.redirect_uri,
     )
-    user = service.authenticate_google_identity(identity)
+    user = service.authenticate_google_identity(identity, locale=normalize_locale(request.cookies.get("ai_locale")))
     raw_token = service.create_session(user)
     response = RedirectResponse("/dashboard", status_code=303)
     response.set_cookie(
@@ -196,7 +204,8 @@ def local_register(
             Workspace(
                 workspace_id=f"workspace-local-{uuid4()}",
                 owner_user_id=user.id,
-                name=f"{display_name}'s workspace",
+                name=default_workspace_name(display_name, payload.locale),
+                locale=normalize_locale(payload.locale),
             )
         )
         session.commit()
@@ -215,7 +224,8 @@ def local_register(
         workspace = Workspace(
             workspace_id=f"workspace-local-{uuid4()}",
             owner_user_id=user.id,
-            name=f"{display_name}'s workspace",
+            name=default_workspace_name(display_name, payload.locale),
+            locale=normalize_locale(payload.locale),
         )
         session.add(workspace)
         session.commit()
@@ -226,8 +236,27 @@ def local_register(
         "id": user.id,
         "email": user.email,
         "display_name": user.display_name,
-        "workspace": {"id": workspace.workspace_id, "name": workspace.name},
+        "workspace": {"id": workspace.workspace_id, "name": workspace.name, "locale": workspace.locale},
     }
+
+
+@router.patch("/workspace/preferences")
+def update_workspace_preferences(
+    payload: WorkspacePreferencesUpdate,
+    request: Request,
+    response: Response,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    user = _request_user(request, session)
+    workspace = session.exec(select(Workspace).where(Workspace.owner_user_id == user.id)).one()
+    locale = payload.locale
+    workspace.locale = locale
+    workspace.updated_at = utc_now()
+    session.add(workspace)
+    session.commit()
+    response.set_cookie("ai_locale", locale, secure=settings.secure_cookies, samesite="lax", max_age=31536000, path="/")
+    return {"locale": locale}
 
 
 @router.post("/auth/google/gmail/start")
@@ -328,7 +357,7 @@ def me(
         "display_name": user.display_name,
         "avatar_url": user.avatar_url,
         "role": user.role,
-        "workspace": {"id": workspace.workspace_id, "name": workspace.name},
+        "workspace": {"id": workspace.workspace_id, "name": workspace.name, "locale": workspace.locale},
         "csrf_token": request.state.csrf_token,
         "local_registration_enabled": not settings.auth_required,
     }
