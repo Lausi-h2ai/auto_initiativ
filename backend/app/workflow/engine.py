@@ -988,7 +988,7 @@ class WorkflowEngine:
         draft = self.session.exec(select(EmailDraft).where(EmailDraft.imported_file_id.in_(file_ids)).order_by(EmailDraft.created_at.desc())).first() if file_ids else None
         if draft is None:
             raise ValueError("The drafting agent completed without a schema-valid cover letter.")
-        self._index_documents(task, company)
+        self._index_documents(task, company, job_id=job.job_id, job_title=job.title)
         self.session.flush()
         cv_document = self.session.exec(select(Document).where(
             Document.run_id == task.run_id, Document.document_type == "tailored_cv", Document.mime_type == "application/pdf"
@@ -1013,18 +1013,27 @@ class WorkflowEngine:
         output = scoped_runs_root(self.settings.runs_root) / task.run_id / "output"
         if not output.is_dir():
             return
-        for path in output.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in {".pdf", ".html", ".htm", ".json", ".txt"}:
+        indexed_kinds = {
+            kind
+            for kind in self.session.exec(
+                select(Document.document_type).where(
+                    Document.run_id == task.run_id,
+                    Document.mime_type == "application/pdf",
+                )
+            ).all()
+        }
+        for path in sorted(output.rglob("*")):
+            if not path.is_file() or path.suffix.lower() != ".pdf":
                 continue
-            relative = path.relative_to(scoped_runs_root(self.settings.runs_root)).as_posix()
-            existing = self.session.exec(select(Document).where(Document.relative_path == relative)).first()
-            if existing is not None:
-                continue
-            data = path.read_bytes()
             normalized_name = path.name.casefold()
             is_cover_letter = any(token in normalized_name for token in ("anschreiben", "cover-letter", "cover_letter"))
-            kind = "cover_letter" if is_cover_letter else "tailored_cv" if "cv" in normalized_name or "lebenslauf" in normalized_name else "email_draft"
-            mime = "application/pdf" if path.suffix.lower() == ".pdf" else "text/html" if path.suffix.lower() in {".html", ".htm"} else "application/json" if path.suffix.lower() == ".json" else "text/plain"
+            is_cv = any(token in normalized_name for token in ("lebenslauf", "resume", "-cv", "_cv"))
+            kind = "cover_letter" if is_cover_letter else "tailored_cv" if is_cv else None
+            if kind is None or kind in indexed_kinds:
+                continue
+            relative = path.relative_to(scoped_runs_root(self.settings.runs_root)).as_posix()
+            data = path.read_bytes()
+            title_kind = "Tailored CV" if kind == "tailored_cv" else "Cover letter"
             self.session.add(
                 Document(
                     document_id=f"document-{uuid4()}",
@@ -1032,15 +1041,16 @@ class WorkflowEngine:
                     company_id=company.id,
                     run_id=task.run_id,
                     document_type=kind,
-                    title=f"{company.name} — {'Tailored CV' if kind == 'tailored_cv' else 'Email draft'}",
+                    title=f"{company.name} — {title_kind}",
                     filename=path.name,
                     relative_path=relative,
-                    mime_type=mime,
+                    mime_type="application/pdf",
                     size_bytes=len(data),
                     content_hash=hashlib.sha256(data).hexdigest(),
                     provenance_json=json.dumps({"agent_task_id": task.task_id, "run_id": task.run_id, "job_id": job_id, "job_title": job_title}),
                 )
             )
+            indexed_kinds.add(kind)
 
     def _complete(self, task: AgentTask, narrative: str) -> None:
         task.status = "completed"

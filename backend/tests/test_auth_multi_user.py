@@ -20,6 +20,7 @@ from backend.app.db.models import (
     CampaignJob,
     Company,
     Contact,
+    Document,
     EmailDraft,
     ImportedFile,
     Invitation,
@@ -404,7 +405,90 @@ def test_legacy_drafts_and_profiles_are_exposed_as_safe_workspace_documents(auth
     assert all(item["type"] != "tailored_cv" for item in admin_documents)
 
 
-def test_campaign_creation_is_on_rails_and_enqueues_research(authenticated_app):
+def test_application_documents_index_only_logical_pdfs_without_cv_alias_duplication(authenticated_app):
+    from backend.app.workflow.engine import WorkflowEngine
+
+    identity = RequestIdentity(
+        user_id=authenticated_app["user_id"],
+        workspace_id=authenticated_app["user_workspace_id"],
+    )
+    run_id = "application-draft-logical-documents"
+    with workspace_context(identity), Session(authenticated_app["engine"]) as session:
+        company = session.exec(select(Company).where(Company.company_id == "company-shared")).one()
+        campaign = Campaign(
+            campaign_id="campaign-logical-documents",
+            name="Logical application documents",
+            campaign_type="initiative_outreach",
+            status="preparing",
+        )
+        session.add(campaign)
+        session.flush()
+        task = AgentTask(
+            task_id="task-logical-documents",
+            campaign_id=campaign.id,
+            company_id=company.id,
+            run_id=run_id,
+            agent_role="resume_and_email_team",
+            task_type="application_draft",
+            status="running",
+        )
+        session.add(task)
+        session.flush()
+        output = scoped_runs_root(authenticated_app["settings"].runs_root) / run_id / "output"
+        attachments = output / "attachments"
+        attachments.mkdir(parents=True)
+        (attachments / "company-lebenslauf.pdf").write_bytes(b"%PDF-1.4\n% cv\n")
+        (attachments / "company-anschreiben.pdf").write_bytes(b"%PDF-1.4\n% cover\n")
+        (attachments / "debug-preview.pdf").write_bytes(b"%PDF-1.4\n% debug\n")
+        (attachments / "company-lebenslauf.html").write_text("<html>CV source</html>", encoding="utf-8")
+        (attachments / "company-anschreiben.html").write_text("<html>Letter source</html>", encoding="utf-8")
+        (output / "email_draft.json").write_text("{}", encoding="utf-8")
+
+        WorkflowEngine(session, authenticated_app["settings"])._index_documents(task, company)
+        imported_file = ImportedFile(
+            run_id=run_id,
+            path="output/email_draft.json",
+            filename="email_draft.json",
+            status="imported",
+            raw_json="{}",
+        )
+        session.add(imported_file)
+        session.flush()
+        draft = EmailDraft(
+            draft_id="draft-logical-documents",
+            company_id=company.id,
+            external_company_id=company.company_id,
+            external_contact_id="contact-logical-documents",
+            subject="Logical documents",
+            body_text="Hello",
+            confidence=0.9,
+            raw_json="{}",
+            imported_file_id=imported_file.id,
+        )
+        session.add(draft)
+        session.commit()
+        draft_id = draft.id
+
+        indexed = session.exec(select(Document).where(Document.run_id == run_id)).all()
+        assert {item.filename for item in indexed} == {"company-lebenslauf.pdf", "company-anschreiben.pdf"}
+        assert {item.document_type for item in indexed} == {"tailored_cv", "cover_letter"}
+        assert next(item for item in indexed if item.document_type == "cover_letter").title.endswith("Cover letter")
+
+    client = authenticated_app["client"]
+    cookies = {"ai_session": authenticated_app["user_token"]}
+    documents = client.get("/documents", cookies=cookies).json()
+    run_documents = [item for item in documents if item.get("filename", "").startswith("company-") or item["id"] == f"email-draft-{draft_id}"]
+    assert len(run_documents) == 3
+    assert [item["type"] for item in run_documents].count("tailored_cv") == 1
+    assert [item["type"] for item in run_documents].count("cover_letter") == 1
+    assert [item["type"] for item in run_documents].count("email_draft") == 1
+
+    legacy_alias = client.get(f"/documents/tailored-cv-{draft_id}/download", cookies=cookies)
+    assert legacy_alias.status_code == 200
+    assert legacy_alias.content == b"%PDF-1.4\n% cv\n"
+
+
+def test_campaign_creation_is_on_rails_and_requires_plan_confirmation(authenticated_app):
     client = authenticated_app["client"]
     token = authenticated_app["user_token"]
     headers = {"X-CSRF-Token": csrf_token(token, authenticated_app["settings"])}

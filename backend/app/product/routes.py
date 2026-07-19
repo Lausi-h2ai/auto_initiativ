@@ -655,8 +655,15 @@ def _tailored_cv_path(run_id: str, settings: Settings, suffix: str = ".pdf") -> 
         if not attachments.is_relative_to(root) or not attachments.is_dir():
             continue
         files = sorted(path.resolve() for path in attachments.glob(f"*{suffix}") if path.is_file())
-        if files and files[0].is_relative_to(root):
-            return files[0]
+        cv_files = [
+            path
+            for path in files
+            if any(token in path.name.casefold() for token in ("lebenslauf", "resume", "-cv", "_cv"))
+            and not any(token in path.name.casefold() for token in ("anschreiben", "cover-letter", "cover_letter"))
+        ]
+        selected = cv_files[0] if cv_files else files[0] if len(files) == 1 else None
+        if selected is not None and selected.is_relative_to(root):
+            return selected
     return None
 
 
@@ -671,6 +678,11 @@ def _document_items(session: Session, settings: Settings, campaign_id: str | Non
             for item in session.exec(select(CampaignCompany).where(CampaignCompany.campaign_id == campaign.id)).all()
         }
     documents = session.exec(statement).all()
+    indexed_cv_run_ids = {
+        item.run_id
+        for item in documents
+        if item.run_id and item.document_type == "tailored_cv" and item.mime_type == "application/pdf"
+    }
     items = [
         {
             "id": item.document_id,
@@ -734,7 +746,7 @@ def _document_items(session: Session, settings: Settings, campaign_id: str | Non
         )
         run_id = run_ids.get(draft.imported_file_id)
         cv_path = _tailored_cv_path(run_id, settings) if run_id else None
-        if cv_path is not None:
+        if cv_path is not None and run_id not in indexed_cv_run_ids:
             items.append(
                 {
                     "id": f"tailored-cv-{draft.id}",
