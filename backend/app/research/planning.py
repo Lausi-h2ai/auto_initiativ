@@ -17,6 +17,13 @@ from backend.app.db.models import Campaign, ResearchPlan, ResearchTarget, utc_no
 
 DEFAULT_REQUIRED_ATTEMPTS = 3
 REMOTE_TOKENS = {"remote", "fully remote", "100% remote", "full remote"}
+MAX_PARALLEL_TARGETS = 3
+SHARED_POOL_FRACTION = 0.20
+EFFORT_MODES: dict[str, tuple[int, int]] = {
+    "focused": (15, 15),
+    "balanced": (30, 30),
+    "broad": (50, 45),
+}
 
 
 def _fold(value: str) -> str:
@@ -45,6 +52,11 @@ def _duration_constraint(text: str) -> dict[str, Any] | None:
                 "confidence": 0.99,
             }
     return None
+
+
+def _split_integer(total: int, count: int) -> list[int]:
+    quotient, remainder = divmod(max(total, 0), count)
+    return [quotient + (1 if index < remainder else 0) for index in range(count)]
 
 
 def compile_research_plan(campaign: Campaign, *, schema_path: Path) -> dict[str, Any]:
@@ -83,6 +95,29 @@ def compile_research_plan(campaign: Campaign, *, schema_path: Path) -> dict[str,
                 "required_attempts": DEFAULT_REQUIRED_ATTEMPTS,
             }
         )
+
+    effort_mode = str(brief.get("search_breadth") or "custom").casefold()
+    if effort_mode not in EFFORT_MODES:
+        effort_mode = "custom"
+    candidate_key = "max_jobs" if campaign.campaign_type == "listed_job_search" else "max_companies"
+    candidate_goal = int(brief.get(candidate_key) or 30)
+    time_budget_minutes = int(brief.get("time_budget_minutes") or 30)
+    if effort_mode in EFFORT_MODES:
+        candidate_goal, time_budget_minutes = EFFORT_MODES[effort_mode]
+    total_time_seconds = time_budget_minutes * 60
+    if len(targets) == 1:
+        guaranteed_candidate_total = candidate_goal
+        guaranteed_time_total = total_time_seconds
+    else:
+        guaranteed_candidate_total = int(candidate_goal * (1 - SHARED_POOL_FRACTION))
+        guaranteed_time_total = int(total_time_seconds * (1 - SHARED_POOL_FRACTION))
+    candidate_allocations = _split_integer(guaranteed_candidate_total, len(targets))
+    time_allocations = _split_integer(guaranteed_time_total, len(targets))
+    for target, candidate_allocation, time_allocation in zip(
+        targets, candidate_allocations, time_allocations, strict=True
+    ):
+        target["guaranteed_candidate_goal"] = candidate_allocation
+        target["guaranteed_time_seconds"] = time_allocation
 
     combined = " ".join(part for part in (role_focus, guidance) if part)
     hard_constraints: list[dict[str, Any]] = []
@@ -130,12 +165,22 @@ def compile_research_plan(campaign: Campaign, *, schema_path: Path) -> dict[str,
         review_flags.append("vague_distance_preference")
 
     plan = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "plan_id": f"research-plan-{uuid4()}",
         "campaign_id": campaign.campaign_id,
         "campaign_type": campaign.campaign_type,
         "role_focus": role_focus,
         "additional_guidance": guidance,
+        "effort": {
+            "mode": effort_mode,
+            "candidate_kind": "job" if campaign.campaign_type == "listed_job_search" else "company",
+            "candidate_goal": candidate_goal,
+            "time_budget_seconds": total_time_seconds,
+            "max_parallel_targets": min(MAX_PARALLEL_TARGETS, len(targets)),
+            "allocation_policy": "equal_floor_shared_pool",
+            "shared_candidate_pool": candidate_goal - sum(candidate_allocations),
+            "shared_time_pool_seconds": total_time_seconds - sum(time_allocations),
+        },
         "targets": targets,
         "hard_constraints": hard_constraints,
         "soft_preferences": soft_preferences,
@@ -180,6 +225,8 @@ def replace_pending_plan(session: Session, campaign: Campaign, plan: dict[str, A
                 target_kind=item["kind"],
                 normalized_value=item["normalized_value"],
                 required_attempts=item["required_attempts"],
+                guaranteed_candidate_goal=item.get("guaranteed_candidate_goal", 0),
+                guaranteed_time_seconds=item.get("guaranteed_time_seconds", 0),
                 workspace_id=campaign.workspace_id,
             )
         )

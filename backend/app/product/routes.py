@@ -53,7 +53,7 @@ from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
 from backend.app.imports.job_normalizer import JobNormalizationService
 from backend.app.master_cv.contracts import MasterCvDocument
 from backend.app.localization import localized_text, workspace_locale
-from backend.app.research.planning import compile_research_plan, confirm_plan, plan_hash, replace_pending_plan
+from backend.app.research.planning import EFFORT_MODES, compile_research_plan, confirm_plan, plan_hash, replace_pending_plan
 
 
 router = APIRouter(tags=["product"])
@@ -67,6 +67,7 @@ class CampaignCreate(BaseModel):
     company_preferences: str | None = Field(default=None, max_length=2000)
     additional_guidance: str | None = Field(default=None, max_length=2000)
     notes: str | None = Field(default=None, max_length=2000)
+    search_breadth: Literal["focused", "balanced", "broad"] | None = None
     time_budget_minutes: int = Field(default=30, ge=1, le=240)
     max_companies: int = Field(default=30, ge=1, le=100)
     max_jobs: int = Field(default=30, ge=1, le=100)
@@ -87,6 +88,7 @@ class CampaignModeUpdate(BaseModel):
 class JobCampaignRefresh(BaseModel):
     role_focus: str | None = Field(default=None, min_length=1, max_length=240)
     locations: list[str] | None = Field(default=None, max_length=20)
+    search_breadth: Literal["focused", "balanced", "broad"] | None = None
     time_budget_minutes: int | None = Field(default=None, ge=1, le=240)
     max_jobs: int | None = Field(default=None, ge=1, le=100)
     freshness_days: int | None = Field(default=None, ge=1, le=180)
@@ -97,6 +99,7 @@ class CampaignPlanUpdate(BaseModel):
     role_focus: str | None = Field(default=None, min_length=1, max_length=240)
     locations: list[str] | None = Field(default=None, max_length=20)
     additional_guidance: str | None = Field(default=None, max_length=2000)
+    search_breadth: Literal["focused", "balanced", "broad"] | None = None
 
 
 class JobApplicationStatusUpdate(BaseModel):
@@ -133,6 +136,16 @@ def _campaign(session: Session, campaign_id: str) -> Campaign:
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
     return campaign
+
+
+def _apply_effort_mode(brief: dict[str, Any]) -> None:
+    mode = brief.get("search_breadth")
+    if mode not in EFFORT_MODES:
+        return
+    candidate_goal, time_budget_minutes = EFFORT_MODES[str(mode)]
+    brief["time_budget_minutes"] = time_budget_minutes
+    brief["max_companies"] = candidate_goal
+    brief["max_jobs"] = candidate_goal
 
 
 def _campaign_response(campaign: Campaign, session: Session) -> dict[str, Any]:
@@ -194,6 +207,10 @@ def _campaign_response(campaign: Campaign, session: Session) -> dict[str, Any]:
                 "completed_attempts": target.completed_attempts,
                 "candidate_count": target.candidate_count,
                 "retained_count": target.retained_count,
+                "guaranteed_candidate_goal": target.guaranteed_candidate_goal,
+                "guaranteed_time_seconds": target.guaranteed_time_seconds,
+                "consumed_time_seconds": target.consumed_time_seconds,
+                "shared_lease_count": target.shared_lease_count,
                 "last_error": target.last_error,
             }
             for target in targets
@@ -231,6 +248,13 @@ def create_campaign(
         .where(MasterCvDocumentSnapshot.status == "approved")
         .order_by(MasterCvDocumentSnapshot.version_number.desc())
     ).first()
+    max_companies = payload.max_companies
+    max_jobs = payload.max_jobs
+    time_budget_minutes = payload.time_budget_minutes
+    if payload.search_breadth:
+        candidate_goal, time_budget_minutes = EFFORT_MODES[payload.search_breadth]
+        max_companies = candidate_goal
+        max_jobs = candidate_goal
     campaign = Campaign(
         campaign_id=f"campaign-{uuid4()}",
         name=payload.name.strip(),
@@ -243,9 +267,10 @@ def create_campaign(
                 "locations": payload.locations,
                 "additional_guidance": (payload.additional_guidance or payload.company_preferences or "").strip(),
                 "notes": payload.notes,
-                "time_budget_minutes": payload.time_budget_minutes,
-                "max_companies": payload.max_companies,
-                "max_jobs": payload.max_jobs,
+                "search_breadth": payload.search_breadth,
+                "time_budget_minutes": time_budget_minutes,
+                "max_companies": max_companies,
+                "max_jobs": max_jobs,
                 "freshness_days": payload.freshness_days,
                 "seniority": payload.seniority,
                 "employment_types": payload.employment_types,
@@ -302,10 +327,18 @@ def confirm_campaign_research_plan(campaign_id: str, session: Session = Depends(
     targets = session.exec(
         select(ResearchTarget).where(ResearchTarget.research_plan_id == plan.id).order_by(ResearchTarget.id)
     ).all()
+    raw_plan = json.loads(plan.raw_json)
+    is_coordinated = raw_plan.get("schema_version") == "1.1"
     task_type = "job_research_target" if campaign.campaign_type == "listed_job_search" else "company_research_target"
     agent_role = "vacancy_scout" if campaign.campaign_type == "listed_job_search" else "company_researcher"
     for target in targets:
+        planned_target = next(
+            (item for item in raw_plan.get("targets", []) if item.get("target_id") == target.target_id),
+            {},
+        )
         target.status = "queued"
+        if is_coordinated:
+            target.reserved_time_seconds = int(planned_target.get("guaranteed_time_seconds") or 0)
         target.updated_at = utc_now()
         session.add(target)
         session.add(
@@ -319,7 +352,24 @@ def confirm_campaign_research_plan(campaign_id: str, session: Session = Depends(
                     f"Queued an independent research pass for {target.label}.",
                     f"Ein eigenständiger Recherchelauf für {target.label} wurde eingeplant.",
                 ),
-                input_json=json.dumps({"research_target_id": target.id, "target_id": target.target_id}, sort_keys=True),
+                input_json=json.dumps(
+                    {
+                        "research_target_id": target.id,
+                        "target_id": target.target_id,
+                        "budget_phase": "guaranteed" if is_coordinated else "legacy",
+                        "candidate_goal": (
+                            max(1, int(planned_target.get("guaranteed_candidate_goal") or 0))
+                            if is_coordinated
+                            else None
+                        ),
+                        "time_budget_seconds": (
+                            int(planned_target.get("guaranteed_time_seconds") or 0)
+                            if is_coordinated
+                            else None
+                        ),
+                    },
+                    sort_keys=True,
+                ),
                 workspace_id=campaign.workspace_id,
             )
         )
@@ -356,6 +406,7 @@ def recompile_campaign_research_plan(
     if "additional_guidance" in updates:
         updates["additional_guidance"] = str(updates["additional_guidance"]).strip()
     brief.update(updates)
+    _apply_effort_mode(brief)
     campaign.brief_json = json.dumps(brief, sort_keys=True)
     replace_pending_plan(
         session,
@@ -1131,6 +1182,7 @@ def refresh_job_campaign(
         if "locations" in updates:
             updates["locations"] = [str(value).strip() for value in updates["locations"] if str(value).strip()]
         brief.update(updates)
+        _apply_effort_mode(brief)
         campaign.brief_json = json.dumps(brief, sort_keys=True)
     latest_plan = session.exec(
         select(ResearchPlan).where(ResearchPlan.campaign_id == campaign.id).order_by(ResearchPlan.version.desc())

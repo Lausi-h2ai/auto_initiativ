@@ -43,6 +43,9 @@ from backend.app.localization import localized_text, workspace_locale
 
 TERMINAL_RUNTIME_STATUSES = {"imported", "imported_with_errors", "import_failed", "research_failed", "failed"}
 FAILED_RUNTIME_STATUSES = {"import_failed", "research_failed", "failed"}
+SHARED_RESEARCH_LEASE_SECONDS = 120
+SHARED_RESEARCH_LEASE_CANDIDATES = 2
+MAX_SHARED_LEASES_PER_TARGET = 3
 _worker: "WorkflowWorker | None" = None
 
 
@@ -231,6 +234,8 @@ class WorkflowEngine:
                 research_target=target,
                 session=self.session,
                 settings=self.settings,
+                candidate_goal=int(payload["candidate_goal"]) if payload.get("candidate_goal") else None,
+                time_budget_seconds=int(payload["time_budget_seconds"]) if payload.get("time_budget_seconds") else None,
             )
             JobResearchRuntime(settings=self.settings).launch(run_id)
         else:
@@ -239,13 +244,19 @@ class WorkflowEngine:
             from backend.app.schemas.api import CompanyResearchCampaignRequest
 
             brief = json_object(campaign.brief_json)
+            time_budget_seconds = int(payload["time_budget_seconds"]) if payload.get("time_budget_seconds") else None
             prepared = prepare_company_research_campaign(
                 CompanyResearchCampaignRequest(
                     run_id=f"campaign-{campaign.campaign_id}-{target.target_id}-{uuid4().hex[:8]}",
                     role_focus=str(brief.get("role_focus") or "Profile-aligned roles"),
                     locations=[target.label],
-                    time_budget_minutes=int(brief.get("time_budget_minutes") or 30),
-                    max_companies=int(brief.get("max_companies") or 30),
+                    time_budget_minutes=(
+                        max(1, (time_budget_seconds + 59) // 60)
+                        if time_budget_seconds
+                        else int(brief.get("time_budget_minutes") or 30)
+                    ),
+                    time_budget_seconds=time_budget_seconds,
+                    max_companies=int(payload["candidate_goal"]) if payload.get("candidate_goal") else int(brief.get("max_companies") or 30),
                     notes=str(brief.get("notes")) if brief.get("notes") else None,
                     additional_guidance=str(brief.get("additional_guidance") or brief.get("company_preferences") or ""),
                     target_id=target.target_id,
@@ -572,8 +583,12 @@ class WorkflowEngine:
             self.session.commit()
             return
         if state in FAILED_RUNTIME_STATUSES:
-            target.status = "failed"
-            target.last_error = f"Research runtime ended with {state}."
+            if payload.get("budget_phase") == "shared" and attempts >= target.required_attempts:
+                target.status = "covered"
+                target.last_error = f"Shared-budget follow-up ended with {state}; initial coverage is preserved."
+            else:
+                target.status = "failed"
+                target.last_error = f"Research runtime ended with {state}."
         elif attempts >= target.required_attempts:
             target.status = "covered"
         else:
@@ -585,10 +600,123 @@ class WorkflowEngine:
         task.locked_at = None
         task.locked_by = None
         task.narrative = self._text(task.workspace_id, f"{target.label} finished with {count} candidates ({target.status}).", f"{target.label} wurde mit {count} Kandidaten abgeschlossen ({target.status}).")
+        runtime_state = status.get("state") if isinstance(status.get("state"), dict) else {}
+        elapsed_seconds = runtime_state.get("elapsed_seconds")
+        if isinstance(elapsed_seconds, int | float) and elapsed_seconds > 0:
+            target.consumed_time_seconds += max(1, int(round(elapsed_seconds)))
+        target.reserved_time_seconds = 0
         self.session.add_all([target, task])
         self.session.flush()
-        self._maybe_finalize_balanced_campaign(campaign)
+        if not self._maybe_schedule_shared_research(campaign):
+            self._maybe_finalize_balanced_campaign(campaign)
         self.session.commit()
+
+    def _maybe_schedule_shared_research(self, campaign: Campaign) -> bool:
+        plan = self.session.exec(
+            select(ResearchPlan)
+            .where(ResearchPlan.campaign_id == campaign.id, ResearchPlan.status == "confirmed")
+            .order_by(ResearchPlan.version.desc())
+        ).first()
+        if plan is None:
+            return False
+        raw_plan = json_object(plan.raw_json)
+        if raw_plan.get("schema_version") != "1.1":
+            return False
+        targets = self.session.exec(
+            select(ResearchTarget).where(ResearchTarget.research_plan_id == plan.id).order_by(ResearchTarget.id)
+        ).all()
+        active = self.session.exec(
+            select(AgentTask).where(
+                AgentTask.campaign_id == campaign.id,
+                AgentTask.task_type.in_(["company_research_target", "job_research_target"]),
+                AgentTask.status.in_(["queued", "retry", "running"]),
+            )
+        ).all()
+        if active or any(target.status not in {"covered", "exhausted", "failed"} for target in targets):
+            return bool(active)
+        effort = raw_plan.get("effort") if isinstance(raw_plan.get("effort"), dict) else {}
+        candidate_goal = int(effort.get("candidate_goal") or 0)
+        total_time_seconds = int(effort.get("time_budget_seconds") or 0)
+        discoveries = self.session.exec(
+            select(ResearchDiscovery).where(ResearchDiscovery.campaign_id == campaign.id)
+        ).all()
+        unique_candidates = len(
+            {(item.candidate_kind, item.candidate_external_id) for item in discoveries}
+        )
+        needs_coverage = [
+            target
+            for target in targets
+            if target.status != "failed" and target.completed_attempts < target.required_attempts
+        ]
+        if unique_candidates >= candidate_goal and not needs_coverage:
+            return False
+        available_seconds = total_time_seconds - sum(
+            target.consumed_time_seconds + target.reserved_time_seconds for target in targets
+        )
+        if available_seconds < 60:
+            return False
+        eligible = [
+            target
+            for target in targets
+            if target.status != "failed"
+            and target.shared_lease_count < MAX_SHARED_LEASES_PER_TARGET
+            and (target in needs_coverage or unique_candidates < candidate_goal)
+        ]
+        if not eligible:
+            return False
+        eligible.sort(
+            key=lambda target: (
+                0 if target in needs_coverage else 1,
+                target.shared_lease_count,
+                -target.candidate_count,
+                target.id or 0,
+            )
+        )
+        max_parallel = min(int(effort.get("max_parallel_targets") or 1), len(eligible))
+        selected = eligible[:max_parallel]
+        remaining_candidate_goal = max(candidate_goal - unique_candidates, 1)
+        task_type = "job_research_target" if campaign.campaign_type == "listed_job_search" else "company_research_target"
+        agent_role = "vacancy_scout" if campaign.campaign_type == "listed_job_search" else "company_researcher"
+        locale = workspace_locale(self.session, campaign.workspace_id)
+        scheduled = 0
+        for target in selected:
+            if available_seconds < 60:
+                break
+            lease_seconds = min(SHARED_RESEARCH_LEASE_SECONDS, available_seconds)
+            lease_goal = min(SHARED_RESEARCH_LEASE_CANDIDATES, remaining_candidate_goal)
+            target.status = "queued"
+            target.reserved_time_seconds = lease_seconds
+            target.shared_lease_count += 1
+            target.updated_at = utc_now()
+            self.session.add(target)
+            self.session.add(
+                AgentTask(
+                    task_id=f"task-{uuid4()}",
+                    campaign_id=campaign.id,
+                    agent_role=agent_role,
+                    task_type=task_type,
+                    narrative=localized_text(
+                        locale,
+                        f"Queued a shared-budget follow-up pass for {target.label}.",
+                        f"Ein Folgelauf aus dem gemeinsamen Budget für {target.label} wurde eingeplant.",
+                    ),
+                    input_json=json.dumps(
+                        {
+                            "research_target_id": target.id,
+                            "target_id": target.target_id,
+                            "budget_phase": "shared",
+                            "candidate_goal": lease_goal,
+                            "time_budget_seconds": lease_seconds,
+                        },
+                        sort_keys=True,
+                    ),
+                    workspace_id=campaign.workspace_id,
+                )
+            )
+            available_seconds -= lease_seconds
+            remaining_candidate_goal = max(remaining_candidate_goal - lease_goal, 1)
+            scheduled += 1
+        return scheduled > 0
 
     @staticmethod
     def _remote_scope_status(job: JobPosting) -> tuple[str, list[str]]:
@@ -1142,13 +1270,32 @@ class WorkflowWorker:
                         "job_application_draft",
                     ]),
                 ).order_by(AgentTask.updated_at)
-            ).first()
-            task = running or session.exec(
+            ).all()
+            target_task_types = {"company_research_target", "job_research_target"}
+            running_target_count = sum(1 for item in running if item.task_type in target_task_types)
+            queued_target = session.exec(
                 select(AgentTask).where(
                     AgentTask.status.in_(["queued", "retry"]),
                     AgentTask.available_at <= utc_now(),
+                    AgentTask.task_type.in_(list(target_task_types)),
                 ).order_by(AgentTask.available_at, AgentTask.created_at)
             ).first()
+            can_launch_target = (
+                queued_target is not None
+                and running_target_count < self.settings.research_target_max_concurrency
+                and all(item.task_type in target_task_types for item in running)
+            )
+            if can_launch_target:
+                task = queued_target
+            elif running:
+                task = running[0]
+            else:
+                task = session.exec(
+                    select(AgentTask).where(
+                        AgentTask.status.in_(["queued", "retry"]),
+                        AgentTask.available_at <= utc_now(),
+                    ).order_by(AgentTask.available_at, AgentTask.created_at)
+                ).first()
             if task is None or task.workspace_id is None:
                 return False
             workspace = session.get(Workspace, task.workspace_id)

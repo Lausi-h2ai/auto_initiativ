@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     credential_encryption_key: str | None = Field(default=None, validation_alias="CREDENTIAL_ENCRYPTION_KEY")
     secure_cookies: bool = Field(default=False, validation_alias="SECURE_COOKIES")
     workflow_worker_enabled: bool = Field(default=True, validation_alias="WORKFLOW_WORKER_ENABLED")
+    research_target_max_concurrency: int = Field(default=3, ge=1, le=10, validation_alias="RESEARCH_TARGET_MAX_CONCURRENCY")
     dev_auth_bypass_email: str | None = Field(default=None, validation_alias="DEV_AUTH_BYPASS_EMAIL")
     issue_log_path: Path = Field(default=REPO_ROOT / "logs" / "issues.ndjson", validation_alias="ISSUE_LOG_PATH")
     codex_exec_binary: str = Field(default="codex", validation_alias="CODEX_EXEC_BINARY")

@@ -14,6 +14,7 @@ class JobResearchCampaign:
     max_jobs: int
     freshness_days: int
     filters: dict[str, Any]
+    time_budget_seconds: int | None = None
     notes: str | None = None
     additional_guidance: str | None = None
     target_id: str | None = None
@@ -62,7 +63,7 @@ def build_job_research_task(campaign: JobResearchCampaign) -> str:
     return (
         "# Verified Job Listing Campaign\n\n"
         f"Find up to {campaign.max_jobs} strong vacancies posted within the last {campaign.freshness_days} days "
-        f"within about {campaign.time_budget_minutes} minutes.\n\n"
+        f"within about {(campaign.time_budget_seconds or campaign.time_budget_minutes * 60) / 60:g} minutes.\n\n"
         f"```json\n{json.dumps(campaign.__dict__, indent=2, sort_keys=True)}\n```\n\n"
         "Read the approved profile, master CV, policy, campaign, known jobs, trusted sources, and JSON schemas from ../input. "
         "Build a broad lead backlog before selecting the strongest results. Follow promising employers to career pages even when those pages are not preconfigured. "

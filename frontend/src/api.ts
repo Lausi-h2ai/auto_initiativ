@@ -28,11 +28,23 @@ export type Campaign = {
     plan_id: string;
     role_focus: string;
     additional_guidance: string;
+    effort?: {
+      mode: "focused" | "balanced" | "broad" | "custom";
+      candidate_kind: "company" | "job";
+      candidate_goal: number;
+      time_budget_seconds: number;
+      max_parallel_targets: number;
+      allocation_policy: "equal_floor_shared_pool";
+      shared_candidate_pool: number;
+      shared_time_pool_seconds: number;
+    };
     targets: Array<{
       target_id: string;
       label: string;
       kind: "geographic" | "remote";
       required_attempts: number;
+      guaranteed_candidate_goal?: number;
+      guaranteed_time_seconds?: number;
     }>;
     hard_constraints: Array<{
       key: string;
@@ -53,6 +65,10 @@ export type Campaign = {
     completed_attempts: number;
     candidate_count: number;
     retained_count: number;
+    guaranteed_candidate_goal: number;
+    guaranteed_time_seconds: number;
+    consumed_time_seconds: number;
+    shared_lease_count: number;
     last_error?: string | null;
   }>;
 };

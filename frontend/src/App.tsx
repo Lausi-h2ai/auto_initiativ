@@ -630,12 +630,12 @@ function ResearchPlanPanel({
           <p className="eyebrow">
             {campaign.research_plan_status === "pending_confirmation"
               ? "Confirm the interpretation"
-              : "Balanced search coverage"}
+              : `${human(plan.effort?.mode || "legacy")} search coverage`}
           </p>
           <h2>
             {campaign.research_plan_status === "pending_confirmation"
               ? "Here is how your team understood the brief"
-              : "Every target gets its own search pass"}
+              : "One shared budget, fair coverage for every target"}
           </h2>
         </div>
         {campaign.research_plan_status === "pending_confirmation" && (
@@ -644,6 +644,18 @@ function ResearchPlanPanel({
           </button>
         )}
       </header>
+      {plan.effort && (
+        <div className="plan-effort-summary">
+          <strong>
+            About {plan.effort.candidate_goal}{" "}
+            {plan.effort.candidate_kind === "job" ? "positions" : "companies"} total
+          </strong>
+          <span>
+            {Math.round(plan.effort.time_budget_seconds / 60)} aggregate agent-minutes · up to{" "}
+            {plan.effort.max_parallel_targets} locations in parallel
+          </span>
+        </div>
+      )}
       <div className="research-plan-grid">
         <div>
           <strong>Search targets</strong>
@@ -655,8 +667,10 @@ function ResearchPlanPanel({
                   <b>{target.label}</b>
                   <small>
                     {coverage
-                      ? `${human(coverage.status)} · ${coverage.completed_attempts}/${coverage.required_attempts} attempts · ${coverage.candidate_count} found`
-                      : `${target.required_attempts} required attempts`}
+                      ? `${human(coverage.status)} · ${coverage.completed_attempts}/${coverage.required_attempts} attempts · ${coverage.candidate_count} found${plan.effort ? ` · initial guidance ${coverage.guaranteed_candidate_goal} candidates / ${Math.ceil(coverage.guaranteed_time_seconds / 60)} min · ${coverage.shared_lease_count} shared passes` : ""}`
+                      : target.guaranteed_time_seconds
+                        ? `${target.required_attempts} required attempts · initial guidance ${target.guaranteed_candidate_goal || 0} candidates / ${Math.ceil(target.guaranteed_time_seconds / 60)} min`
+                        : `${target.required_attempts} required attempts`}
                   </small>
                 </span>
               );
@@ -1573,6 +1587,8 @@ function CampaignWizard() {
     locations: "",
     additional_guidance: "",
     notes: "",
+    search_breadth: "balanced" as "focused" | "balanced" | "broad",
+    time_budget_minutes: 30,
     max_companies: 30,
     max_jobs: 30,
     freshness_days: 30,
@@ -1761,24 +1777,26 @@ function CampaignWizard() {
             </Field>
             <div className="range-choice">
               <span>Search breadth</span>
-              {[15, 30, 50].map((count) => (
+              {([
+                { mode: "focused" as const, count: 15, minutes: 15, label: "Focused" },
+                { mode: "balanced" as const, count: 30, minutes: 30, label: "Balanced" },
+                { mode: "broad" as const, count: 50, minutes: 45, label: "Broad" },
+              ]).map(({ mode, count, minutes, label }) => (
                 <button
-                  className={(isJobs ? form.max_jobs : form.max_companies) === count ? "selected" : ""}
+                  className={form.search_breadth === mode ? "selected" : ""}
                   onClick={() =>
                     setForm(
                       isJobs
-                        ? { ...form, max_jobs: count }
-                        : { ...form, max_companies: count },
+                        ? { ...form, search_breadth: mode, max_jobs: count, time_budget_minutes: minutes }
+                        : { ...form, search_breadth: mode, max_companies: count, time_budget_minutes: minutes },
                     )
                   }
-                  key={count}
+                  key={mode}
                 >
-                  {count === 15
-                    ? "Focused"
-                    : count === 30
-                      ? "Balanced"
-                      : "Broad"}
-                  <small>about {count} {isJobs ? "positions" : "companies"}</small>
+                  {label}
+                  <small>
+                    about {count} {isJobs ? "positions" : "companies"} total · {minutes} agent-min
+                  </small>
                 </button>
               ))}
             </div>
@@ -1873,7 +1891,7 @@ function CampaignWizard() {
               />
               <ReviewRow
                 label="Breadth"
-                value={`${isJobs ? form.max_jobs : form.max_companies} ${isJobs ? "positions" : "companies"}`}
+                value={`About ${isJobs ? form.max_jobs : form.max_companies} ${isJobs ? "positions" : "companies"} total across all locations · ${form.time_budget_minutes} agent-min`}
               />
               <ReviewRow
                 label="Autonomy"

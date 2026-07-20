@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.app.db.models import (
@@ -47,6 +48,47 @@ def test_compile_plan_normalizes_bare_remote_and_preserves_order_and_guidance():
     assert constraints["work_mode"] == "fully_remote"
     assert constraints["remote_region"] == "Europe"
     assert plan["review_flags"] == ["vague_distance_preference"]
+
+
+@pytest.mark.parametrize(
+    ("campaign_type", "candidate_kind"),
+    [
+        ("initiative_outreach", "company"),
+        ("listed_job_search", "job"),
+    ],
+)
+def test_balanced_budget_is_campaign_wide_for_company_and_job_search(campaign_type, candidate_kind):
+    campaign = Campaign(
+        campaign_id=f"campaign-{candidate_kind}-budget",
+        name="Balanced global budget",
+        campaign_type=campaign_type,
+        brief_json=json.dumps(
+            {
+                "role_focus": "Applied AI",
+                "locations": ["Zurich", "Basel", "Remote"],
+                "search_breadth": "balanced",
+                "time_budget_minutes": 999,
+                "max_companies": 99,
+                "max_jobs": 99,
+            }
+        ),
+    )
+
+    plan = compile_research_plan(campaign, schema_path=SCHEMA)
+
+    assert plan["schema_version"] == "1.1"
+    assert plan["effort"] == {
+        "mode": "balanced",
+        "candidate_kind": candidate_kind,
+        "candidate_goal": 30,
+        "time_budget_seconds": 1800,
+        "max_parallel_targets": 3,
+        "allocation_policy": "equal_floor_shared_pool",
+        "shared_candidate_pool": 6,
+        "shared_time_pool_seconds": 360,
+    }
+    assert [target["guaranteed_candidate_goal"] for target in plan["targets"]] == [8, 8, 8]
+    assert [target["guaranteed_time_seconds"] for target in plan["targets"]] == [480, 480, 480]
 
 
 def test_company_preferences_is_a_backward_compatible_guidance_alias():
@@ -156,3 +198,56 @@ def test_balanced_company_research_finalization_keeps_uncertain_scope_and_queues
         assert campaign.status == "preparing"
         assert "needs review" in (link.stage_reason or "")
         assert task.task_type == "contact_research"
+
+
+@pytest.mark.parametrize(
+    ("campaign_type", "task_type"),
+    [
+        ("initiative_outreach", "company_research_target"),
+        ("listed_job_search", "job_research_target"),
+    ],
+)
+def test_shared_budget_followups_are_supported_for_both_research_types(tmp_path, campaign_type, task_type):
+    engine = create_engine(f"sqlite:///{tmp_path / f'{campaign_type}.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        campaign = Campaign(
+            campaign_id=f"campaign-{campaign_type}",
+            name="Shared pool",
+            campaign_type=campaign_type,
+            status="researching",
+            brief_json=json.dumps(
+                {
+                    "role_focus": "Applied AI",
+                    "locations": ["Zurich", "Basel"],
+                    "search_breadth": "balanced",
+                    "max_companies": 30,
+                    "max_jobs": 30,
+                    "time_budget_minutes": 30,
+                }
+            ),
+        )
+        session.add(campaign)
+        session.flush()
+        payload = compile_research_plan(campaign, schema_path=SCHEMA)
+        plan = replace_pending_plan(session, campaign, payload)
+        confirm_plan(plan)
+        targets = session.exec(select(ResearchTarget).where(ResearchTarget.research_plan_id == plan.id)).all()
+        for target in targets:
+            target.status = "covered"
+            target.completed_attempts = target.required_attempts
+            target.consumed_time_seconds = 60
+            target.reserved_time_seconds = 0
+            session.add(target)
+        session.add(plan)
+        session.commit()
+
+        assert WorkflowEngine(session)._maybe_schedule_shared_research(campaign) is True
+        session.commit()
+
+        tasks = session.exec(select(AgentTask).where(AgentTask.campaign_id == campaign.id)).all()
+        assert len(tasks) == 2
+        assert {task.task_type for task in tasks} == {task_type}
+        assert all(json.loads(task.input_json)["budget_phase"] == "shared" for task in tasks)
+        assert all(json.loads(task.input_json)["candidate_goal"] == 2 for task in tasks)
+        assert all(json.loads(task.input_json)["time_budget_seconds"] == 120 for task in tasks)

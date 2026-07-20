@@ -11,18 +11,43 @@
     "campaign_type",
     "role_focus",
     "additional_guidance",
+    "effort",
     "targets",
     "hard_constraints",
     "soft_preferences",
     "review_flags"
   ],
   "properties": {
-    "schema_version": {"type": "string", "const": "1.0"},
+    "schema_version": {"type": "string", "const": "1.1"},
     "plan_id": {"type": "string", "minLength": 1},
     "campaign_id": {"type": "string", "minLength": 1},
     "campaign_type": {"type": "string", "enum": ["initiative_outreach", "listed_job_search"]},
     "role_focus": {"type": "string", "minLength": 1},
     "additional_guidance": {"type": "string"},
+    "effort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "candidate_kind",
+        "candidate_goal",
+        "time_budget_seconds",
+        "max_parallel_targets",
+        "allocation_policy",
+        "shared_candidate_pool",
+        "shared_time_pool_seconds"
+      ],
+      "properties": {
+        "mode": {"type": "string", "enum": ["focused", "balanced", "broad", "custom"]},
+        "candidate_kind": {"type": "string", "enum": ["company", "job"]},
+        "candidate_goal": {"type": "integer", "minimum": 1, "maximum": 100},
+        "time_budget_seconds": {"type": "integer", "minimum": 60, "maximum": 14400},
+        "max_parallel_targets": {"type": "integer", "minimum": 1, "maximum": 3},
+        "allocation_policy": {"type": "string", "const": "equal_floor_shared_pool"},
+        "shared_candidate_pool": {"type": "integer", "minimum": 0},
+        "shared_time_pool_seconds": {"type": "integer", "minimum": 0}
+      }
+    },
     "targets": {
       "type": "array",
       "minItems": 1,
@@ -30,14 +55,25 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["target_id", "label", "kind", "normalized_value", "aliases", "required_attempts"],
+        "required": [
+          "target_id",
+          "label",
+          "kind",
+          "normalized_value",
+          "aliases",
+          "required_attempts",
+          "guaranteed_candidate_goal",
+          "guaranteed_time_seconds"
+        ],
         "properties": {
           "target_id": {"type": "string", "minLength": 1},
           "label": {"type": "string", "minLength": 1},
           "kind": {"type": "string", "enum": ["geographic", "remote"]},
           "normalized_value": {"type": "string", "minLength": 1},
           "aliases": {"type": "array", "items": {"type": "string"}},
-          "required_attempts": {"type": "integer", "minimum": 1, "maximum": 10}
+          "required_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+          "guaranteed_candidate_goal": {"type": "integer", "minimum": 0, "maximum": 100},
+          "guaranteed_time_seconds": {"type": "integer", "minimum": 1, "maximum": 14400}
         }
       }
     },

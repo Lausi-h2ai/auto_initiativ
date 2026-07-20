@@ -1420,6 +1420,7 @@ def prepare_company_research_campaign(
         role_focus=request.role_focus,
         locations=target_locations,
         time_budget_minutes=request.time_budget_minutes,
+        time_budget_seconds=request.time_budget_seconds,
         max_companies=request.max_companies,
         notes=request.notes,
         additional_guidance=request.additional_guidance,

@@ -578,6 +578,9 @@ class CompanyResearchRuntime:
     def _prompt_timeout_seconds(self, run_id: str) -> float:
         configured_timeout = self.settings.pi_rpc_research_timeout_seconds
         campaign = self._campaign(run_id)
+        seconds = campaign.get("time_budget_seconds") if isinstance(campaign, dict) else None
+        if isinstance(seconds, int | float) and seconds > 0:
+            return min(configured_timeout, float(seconds))
         budget = campaign.get("time_budget_minutes") if isinstance(campaign, dict) else None
         if not isinstance(budget, int | float) or budget <= 0:
             return configured_timeout

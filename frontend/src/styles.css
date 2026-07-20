@@ -146,6 +146,8 @@ h2, h3 { font-weight: 650; }
 .research-plan-panel { margin: 0 0 20px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
 .research-plan-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
 .research-plan-panel > header h2 { margin: 3px 0 0; font-size: 18px; }
+.plan-effort-summary { display: flex; justify-content: space-between; gap: 16px; margin: -4px 0 18px; padding: 12px 14px; border-radius: 12px; background: var(--cream); }
+.plan-effort-summary span { color: var(--muted); }
 .research-plan-grid { display: grid; grid-template-columns: minmax(280px, .9fr) minmax(320px, 1.1fr); gap: 22px; }
 .research-plan-grid > div { display: grid; align-content: start; gap: 9px; }
 .research-plan-grid ul { display: grid; gap: 7px; margin: 0; padding-left: 18px; }

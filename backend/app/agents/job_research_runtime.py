@@ -187,6 +187,8 @@ def prepare_job_research_run(
     session: Session,
     settings: Settings,
     research_target: ResearchTarget | None = None,
+    candidate_goal: int | None = None,
+    time_budget_seconds: int | None = None,
 ) -> str:
     def approved(model: type[Any], pk: int | None) -> Any:
         item = session.get(model, pk) if pk else None
@@ -198,16 +200,21 @@ def prepare_job_research_run(
     policy = approved(PolicySnapshot, campaign.policy_snapshot_id)
     brief = json.loads(campaign.brief_json or "{}")
     suffix = f"-{research_target.target_id}" if research_target else ""
-    run_id = f"jobs-{campaign.campaign_id}{suffix}-{int(time.time())}"
+    run_id = f"jobs-{campaign.campaign_id}{suffix}-{time.time_ns()}"
     locations = [research_target.label] if research_target else [str(value) for value in brief.get("locations") or []]
     spec = JobResearchCampaign(
         run_id=run_id,
         role_focus=str(brief.get("role_focus") or "Profile-aligned roles"),
         locations=locations,
-        time_budget_minutes=int(brief.get("time_budget_minutes") or 30),
-        max_jobs=int(brief.get("max_jobs") or 30),
+        time_budget_minutes=(
+            max(1, (time_budget_seconds + 59) // 60)
+            if time_budget_seconds
+            else int(brief.get("time_budget_minutes") or 30)
+        ),
+        max_jobs=candidate_goal or int(brief.get("max_jobs") or 30),
         freshness_days=int(brief.get("freshness_days") or 30),
         filters={key: brief.get(key) for key in ("seniority", "employment_types", "work_modes", "minimum_salary", "languages")},
+        time_budget_seconds=time_budget_seconds,
         notes=brief.get("notes"),
         additional_guidance=str(brief.get("additional_guidance") or brief.get("company_preferences") or ""),
         target_id=research_target.target_id if research_target else None,

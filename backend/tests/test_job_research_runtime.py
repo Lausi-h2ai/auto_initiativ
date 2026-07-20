@@ -9,6 +9,26 @@ from backend.app.agents.job_research_runtime import JobResearchRuntime
 from backend.app.core.config import Settings
 
 
+def test_job_research_runtime_uses_target_time_budget_seconds(tmp_path: Path):
+    run_root = tmp_path / "run-1"
+    input_root = run_root / "input"
+    input_root.mkdir(parents=True)
+    (input_root / "campaign.json").write_text(
+        json.dumps({"time_budget_minutes": 30, "time_budget_seconds": 120}),
+        encoding="utf-8",
+    )
+    runtime = JobResearchRuntime(
+        settings=Settings(
+            RUNS_ROOT=tmp_path,
+            SCHEMAS_ROOT=tmp_path / "schemas",
+            PI_RPC_RESEARCH_TIMEOUT_SECONDS=3600,
+        ),
+        clients={},
+    )
+
+    assert runtime._prompt_timeout_seconds("run-1") == 120
+
+
 def test_job_research_continues_until_requested_breadth(tmp_path: Path, monkeypatch):
     prompts: list[str] = []
     import_counts: list[int] = []

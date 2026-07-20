@@ -12,6 +12,7 @@ class CompanyResearchCampaign:
     locations: list[str]
     time_budget_minutes: int
     max_companies: int
+    time_budget_seconds: int | None = None
     notes: str | None = None
     additional_guidance: str | None = None
     target_id: str | None = None
@@ -67,6 +68,7 @@ def build_company_research_task(campaign: CompanyResearchCampaign) -> str:
         "locations": campaign.locations,
         "time_budget_minutes": campaign.time_budget_minutes,
         "max_companies": campaign.max_companies,
+        "time_budget_seconds": campaign.time_budget_seconds,
         "notes": campaign.notes or "",
         "additional_guidance": campaign.additional_guidance or "",
         "target_id": campaign.target_id,
@@ -76,7 +78,7 @@ def build_company_research_task(campaign: CompanyResearchCampaign) -> str:
     target_text = f"{campaign.max_companies} company candidates"
     return (
         "# Company Research Campaign\n\n"
-        f"Research up to {target_text} within about {campaign.time_budget_minutes} minutes and evaluate each fit.\n\n"
+        f"Research up to {target_text} within about {(campaign.time_budget_seconds or campaign.time_budget_minutes * 60) / 60:g} minutes and evaluate each fit.\n\n"
         "Campaign brief:\n\n"
         f"```json\n{json.dumps(brief, indent=2, sort_keys=True)}\n```\n\n"
         "Use `../input/user_profile.json`, `../input/master_cv_profile.json`, and `../input/policy.json` as approved context.\n"
@@ -125,6 +127,7 @@ def build_company_research_inputs(
                 "role_focus": campaign.role_focus,
                 "locations": campaign.locations,
                 "time_budget_minutes": campaign.time_budget_minutes,
+                "time_budget_seconds": campaign.time_budget_seconds,
                 "max_companies": campaign.max_companies,
                 "notes": campaign.notes or "",
                 "additional_guidance": campaign.additional_guidance or "",
