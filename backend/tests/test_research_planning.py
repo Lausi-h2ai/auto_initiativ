@@ -8,9 +8,12 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.app.db.models import (
     AgentTask,
+    AuditLog,
     Campaign,
     CampaignCompany,
+    CampaignJob,
     Company,
+    JobPosting,
     ResearchDiscovery,
     ResearchPlan,
     ResearchTarget,
@@ -198,6 +201,95 @@ def test_balanced_company_research_finalization_keeps_uncertain_scope_and_queues
         assert campaign.status == "preparing"
         assert "needs review" in (link.stage_reason or "")
         assert task.task_type == "contact_research"
+
+
+def test_balanced_job_research_finalization_audits_conflicts_and_links_retained_jobs(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'job-finalize.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        campaign = Campaign(
+            campaign_id="campaign-job-finalize",
+            name="Jobs",
+            campaign_type="listed_job_search",
+            status="researching",
+            brief_json=json.dumps(
+                {"role_focus": "Applied AI", "locations": ["Remote"], "max_jobs": 10}
+            ),
+        )
+        session.add(campaign)
+        session.flush()
+        payload = compile_research_plan(campaign, schema_path=SCHEMA)
+        plan = replace_pending_plan(session, campaign, payload)
+        confirm_plan(plan)
+        target = session.exec(
+            select(ResearchTarget).where(ResearchTarget.research_plan_id == plan.id)
+        ).one()
+        target.status = "covered"
+        retained = JobPosting(
+            job_id="job-remote-europe",
+            external_company_id="company-retained",
+            title="Applied AI Engineer",
+            source_url="https://example.com/jobs/retained",
+            canonical_url="https://example.com/jobs/retained",
+            application_url="https://example.com/jobs/retained/apply",
+            source_domain="example.com",
+            source_kind="employer_career_page",
+            fingerprint="retained",
+            work_mode="fully_remote",
+            remote_regions_json=json.dumps(["Europe"]),
+            vacancy_status="verified_open",
+            confidence=0.9,
+        )
+        excluded = JobPosting(
+            job_id="job-remote-us",
+            external_company_id="company-excluded",
+            title="Applied AI Engineer, US",
+            source_url="https://example.org/jobs/excluded",
+            canonical_url="https://example.org/jobs/excluded",
+            application_url="https://example.org/jobs/excluded/apply",
+            source_domain="example.org",
+            source_kind="employer_career_page",
+            fingerprint="excluded",
+            work_mode="fully_remote",
+            remote_regions_json=json.dumps(["United States"]),
+            vacancy_status="verified_open",
+            confidence=0.9,
+        )
+        session.add_all([plan, target, retained, excluded])
+        session.flush()
+        session.add_all(
+            [
+                ResearchDiscovery(
+                    campaign_id=campaign.id,
+                    target_id=target.id,
+                    candidate_kind="job",
+                    candidate_external_id=job.job_id,
+                    run_id="run-balanced-jobs",
+                )
+                for job in (retained, excluded)
+            ]
+        )
+        session.commit()
+
+        WorkflowEngine(session)._maybe_finalize_balanced_campaign(campaign)
+        session.commit()
+
+        session.refresh(plan)
+        session.refresh(campaign)
+        links = session.exec(
+            select(CampaignJob).where(CampaignJob.campaign_id == campaign.id)
+        ).all()
+        audit = session.exec(
+            select(AuditLog).where(
+                AuditLog.action == "research_candidate_excluded",
+                AuditLog.entity_id == excluded.job_id,
+            )
+        ).one()
+        assert plan.status == "completed"
+        assert campaign.status == "active"
+        assert [link.job_posting_id for link in links] == [retained.id]
+        assert audit.result_status == "excluded"
+        assert json.loads(audit.reason_codes_json) == ["remote_region_conflict"]
 
 
 @pytest.mark.parametrize(

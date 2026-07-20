@@ -15,6 +15,7 @@ from backend.app.core.config import Settings, get_settings
 from backend.app.db import session as db_session_module
 from backend.app.db.models import (
     AgentTask,
+    AuditLog,
     Campaign,
     CampaignCompany,
     CampaignJob,
