@@ -1110,6 +1110,15 @@ class WorkflowEngine:
         campaign.status = "preparing" if campaign.campaign_type == "initiative_outreach" and retained else "active"
         campaign.updated_at = utc_now()
         self.session.add_all([plan, campaign])
+        self.session.flush()
+        from backend.app.workflow.research_graph import observe_campaign_finalized
+
+        observe_campaign_finalized(
+            self.session,
+            campaign=campaign,
+            plan=plan,
+            targets=targets,
+        )
 
     def _reconcile_job_research(self, task: AgentTask, status: dict[str, Any]) -> None:
         state = str(status.get("status") or "running")

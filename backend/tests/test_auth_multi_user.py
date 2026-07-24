@@ -518,6 +518,34 @@ def test_campaign_creation_is_on_rails_and_requires_plan_confirmation(authentica
     assert confirmed.status_code == 202
     assert confirmed.json()["status"] == "researching"
     assert confirmed.json()["active_task_count"] == 2
+    with workspace_context(
+        RequestIdentity(
+            user_id=authenticated_app["user_id"],
+            workspace_id=authenticated_app["user_workspace_id"],
+        )
+    ), Session(authenticated_app["engine"]) as session:
+        campaign = session.exec(
+            select(Campaign).where(Campaign.campaign_id == response.json()["id"])
+        ).one()
+        tasks = session.exec(
+            select(AgentTask).where(
+                AgentTask.campaign_id == campaign.id
+            )
+        ).all()
+        assert len(tasks) == 2
+        assert all(task.graph_definition_id == "coordinated_research" for task in tasks)
+        assert all(task.graph_version == 1 for task in tasks)
+        assert all(task.execution_key for task in tasks)
+        plan_events = session.exec(
+            select(AuditLog).where(
+                AuditLog.entity_type == "workflow_graph_shadow_event",
+                AuditLog.run_id == tasks[0].graph_run_id,
+            )
+        ).all()
+        assert {
+            json.loads(event.metadata_json)["node_id"]
+            for event in plan_events
+        } == {"compile_plan", "await_plan_confirmation", "materialize_targets"}
 
     summary = client.get("/product/summary", cookies={"ai_session": token})
     assert summary.status_code == 200

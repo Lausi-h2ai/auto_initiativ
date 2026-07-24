@@ -6,6 +6,8 @@ from backend.app.db.models import AgentTask, AuditLog, Campaign, ResearchPlan, R
 from backend.app.research.planning import plan_hash
 from backend.app.workflow.research_graph import (
     graph_run_id_for,
+    observe_campaign_finalized,
+    observe_plan_confirmed,
     observe_target_launch,
     observe_target_reconciled,
     target_execution_key_for,
@@ -159,3 +161,57 @@ def test_shared_lease_uses_explicit_generation_and_edge(tmp_path) -> None:
         metadata = json.loads(audit.metadata_json)
         assert metadata["edge_id"] == "shared_budget_lease"
         assert metadata["logical_generation"] == 2
+
+
+def test_campaign_path_observation_is_aggregate_and_replay_idempotent(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'campaign-shadow.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        campaign, target, _ = _rows(session)
+        plan = session.get(ResearchPlan, target.research_plan_id)
+        assert plan is not None
+        first_run_id = observe_plan_confirmed(
+            session,
+            campaign=campaign,
+            plan=plan,
+        )
+        target.status = "covered"
+        target.retained_count = 2
+        plan.status = "completed"
+        campaign.status = "preparing"
+        session.add_all([target, plan, campaign])
+        session.flush()
+        observe_campaign_finalized(
+            session,
+            campaign=campaign,
+            plan=plan,
+            targets=[target],
+        )
+        session.commit()
+        observe_plan_confirmed(session, campaign=campaign, plan=plan)
+        observe_campaign_finalized(
+            session,
+            campaign=campaign,
+            plan=plan,
+            targets=[target],
+        )
+        session.commit()
+
+        audits = session.exec(
+            select(AuditLog).where(
+                AuditLog.entity_type == "workflow_graph_shadow_event"
+            )
+        ).all()
+        assert first_run_id is not None
+        assert len(audits) == 13
+        metadata = [json.loads(row.metadata_json) for row in audits]
+        assert all(item["graph_run_id"] == first_run_id for item in metadata)
+        final = next(item for item in metadata if item["node_id"] == "research_complete")
+        assert final["aggregate"] == {
+            "campaign_status": "preparing",
+            "plan_status": "completed",
+            "retained_count": 2,
+            "target_count": 1,
+            "target_status_counts": {"covered": 1},
+        }
+        assert "label" not in json.dumps(metadata)

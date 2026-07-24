@@ -349,42 +349,55 @@ def confirm_campaign_research_plan(campaign_id: str, session: Session = Depends(
             target.reserved_time_seconds = int(planned_target.get("guaranteed_time_seconds") or 0)
         target.updated_at = utc_now()
         session.add(target)
-        session.add(
-            AgentTask(
-                task_id=f"task-{uuid4()}",
-                campaign_id=campaign.id,
-                agent_role=agent_role,
-                task_type=task_type,
-                narrative=localized_text(
-                    locale,
-                    f"Queued an independent research pass for {target.label}.",
-                    f"Ein eigenständiger Recherchelauf für {target.label} wurde eingeplant.",
-                ),
-                input_json=json.dumps(
-                    {
-                        "research_target_id": target.id,
-                        "target_id": target.target_id,
-                        "budget_phase": "guaranteed" if is_coordinated else "legacy",
-                        "candidate_goal": (
-                            max(1, int(planned_target.get("guaranteed_candidate_goal") or 0))
-                            if is_coordinated
-                            else None
-                        ),
-                        "time_budget_seconds": (
-                            int(planned_target.get("guaranteed_time_seconds") or 0)
-                            if is_coordinated
-                            else None
-                        ),
-                    },
-                    sort_keys=True,
-                ),
-                workspace_id=campaign.workspace_id,
-            )
+        task = AgentTask(
+            task_id=f"task-{uuid4()}",
+            campaign_id=campaign.id,
+            agent_role=agent_role,
+            task_type=task_type,
+            narrative=localized_text(
+                locale,
+                f"Queued an independent research pass for {target.label}.",
+                f"Ein eigenständiger Recherchelauf für {target.label} wurde eingeplant.",
+            ),
+            input_json=json.dumps(
+                {
+                    "research_target_id": target.id,
+                    "target_id": target.target_id,
+                    "budget_phase": "guaranteed" if is_coordinated else "legacy",
+                    "candidate_goal": (
+                        max(1, int(planned_target.get("guaranteed_candidate_goal") or 0))
+                        if is_coordinated
+                        else None
+                    ),
+                    "time_budget_seconds": (
+                        int(planned_target.get("guaranteed_time_seconds") or 0)
+                        if is_coordinated
+                        else None
+                    ),
+                },
+                sort_keys=True,
+            ),
+            workspace_id=campaign.workspace_id,
         )
+        if is_coordinated:
+            from backend.app.workflow.research_graph import correlate_target_task
+
+            correlate_target_task(
+                session,
+                task=task,
+                target=target,
+                campaign=campaign,
+                logical_generation=0,
+            )
+        session.add(task)
     campaign.status = "researching"
     campaign.started_at = campaign.started_at or utc_now()
     campaign.updated_at = utc_now()
     session.add_all([plan, campaign])
+    if is_coordinated:
+        from backend.app.workflow.research_graph import observe_plan_confirmed
+
+        observe_plan_confirmed(session, campaign=campaign, plan=plan)
     session.commit()
     return _campaign_response(campaign, session)
 

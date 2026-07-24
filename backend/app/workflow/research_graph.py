@@ -269,6 +269,37 @@ def observe_target_launch(
     return correlation
 
 
+def observe_plan_confirmed(
+    session: Session,
+    *,
+    campaign: Campaign,
+    plan: ResearchPlan,
+) -> str | None:
+    """Record the deterministic pre-fan-out path after authorized confirmation."""
+    graph_run_id = _campaign_graph_run_id(campaign=campaign, plan=plan)
+    if graph_run_id is None:
+        return None
+    events = (
+        ("node", "compile_plan", None, "research_plan_compiled"),
+        ("transition", "await_plan_confirmation", "plan_compiled", "research_plan_compiled"),
+        ("node", "await_plan_confirmation", None, "awaiting_confirmed_plan"),
+        ("transition", "materialize_targets", "plan_confirmed", "confirmed_plan_hash_matches"),
+        ("node", "materialize_targets", None, "materialize_targets_observed"),
+    )
+    for event_kind, node_id, edge_id, reason_code in events:
+        _record_campaign_event(
+            session,
+            campaign=campaign,
+            plan=plan,
+            graph_run_id=graph_run_id,
+            event_kind=event_kind,
+            node_id=node_id,
+            edge_id=edge_id,
+            reason_code=reason_code,
+        )
+    return graph_run_id
+
+
 def observe_target_reconciled(
     session: Session,
     *,
@@ -305,6 +336,134 @@ def observe_target_reconciled(
             reason_code=reason_code,
         )
     return correlation
+
+
+def observe_campaign_finalized(
+    session: Session,
+    *,
+    campaign: Campaign,
+    plan: ResearchPlan,
+    targets: list[ResearchTarget],
+) -> str | None:
+    """Record fan-in through the authoritative completed-plan materialization."""
+    graph_run_id = _campaign_graph_run_id(campaign=campaign, plan=plan)
+    if graph_run_id is None:
+        return None
+    events = (
+        ("transition", "all_targets_barrier", "research_fan_in", "shared_budget_closed"),
+        ("node", "all_targets_barrier", None, "all_targets_barrier_observed"),
+        ("transition", "scope_assessment", "all_targets_terminal", "all_targets_covered_exhausted_or_failed"),
+        ("node", "scope_assessment", None, "scope_assessment_observed"),
+        ("transition", "rank_and_retain", "scope_assessed", "scope_assessment_complete"),
+        ("node", "rank_and_retain", None, "rank_and_retain_observed"),
+        ("transition", "research_complete", "candidates_ranked", "research_candidates_ranked_and_retained"),
+        ("node", "research_complete", None, "research_complete_observed"),
+    )
+    target_status_counts: dict[str, int] = {}
+    for target in targets:
+        target_status_counts[target.status] = target_status_counts.get(target.status, 0) + 1
+    aggregate = {
+        "target_count": len(targets),
+        "target_status_counts": dict(sorted(target_status_counts.items())),
+        "retained_count": sum(target.retained_count for target in targets),
+        "plan_status": plan.status,
+        "campaign_status": campaign.status,
+    }
+    for event_kind, node_id, edge_id, reason_code in events:
+        _record_campaign_event(
+            session,
+            campaign=campaign,
+            plan=plan,
+            graph_run_id=graph_run_id,
+            event_kind=event_kind,
+            node_id=node_id,
+            edge_id=edge_id,
+            reason_code=reason_code,
+            aggregate=aggregate,
+        )
+    return graph_run_id
+
+
+def _campaign_graph_run_id(*, campaign: Campaign, plan: ResearchPlan) -> str | None:
+    raw_plan = _json_object(plan.raw_json)
+    if (
+        campaign.workspace_id is None
+        or raw_plan.get("schema_version") != "1.1"
+        or plan.status not in {"confirmed", "completed"}
+        or not plan.confirmed_hash
+        or plan.confirmed_hash != plan.content_hash
+    ):
+        return None
+    return graph_run_id_for(
+        workspace_id=campaign.workspace_id,
+        campaign_id=campaign.campaign_id,
+        plan_version=plan.version,
+        confirmed_plan_hash=plan.confirmed_hash,
+    )
+
+
+def _record_campaign_event(
+    session: Session,
+    *,
+    campaign: Campaign,
+    plan: ResearchPlan,
+    graph_run_id: str,
+    event_kind: str,
+    node_id: str,
+    reason_code: str,
+    edge_id: str | None = None,
+    aggregate: dict[str, Any] | None = None,
+) -> None:
+    if campaign.workspace_id is None:
+        return
+    event_key = _stable_id(
+        "graph-shadow-campaign-event",
+        graph_run_id,
+        event_kind,
+        node_id,
+        edge_id or "",
+        reason_code,
+    )
+    existing = session.exec(
+        select(AuditLog).where(
+            AuditLog.workspace_id == campaign.workspace_id,
+            AuditLog.action == f"workflow_graph_shadow_{event_kind}_observed",
+            AuditLog.entity_type == "workflow_graph_shadow_event",
+            AuditLog.entity_id == event_key,
+        )
+    ).first()
+    if existing is not None:
+        return
+    metadata: dict[str, Any] = {
+        "shadow_mode": True,
+        "graph_definition_id": COORDINATED_RESEARCH_DEFINITION.definition_id,
+        "graph_version": COORDINATED_RESEARCH_DEFINITION.version,
+        "graph_run_id": graph_run_id,
+        "node_id": node_id,
+        "edge_id": edge_id,
+        "reason_code": reason_code,
+        "campaign_id": campaign.campaign_id,
+        "campaign_row_id": campaign.id,
+        "campaign_type": campaign.campaign_type,
+        "research_plan_id": plan.id,
+        "research_plan_version": plan.version,
+        "research_plan_hash": plan.confirmed_hash,
+    }
+    if aggregate:
+        metadata["aggregate"] = aggregate
+    session.add(
+        AuditLog(
+            workspace_id=campaign.workspace_id,
+            run_id=graph_run_id,
+            actor_type="system",
+            action=f"workflow_graph_shadow_{event_kind}_observed",
+            entity_type="workflow_graph_shadow_event",
+            entity_id=event_key,
+            result_status="observed",
+            reason_codes_json=json.dumps([reason_code]),
+            metadata_json=json.dumps(metadata, sort_keys=True),
+        )
+    )
 
 
 def _record_event(
@@ -349,6 +508,7 @@ def _record_event(
         "edge_id": edge_id,
         "reason_code": reason_code,
         "campaign_id": campaign.campaign_id,
+        "campaign_type": campaign.campaign_type,
         "campaign_row_id": campaign.id,
         "research_plan_id": correlation.plan_id,
         "research_plan_version": correlation.plan_version,
