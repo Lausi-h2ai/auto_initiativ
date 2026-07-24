@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import or_, update
 from sqlmodel import Session, select
 
 from backend.app.auth.context import RequestIdentity, scoped_runs_root, workspace_context
@@ -47,6 +48,7 @@ FAILED_RUNTIME_STATUSES = {"import_failed", "research_failed", "failed"}
 SHARED_RESEARCH_LEASE_SECONDS = 120
 SHARED_RESEARCH_LEASE_CANDIDATES = 2
 MAX_SHARED_LEASES_PER_TARGET = 3
+WORKFLOW_TASK_LEASE_SECONDS = 600
 _worker: "WorkflowWorker | None" = None
 
 
@@ -101,16 +103,20 @@ class WorkflowEngine:
         self.session.refresh(task)
         return task
 
-    def process(self, task: AgentTask) -> None:
-        task.status = "running"
-        task.started_at = task.started_at or utc_now()
-        task.locked_at = utc_now()
-        task.locked_by = "local-workflow-worker"
-        task.attempt_count += 1
-        task.progress = max(task.progress, 5)
-        task.updated_at = utc_now()
-        self.session.add(task)
-        self.session.commit()
+    def process(self, task: AgentTask, *, already_claimed: bool = False) -> None:
+        if already_claimed:
+            if task.status != "running" or task.locked_by is None:
+                raise ValueError("Workflow task must be atomically claimed before launch.")
+        else:
+            task.status = "running"
+            task.started_at = task.started_at or utc_now()
+            task.locked_at = utc_now()
+            task.locked_by = "local-workflow-worker"
+            task.attempt_count += 1
+            task.progress = max(task.progress, 5)
+            task.updated_at = utc_now()
+            self.session.add(task)
+            self.session.commit()
         try:
             if task.task_type == "company_research":
                 self._launch_research(task)
@@ -167,6 +173,33 @@ class WorkflowEngine:
                 self._reconcile_job_application_draft(task, ApplicationDraftRuntime(settings=self.settings).status(task.run_id or ""))
         except Exception as exc:
             self._fail(task, exc)
+
+    def block_uncertain_external_launch(self, task: AgentTask) -> None:
+        message = (
+            "A prior worker may have launched this task externally without persisting "
+            "its run ID; automatic relaunch is blocked."
+        )
+        task.status = "blocked"
+        task.last_error = message
+        task.narrative = message
+        task.locked_at = None
+        task.locked_by = None
+        task.completed_at = utc_now()
+        task.updated_at = utc_now()
+        self.session.add(task)
+        self.session.add(
+            ReviewException(
+                exception_id=f"exception-{uuid4()}",
+                campaign_id=task.campaign_id,
+                company_id=task.company_id,
+                agent_task_id=task.id,
+                category="uncertain_external_launch",
+                title="A specialist launch needs review",
+                explanation=message,
+                recommended_action="Inspect the external run state before retrying or skipping this task.",
+            )
+        )
+        self.session.commit()
 
     def _launch_research(self, task: AgentTask) -> None:
         from backend.app.agents.company_research_runtime import CompanyResearchRuntime
@@ -1265,6 +1298,7 @@ class WorkflowWorker:
     def __init__(self, settings: Settings | None = None, poll_seconds: float = 3.0) -> None:
         self.settings = settings or get_settings()
         self.poll_seconds = poll_seconds
+        self.worker_id = f"workflow-worker-{uuid4()}"
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -1281,7 +1315,10 @@ class WorkflowWorker:
             self._thread.join(timeout=5)
 
     def run_once(self) -> bool:
+        action: str | None = None
         with Session(db_session_module.engine) as session:
+            now = utc_now()
+            expired_before = now - timedelta(seconds=WORKFLOW_TASK_LEASE_SECONDS)
             running = session.exec(
                 select(AgentTask).where(
                     AgentTask.status == "running",
@@ -1313,17 +1350,85 @@ class WorkflowWorker:
             )
             if can_launch_target:
                 task = queued_target
-            elif running:
-                task = running[0]
             else:
                 task = session.exec(
                     select(AgentTask).where(
-                        AgentTask.status.in_(["queued", "retry"]),
-                        AgentTask.available_at <= utc_now(),
-                    ).order_by(AgentTask.available_at, AgentTask.created_at)
+                        AgentTask.status == "running",
+                        AgentTask.task_type.in_([
+                            "company_research",
+                            "company_research_target",
+                            "job_research",
+                            "job_research_target",
+                            "job_verification",
+                            "contact_research",
+                            "application_draft",
+                            "job_application_draft",
+                        ]),
+                        or_(
+                            AgentTask.locked_by == self.worker_id,
+                            AgentTask.locked_at.is_(None),
+                            AgentTask.locked_at <= expired_before,
+                        ),
+                    ).order_by(AgentTask.updated_at)
                 ).first()
+                if task is None and running:
+                    return False
+                if task is None:
+                    task = session.exec(
+                        select(AgentTask).where(
+                            AgentTask.status.in_(["queued", "retry"]),
+                            AgentTask.available_at <= now,
+                        ).order_by(AgentTask.available_at, AgentTask.created_at)
+                    ).first()
             if task is None or task.workspace_id is None:
                 return False
+            if task.status in {"queued", "retry"}:
+                result = session.exec(
+                    update(AgentTask)
+                    .where(
+                        AgentTask.id == task.id,
+                        AgentTask.status.in_(["queued", "retry"]),
+                        AgentTask.available_at <= now,
+                    )
+                    .values(
+                        status="running",
+                        started_at=task.started_at or now,
+                        locked_at=now,
+                        locked_by=self.worker_id,
+                        attempt_count=AgentTask.attempt_count + 1,
+                        progress=max(task.progress, 5),
+                        updated_at=now,
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                if result.rowcount != 1:
+                    session.rollback()
+                    return False
+                action = "launch"
+            else:
+                result = session.exec(
+                    update(AgentTask)
+                    .where(
+                        AgentTask.id == task.id,
+                        AgentTask.status == "running",
+                        or_(
+                            AgentTask.locked_by == self.worker_id,
+                            AgentTask.locked_at.is_(None),
+                            AgentTask.locked_at <= expired_before,
+                        ),
+                    )
+                    .values(
+                        locked_at=now,
+                        locked_by=self.worker_id,
+                        updated_at=now,
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                if result.rowcount != 1:
+                    session.rollback()
+                    return False
+                action = "reconcile"
+            session.commit()
             workspace = session.get(Workspace, task.workspace_id)
             user = session.get(User, workspace.owner_user_id) if workspace is not None else None
             if workspace is None or user is None:
@@ -1335,10 +1440,18 @@ class WorkflowWorker:
             if scoped_task is None:
                 return False
             engine = WorkflowEngine(scoped_session, self.settings)
-            if scoped_task.status == "running":
+            if action == "reconcile":
+                if not scoped_task.run_id:
+                    engine.block_uncertain_external_launch(scoped_task)
+                    return True
                 engine.reconcile(scoped_task)
+                if scoped_task.status == "running" and scoped_task.locked_by == self.worker_id:
+                    scoped_task.locked_at = utc_now()
+                    scoped_task.updated_at = utc_now()
+                    scoped_session.add(scoped_task)
+                    scoped_session.commit()
             else:
-                engine.process(scoped_task)
+                engine.process(scoped_task, already_claimed=True)
         return True
 
     def _loop(self) -> None:
