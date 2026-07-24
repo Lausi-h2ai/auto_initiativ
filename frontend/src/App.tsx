@@ -1072,6 +1072,10 @@ function JobsPage() {
   const [manualConfirming, setManualConfirming] = useState(false);
   const [editingSearch, setEditingSearch] = useState(false);
   const [searchScope, setSearchScope] = useState({ role_focus: "", locations: "", additional_guidance: "" });
+  const [postedWithin, setPostedWithin] = useState("any");
+  const [minimumRoleFit, setMinimumRoleFit] = useState("any");
+  const [minimumCompanyFit, setMinimumCompanyFit] = useState("any");
+  const [jobSort, setJobSort] = useState("balanced_fit");
   const selectedCampaignId = selected?.campaign_id || activeCampaign?.id;
   useEffect(() => {
     setSelected(null);
@@ -1125,6 +1129,69 @@ function JobsPage() {
     } finally {
       setBusy(false);
     }
+  };
+  const visibleJobs = useMemo(() => {
+    const postedCutoff =
+      postedWithin === "any"
+        ? null
+        : Date.now() - Number(postedWithin) * 86400000;
+    const roleCutoff =
+      minimumRoleFit === "any" ? null : Number(minimumRoleFit);
+    const companyCutoff =
+      minimumCompanyFit === "any" ? null : Number(minimumCompanyFit);
+    const scoreForSort = (job: JobPosting) => {
+      if (jobSort === "role_fit") return job.role_fit_score ?? null;
+      if (jobSort === "company_fit") return job.company_fit_score ?? null;
+      if (jobSort === "posted")
+        return job.date_posted ? new Date(job.date_posted).getTime() : null;
+      return balancedJobFit(job);
+    };
+
+    return jobs
+      .filter((job) => {
+        const postedAt = job.date_posted
+          ? new Date(job.date_posted).getTime()
+          : null;
+        return (
+          (postedCutoff == null ||
+            (postedAt != null &&
+              Number.isFinite(postedAt) &&
+              postedAt >= postedCutoff)) &&
+          (roleCutoff == null ||
+            (job.role_fit_score != null &&
+              job.role_fit_score >= roleCutoff)) &&
+          (companyCutoff == null ||
+            (job.company_fit_score != null &&
+              job.company_fit_score >= companyCutoff))
+        );
+      })
+      .sort((left, right) => {
+        const leftScore = scoreForSort(left);
+        const rightScore = scoreForSort(right);
+        if (leftScore == null && rightScore == null)
+          return left.title.localeCompare(right.title);
+        if (leftScore == null) return 1;
+        if (rightScore == null) return -1;
+        return (
+          rightScore - leftScore ||
+          left.title.localeCompare(right.title)
+        );
+      });
+  }, [
+    jobs,
+    postedWithin,
+    minimumRoleFit,
+    minimumCompanyFit,
+    jobSort,
+  ]);
+  const filtersActive =
+    postedWithin !== "any" ||
+    minimumRoleFit !== "any" ||
+    minimumCompanyFit !== "any";
+  const clearJobFilters = () => {
+    setPostedWithin("any");
+    setMinimumRoleFit("any");
+    setMinimumCompanyFit("any");
   };
   return (
     <div className="page jobs-page">
@@ -1226,6 +1293,78 @@ function JobsPage() {
         </section>
       )}
       {error && <InlineError message={error} />}
+      {jobs.length ? (
+        <section className="job-controls" aria-label="Position filters and sorting">
+          <div className="job-filter-fields">
+            <label>
+              <span>Posted</span>
+              <select
+                value={postedWithin}
+                onChange={(event) => setPostedWithin(event.target.value)}
+              >
+                <option value="any">Any time</option>
+                <option value="1">Past 24 hours</option>
+                <option value="7">Past 7 days</option>
+                <option value="30">Past 30 days</option>
+                <option value="90">Past 90 days</option>
+              </select>
+            </label>
+            <label>
+              <span>Role fit</span>
+              <select
+                value={minimumRoleFit}
+                onChange={(event) => setMinimumRoleFit(event.target.value)}
+              >
+                <option value="any">Any score</option>
+                <option value="0.6">60% or higher</option>
+                <option value="0.7">70% or higher</option>
+                <option value="0.8">80% or higher</option>
+                <option value="0.9">90% or higher</option>
+              </select>
+            </label>
+            <label>
+              <span>Company fit</span>
+              <select
+                value={minimumCompanyFit}
+                onChange={(event) => setMinimumCompanyFit(event.target.value)}
+              >
+                <option value="any">Any score</option>
+                <option value="0.6">60% or higher</option>
+                <option value="0.7">70% or higher</option>
+                <option value="0.8">80% or higher</option>
+                <option value="0.9">90% or higher</option>
+              </select>
+            </label>
+            <label>
+              <span>Sort by</span>
+              <select
+                value={jobSort}
+                onChange={(event) => setJobSort(event.target.value)}
+              >
+                <option value="balanced_fit">Balanced fit (F1)</option>
+                <option value="role_fit">Role fit</option>
+                <option value="company_fit">Company fit</option>
+                <option value="posted">Newest posted</option>
+              </select>
+            </label>
+          </div>
+          <div className="job-filter-summary" aria-live="polite">
+            <span>
+              {`Showing ${visibleJobs.length} of ${jobs.length} ${
+                jobs.length === 1 ? "position" : "positions"
+              }`}
+            </span>
+            <small>
+              Balanced fit rewards positions where both fit scores are strong.
+            </small>
+            {filtersActive ? (
+              <button className="text-button" onClick={clearJobFilters}>
+                Clear filters
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
       {!jobs.length ? (
         <EmptyState
           title="No verified positions yet"
@@ -1240,8 +1379,19 @@ function JobsPage() {
           }
         />
       ) : null}
+      {jobs.length && !visibleJobs.length ? (
+        <EmptyState
+          title="No positions match these filters"
+          body="Broaden the posted-date window or lower a fit threshold to see more of the positions your team found."
+          action={
+            <button className="secondary-button" onClick={clearJobFilters}>
+              Clear filters
+            </button>
+          }
+        />
+      ) : null}
       <div className="job-grid">
-        {jobs.map((job) => (
+        {visibleJobs.map((job) => (
           <button
             className="job-card"
             key={job.id}
@@ -1275,6 +1425,14 @@ function JobsPage() {
                 {job.company_fit_score == null
                   ? "Company fit pending"
                   : `${Math.round(job.company_fit_score * 100)}% company fit`}
+              </span>
+              <span
+                className="balanced-fit-score"
+                title="Harmonic mean of role fit and company fit"
+              >
+                {balancedJobFit(job) == null
+                  ? "Balanced fit pending"
+                  : `${Math.round(balancedJobFit(job)! * 100)}% balanced`}
               </span>
             </div>
             <footer>
@@ -3489,19 +3647,27 @@ function ExceptionsPage() {
                   <span>{item.recommended_action}</span>
                 </div>
                 <div className="exception-actions">
-                  <button
-                    className="primary-button"
-                    disabled={busy === item.id}
-                    onClick={() => void resolve(item, "retry")}
-                  >
-                    Retry with this guidance
-                  </button>
+                  {item.category === "profile_refresh_suggested" ? (
+                    <Link className="primary-button" to="/onboarding">
+                      Review with my onboarding recruiter
+                    </Link>
+                  ) : (
+                    <button
+                      className="primary-button"
+                      disabled={busy === item.id}
+                      onClick={() => void resolve(item, "retry")}
+                    >
+                      Retry with this guidance
+                    </button>
+                  )}
                   <button
                     className="text-button"
                     disabled={busy === item.id}
                     onClick={() => void resolve(item, "skip")}
                   >
-                    Skip this company
+                    {item.category === "profile_refresh_suggested"
+                      ? "Not now"
+                      : "Skip this company"}
                   </button>
                 </div>
               </div>
@@ -4159,6 +4325,13 @@ function human(value: string) {
 function relativeDate(value: string) {
   const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
   return days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+}
+function balancedJobFit(job: JobPosting) {
+  const roleFit = job.role_fit_score;
+  const companyFit = job.company_fit_score;
+  if (roleFit == null || companyFit == null) return null;
+  if (roleFit + companyFit === 0) return 0;
+  return (2 * roleFit * companyFit) / (roleFit + companyFit);
 }
 function jobDateLabel(job: JobPosting) {
   if (job.date_posted) return `Posted ${relativeDate(job.date_posted)}`;

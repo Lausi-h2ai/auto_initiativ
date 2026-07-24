@@ -30,6 +30,14 @@ def test_runtime_agent_instructions_define_untrusted_content_and_completion(inst
     assert "backend" in instructions.lower()
 
 
+def test_application_draft_cv_guidance_is_claim_grounded_and_user_facing():
+    assert "first bullet of the current role" in APPLICATION_DRAFT_INSTRUCTIONS
+    assert "broader system or business problem" in APPLICATION_DRAFT_INSTRUCTIONS
+    assert "10–15 compact categories" in APPLICATION_DRAFT_INSTRUCTIONS
+    assert "map its important requirements to supporting claim IDs" in APPLICATION_DRAFT_INSTRUCTIONS
+    assert "Never expose ATS" in APPLICATION_DRAFT_INSTRUCTIONS
+
+
 def test_onboarding_pi_instructions_define_trust_schema_and_completion(tmp_path):
     instructions = build_onboarding_agent_instructions(
         run_id="onboarding-1",

@@ -30,6 +30,14 @@ Create one evidence-backed unsolicited application package from the prepared com
 - If a needed statement is absent from the claim ledger, omit it rather than guessing. If a selected claim is ambiguous or review-blocked, preserve that state and add the applicable draft review signal.
 - Keep the resume to one page.
 
+## CV content guidance
+
+- Make the first bullet of the current role explain the broader system or business problem.
+- Follow it with concrete projects, measurable outcomes when supported by approved claims, lifecycle ownership, and tools.
+- Keep skills to roughly 10–15 compact categories.
+- Never expose ATS, keyword optimization, or similar tailoring mechanics in candidate-facing text.
+- For a published vacancy, map its important requirements to supporting claim IDs and identify genuine evidence gaps. Omit unsupported claims and keep the gaps out of polished CV copy.
+
 ## Output contract
 
 - Write only `../output/email_draft.json`, `../output/contact_candidate.json` when explicitly required, and files under `../output/attachments`.

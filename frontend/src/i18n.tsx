@@ -73,6 +73,29 @@ const DE_COPY: Record<string, string> = {
   "Master CV": "Master-CV",
   Documents: "Dokumente",
   "Open positions": "Offene Stellen",
+  Posted: "Veröffentlicht",
+  "Any time": "Jederzeit",
+  "Past 24 hours": "Letzte 24 Stunden",
+  "Past 7 days": "Letzte 7 Tage",
+  "Past 30 days": "Letzte 30 Tage",
+  "Past 90 days": "Letzte 90 Tage",
+  "Role fit": "Rollenpassung",
+  "Company fit": "Unternehmenspassung",
+  "Any score": "Jede Bewertung",
+  "60% or higher": "60 % oder höher",
+  "70% or higher": "70 % oder höher",
+  "80% or higher": "80 % oder höher",
+  "90% or higher": "90 % oder höher",
+  "Sort by": "Sortieren nach",
+  "Balanced fit (F1)": "Ausgewogene Passung (F1)",
+  "Newest posted": "Neueste zuerst",
+  "Balanced fit rewards positions where both fit scores are strong.": "Die ausgewogene Passung bevorzugt Stellen, bei denen beide Bewertungen stark sind.",
+  "Position filters and sorting": "Stellen filtern und sortieren",
+  "Harmonic mean of role fit and company fit": "Harmonisches Mittel aus Rollen- und Unternehmenspassung",
+  "Clear filters": "Filter zurücksetzen",
+  "No positions match these filters": "Keine Stellen entsprechen diesen Filtern",
+  "Broaden the posted-date window or lower a fit threshold to see more of the positions your team found.": "Erweitere den Veröffentlichungszeitraum oder senke eine Passungsschwelle, um mehr gefundene Stellen zu sehen.",
+  "Balanced fit pending": "Ausgewogene Passung ausstehend",
   "Needs me": "Meine Entscheidung",
   Settings: "Einstellungen",
   Administration: "Administration",
@@ -215,12 +238,14 @@ function initialLocale(): AppLocale {
 
 function translateGerman(value: string): string {
   if (DE_COPY[value]) return DE_COPY[value];
-  const patterns: Array<[RegExp, (match: string, capture: string) => string]> = [
+  const patterns: Array<[RegExp, (match: string, ...captures: string[]) => string]> = [
     [/^Good (?:morning|afternoon|evening), (.+)\.$/, (_match, name) => `Guten Tag, ${name}.`],
     [/^(\d+) compan(?:y|ies)$/, (_match, count) => `${count} Unternehmen`],
     [/^(\d+) days ago$/, (_match, count) => `vor ${count} Tagen`],
     [/^Posted (.+)$/, (_match, date) => `Veröffentlicht ${date}`],
     [/^Apply by (.+)$/, (_match, date) => `Bewerben bis ${date}`],
+    [/^Showing (\d+) of (\d+) positions?$/, (_match, shown, total) => `${shown} von ${total} Stellen`],
+    [/^(\d+)% balanced$/, (_match, score) => `${score} % ausgewogen`],
   ];
   for (const [pattern, replacement] of patterns) {
     const match = value.match(pattern);

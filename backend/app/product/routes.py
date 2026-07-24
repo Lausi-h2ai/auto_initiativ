@@ -53,6 +53,7 @@ from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
 from backend.app.imports.job_normalizer import JobNormalizationService
 from backend.app.master_cv.contracts import MasterCvDocument
 from backend.app.localization import localized_text, workspace_locale
+from backend.app.profiles.freshness import suggest_profile_refresh_if_old
 from backend.app.research.planning import EFFORT_MODES, compile_research_plan, confirm_plan, plan_hash, replace_pending_plan
 
 
@@ -533,7 +534,11 @@ def campaign_pipeline(campaign_id: str, session: Session = Depends(get_session))
 
 
 @router.post("/companies/{company_id}/prepare", status_code=202)
-def prepare_company_application(company_id: str, session: Session = Depends(get_session)) -> dict[str, Any]:
+def prepare_company_application(
+    company_id: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
     company = session.exec(select(Company).where(Company.company_id == company_id)).first()
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found.")
@@ -571,6 +576,14 @@ def prepare_company_application(company_id: str, session: Session = Depends(get_
         campaign = session.get(Campaign, job_link.campaign_id) if job_link is not None else None
     if campaign is None:
         raise HTTPException(status_code=409, detail="This company is not attached to a campaign that can prepare documents.")
+
+    suggest_profile_refresh_if_old(
+        session,
+        user_profile=_approved(session, UserProfileSnapshot),
+        master_cv_profile=_approved(session, MasterCvProfileSnapshot),
+        threshold_days=settings.profile_refresh_reminder_days,
+        campaign_id=campaign.id,
+    )
 
     contact = session.exec(
         select(Contact).where(Contact.company_id == company.id).order_by(Contact.created_at.desc())
@@ -1296,6 +1309,13 @@ def prepare_job_application(campaign_id: str, job_id: str, session: Session = De
         JobApplicationPackageService(session, settings)._assert_fresh_verified(job)
     except JobPackageError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    suggest_profile_refresh_if_old(
+        session,
+        user_profile=_approved(session, UserProfileSnapshot),
+        master_cv_profile=_approved(session, MasterCvProfileSnapshot),
+        threshold_days=settings.profile_refresh_reminder_days,
+        campaign_id=campaign.id,
+    )
     task = AgentTask(
         task_id=f"task-{uuid4()}", campaign_id=campaign.id, company_id=job.company_id,
         agent_role="resume_and_email_team", task_type="job_application_draft",

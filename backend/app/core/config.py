@@ -99,6 +99,12 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="APPLICATION_DRAFT_ALLOW_CONTACT_RESEARCH",
     )
+    profile_refresh_reminder_days: int = Field(
+        default=120,
+        ge=1,
+        le=365,
+        validation_alias="PROFILE_REFRESH_REMINDER_DAYS",
+    )
     email_sending_enabled: bool = Field(default=False, validation_alias="EMAIL_SENDING_ENABLED")
     email_provider: str = Field(default="gmail_sandbox", validation_alias="EMAIL_PROVIDER")
     email_allow_real_recipients: bool = Field(default=False, validation_alias="EMAIL_ALLOW_REAL_RECIPIENTS")

@@ -592,6 +592,9 @@ def test_verified_job_queues_tailored_application_agent(authenticated_app):
     with workspace_context(RequestIdentity(user_id=authenticated_app["user_id"], workspace_id=authenticated_app["user_workspace_id"])), Session(authenticated_app["engine"]) as session:
         profile = session.exec(select(UserProfileSnapshot).where(UserProfileSnapshot.status == "approved")).first()
         master = session.exec(select(MasterCvProfileSnapshot).where(MasterCvProfileSnapshot.status == "approved")).first()
+        profile.imported_at = utc_now() - timedelta(days=121)
+        master.imported_at = utc_now() - timedelta(days=121)
+        session.add_all([profile, master])
         policy = session.exec(select(PolicySnapshot).where(PolicySnapshot.status == "approved")).first()
         company = session.exec(select(Company).where(Company.name == "User Company")).one()
         campaign = Campaign(campaign_id="campaign-job-package", name="Open roles", campaign_type="listed_job_search", status="active", sending_mode="prepare_only", user_profile_snapshot_id=profile.id, master_cv_profile_snapshot_id=master.id, policy_snapshot_id=policy.id)
@@ -614,6 +617,11 @@ def test_verified_job_queues_tailored_application_agent(authenticated_app):
         task = session.exec(select(AgentTask).where(AgentTask.task_type == "job_application_draft")).one()
         assert json.loads(task.input_json)["job_id"] == "job-package-test"
         assert task.agent_role == "resume_and_email_team"
+        reminder = session.exec(
+            select(ReviewException).where(ReviewException.category == "profile_refresh_suggested")
+        ).one()
+        assert reminder.status == "open"
+        assert "nothing is blocked" in reminder.explanation
 
 
 def test_revalidation_launches_dedicated_verifier_without_broad_search(authenticated_app, monkeypatch):

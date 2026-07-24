@@ -380,6 +380,8 @@ Pin the approved Master CV as a first-class document, show its HTML and PDF outp
 
 Create actionable exceptions for unsupported direct edits, proposed facts, broken portrait references, rendering overflow, stale edits, and candidates that cannot be approved.
 
+Profile age is different from a factual or rendering blocker. When the latest approved user-profile and claim-ledger snapshots are older than the configurable refresh threshold (120 days by default), CV generation continues and creates one non-blocking **Needs me** suggestion for that approved snapshot pair. The user may open the onboarding recruiter to propose updates or dismiss the suggestion. Candidate changes do not affect tailoring until the user explicitly approves them into new immutable profile snapshots.
+
 ### Agent activity
 
 Display Master CV preparation as a normal application-agent task with progress and a concise narrative.
@@ -402,6 +404,8 @@ Tailored-CV runs receive:
 - role and company context.
 
 Tailoring may select or omit approved content, reorder sections, shorten wording, and emphasize relevant approved claims. It may not redesign the CV, change the portrait, add unsupported content, remove a required portrait contrary to explicit market/user policy, or silently switch template versions.
+
+For tailored content, the current role begins by framing the broader system or business problem, then uses supported projects, metrics, lifecycle ownership, and tools. Skills stay to roughly 10–15 compact categories. Vacancy requirements map internally to approved claim IDs, with genuine evidence gaps retained as review information rather than invented content. Candidate-facing documents never mention ATS, keyword optimization, or similar tailoring mechanics.
 
 Existing campaigns retain their pinned foundation. Updating an active campaign requires an explicit **Update campaign foundation** action that records the old and new snapshot IDs. Existing application packages remain reproducible from their original pins.
 

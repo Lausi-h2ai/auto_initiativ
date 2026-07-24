@@ -172,7 +172,7 @@ class JobApplicationPackageService:
 Listed-job requirements:
 - This is a response to the published vacancy in `job_posting` inside `draft_context.json`.
 - Write the cover letter/email and CV in the explicit `run.language` / `job_posting.listing_language`. Do not switch languages merely because normalized vacancy fields or technical terms are in English.
-- Perform deliberate keyword matching: identify the role's important skills, tools, responsibilities, seniority, and domain terms; prioritize only approved claims that truthfully support them; reuse natural employer terminology without keyword stuffing.
+- Map the vacancy's important requirements to supporting claim IDs, prioritize only approved claims that truthfully support them, and identify genuine gaps where the claim ledger has no evidence. Do not disguise or invent evidence for a gap.
 - Tailor the summary, skills ordering, project/experience bullets, and cover letter to the vacancy and available company evidence. The letter must name concrete role needs and matching evidence. Never use generic filler such as 'my approved profile contains relevant experience'.
 - Treat `email_draft.body_text` as the application cover letter. Address a hiring team when no named recipient exists; do not research or guess a recipient.
 """
