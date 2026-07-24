@@ -44,6 +44,7 @@ After a completed tick or meaningful repository change, commit only its relevant
 ## Runtime
 
 - Follow any closer `AGENTS.md` instructions when working within a subtree.
+- Codex owns requested or required Auto Initiativ restarts: use the `launch-auto-initiativ` skill, start the app directly, and verify it rather than delegating routine restart commands to the user. Fall back to an exact foreground command only when a direct start cannot be kept alive or verified from the current environment.
 - After changes to backend code, built frontend assets, configuration, dependencies, or runtime behavior, restart the FastAPI app directly.
 - Before stopping a listener, confirm it belongs to Auto Initiativ. After starting, verify both `http://127.0.0.1:8000/health` and `http://127.0.0.1:8000/dashboard`; otherwise report the limitation and exact foreground command.
 
