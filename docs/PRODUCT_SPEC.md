@@ -12,7 +12,7 @@ The system should find relevant companies, evaluate fit, tailor CV materials fro
 
 ## Primary User
 
-One local user who wants to run proactive job applications without losing control over identity, factual claims, targeting constraints, or email sending.
+A user in a private local-first workspace who wants to run proactive job applications without losing control over identity, factual claims, targeting constraints, or email sending. Local account switching and authenticated multi-user deployments preserve workspace isolation.
 
 ## Product Goals
 
@@ -22,11 +22,11 @@ One local user who wants to run proactive job applications without losing contro
 - Prevent duplicate, policy-violating, unsupported, or low-confidence outreach.
 - Support dry-run workflows first, then controlled sending later.
 
-## Non-Goals for the Foundation
+## Historical Foundation Non-Goals
 
-- No Gmail sending implementation.
+- No Gmail sending implementation in the original foundation phase.
 - No OpenAI API dependency.
-- No full frontend or backend implementation.
+- No full frontend or backend implementation in the original foundation phase.
 - No enterprise multi-user permission model.
 - No hardcoded global moral exclusions.
 
@@ -41,7 +41,16 @@ One local user who wants to run proactive job applications without losing contro
 7. Email drafting creates `email_draft.json` files with sourced personalization.
 8. Send intent creation creates `send_intent.json` files.
 9. Backend import validates outputs, stores them, and displays them in the dashboard.
-10. Backend send gate decides whether an intent is eligible for dry-run approval or future sending.
+10. The backend send gate decides whether an intent is eligible for dry-run approval or controlled backend delivery.
+
+## Controlled Email Delivery
+
+- Email delivery is disabled by default.
+- Agents never receive credentials, invoke an adapter, approve work, reserve sends, or decide whether delivery is allowed.
+- A backend provider attempt requires schema-valid intent data, an authorized frozen approval, deterministic policy/dedupe/source/claim/attachment/limit checks, and a transactional reservation.
+- The backend records pre-attempt and terminal audit checkpoints and distinguishes provider acceptance, known-unsent failure, and uncertain outcomes.
+- Local development may use machine-local Gmail credentials only when authentication is disabled. Authenticated deployments require a workspace/user-scoped Gmail connection.
+- Listed-job applications remain manual-submit and never use the email-delivery path to submit forms.
 
 Research executes one independently tracked run per confirmed target. Each target receives the same minimum set of source-category attempts; zero-result attempts count as completed coverage, so naturally sparse locations do not block the campaign or cause richer locations to consume their search effort. A bare `Remote` target means fully remote work available in Europe. Explicit conflicts are excluded deterministically, while missing or ambiguous location, remote-policy, or duration evidence remains visible as `needs_review`.
 
@@ -77,4 +86,4 @@ The frontend should show:
 - Agent outputs are structured, source-backed, and schema validated.
 - Private, personal, guessed, or weakly sourced contact emails are blocked or routed to review.
 - User-descriptive claims in CVs and emails are traceable to approved master CV claim IDs.
-- The system can evolve toward autonomous sending without changing the core safety boundary.
+- Controlled backend sending preserves the same deterministic safety boundary and remains disabled by default.

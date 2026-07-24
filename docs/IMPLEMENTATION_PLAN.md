@@ -1,6 +1,6 @@
 # Implementation Plan
 
-The plan is split into small Codex-friendly phases. Each phase should leave the repository runnable or at least internally consistent.
+The plan is split into small Codex-friendly phases. Each phase should leave the repository runnable or at least internally consistent. Phases 0–7 below are retained as historical implementation milestones; their original no-sending statements describe those milestones, not the current gated backend capability.
 
 ## Phase 0: Foundation
 
@@ -15,6 +15,8 @@ Status: complete in this repository foundation.
 - Do not implement sending code.
 
 ## Phase 1: Backend Skeleton
+
+Status: complete.
 
 Goal: create a dry-run backend that can validate and import files while persisting only minimal operational records.
 
@@ -47,6 +49,8 @@ Acceptance:
 
 ## Phase 2: Database Model and Dedupe
 
+Status: complete.
+
 Goal: make Postgres the source of truth for outreach state.
 
 Tasks:
@@ -63,6 +67,8 @@ Acceptance:
 - Dedupe does not depend on prompts.
 
 ## Phase 3: Deterministic Gate
+
+Status: complete.
 
 Goal: implement the dry-run safety gate.
 
@@ -83,6 +89,8 @@ Acceptance:
 
 ## Phase 4: Dashboard MVP
 
+Status: complete.
+
 Goal: make agent work observable.
 
 Tasks:
@@ -97,6 +105,8 @@ Acceptance:
 - User can understand why a send intent did or did not pass.
 
 ## Phase 5: Onboarding Flow
+
+Status: complete through the restricted Pi RPC workflow, candidate review, and deterministic promotion path.
 
 Goal: create profile and policy source files through a guided process.
 
@@ -121,6 +131,8 @@ Acceptance:
 
 ## Phase 6: Agent Run Orchestration
 
+Status: complete for the current Pi RPC runtimes and schema-backed import/reconciliation paths.
+
 Goal: prepare repeatable Codex run folders.
 
 Tasks:
@@ -141,6 +153,8 @@ Acceptance:
 
 ## Phase 7: Email Adapter Interface
 
+Status: complete and subsequently extended with a gated backend-only Gmail adapter. Sending remains disabled by default.
+
 Goal: prepare for future sending without enabling it by default.
 
 Tasks:
@@ -148,7 +162,7 @@ Tasks:
 - Define an email adapter interface.
 - Add a fake dry-run adapter.
 - Add integration tests proving the gate is required before adapter invocation.
-- Keep real Gmail sending unimplemented unless explicitly requested.
+- Keep every real provider call behind explicit configuration, authorized approval, deterministic gates, transactional reservation, and audit checkpoints.
 - Keep `sent` and `send_failed` as future send result statuses, not safety gate statuses.
 
 Acceptance:
@@ -158,7 +172,7 @@ Acceptance:
 
 ## Next Recommended Codex Task
 
-Implement Phase 1: create a minimal FastAPI backend skeleton with Pydantic models generated from or aligned to the schemas, a dry-run configuration default, and an import service that validates JSON files from a run `output/` folder. Persist only minimal run, import, validation, and audit records. Do not implement normalized domain persistence yet. Do not add Gmail sending.
+Collect the missing coordinated-research shadow scenarios and PostgreSQL evidence identified in `docs/WORKFLOW_GRAPH_SHADOW_READINESS.md`. Do not cut over authoritative execution while the verdict is `insufficient_evidence`. A future cutover requires a separate, explicit implementation tick after a `ready` report.
 
 ## Listed Job Campaign Extension
 
@@ -176,7 +190,7 @@ Status: implemented as a parallel campaign path.
 
 ## Master CV Builder Extension
 
-Status: implementation in progress. The governing design is in `docs/MASTER_CV_BUILDER.md`.
+Status: major implementation complete. The remaining product backlog is version comparison/restore in the UI, explicit first-visit entry routes, template filters, duplicate/archive controls, and dedicated desktop/mobile browser journeys. The governing contract is in `docs/MASTER_CV_BUILDER.md`.
 
 - Add a dedicated Master CV workspace without increasing onboarding's required steps.
 - Vendor the MIT-licensed resume-builder skill and adapt all thirteen templates through application-owned, A4-safe adapters.

@@ -2,7 +2,13 @@
 
 ## Status
 
-Proposed
+Accepted
+
+## Implementation Status
+
+The decision is adopted. Trusted v1 definitions, topology validation, graph correlation fields, execution-key constraints, shadow observation, atomic task claims, lease recovery, and uncertain-launch blocking are implemented.
+
+`coordinated_research` remains shadow-observed and the existing workflow engine remains authoritative. The current aggregate readiness verdict is `insufficient_evidence`; see `docs/WORKFLOW_GRAPH_SHADOW_READINESS.md`. `application_preparation` and `privileged_sending` remain static validated boundaries. No graph dispatcher cutover is authorized without a later `ready` report and a separate explicit implementation tick.
 
 ## Context
 

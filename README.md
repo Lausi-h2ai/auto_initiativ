@@ -1,6 +1,6 @@
 # Local-First Agentic Job Outreach
 
-This repository defines the foundation for a personal, safety-first system for autonomous initiative job applications.
+This repository contains a local-first, safety-first application for initiative outreach and listed-job application preparation.
 
 The core rule is simple: Codex agents may research, evaluate, draft, and write structured files, but they must never send email. The application backend is the source of truth for data, policies, dedupe, audit logging, and all email-sending decisions.
 
@@ -42,7 +42,7 @@ The current definitions are:
 - `application_preparation` v1: contact decision and bounded remediation, candidate drafting, deterministic claim/source/artifact validation, and review/ready/blocked outcomes.
 - `privileged_sending` v1: validated intent, authorized frozen approval, deterministic evaluate-only gate, transactional reservation, provider attempt, and audited terminal outcomes.
 
-Coordinated research currently runs in shadow/correlation mode: the existing workflow engine remains authoritative while graph identities and observed transitions are audited. Application preparation and privileged sending are static validated boundaries and have not been cut over to a generic graph dispatcher. Promotion from shadow mode requires reviewed mismatch evidence, graph-level regression tests, atomic claiming and idempotency guarantees, and an explicit implementation tick. The project does not currently adopt LangGraph, the OpenAI Agents SDK, or another workflow checkpoint runtime.
+Coordinated research currently runs in shadow/correlation mode: the existing workflow engine remains authoritative while graph identities and observed transitions are audited. Application preparation and privileged sending are static validated boundaries and have not been cut over to a generic graph dispatcher. The current aggregate [shadow-readiness report](docs/WORKFLOW_GRAPH_SHADOW_READINESS.md) found no mismatches but remains `insufficient_evidence`; it does not authorize cutover. The project does not currently adopt LangGraph, the OpenAI Agents SDK, or another workflow checkpoint runtime.
 
 The detailed decision, invariants, migration stages, and rejected alternatives are recorded in [ADR-0003](adr/0003-application-owned-workflow-graph.md).
 
@@ -50,7 +50,7 @@ The detailed decision, invariants, migration stages, and rejected alternatives a
 
 Sending is impossible unless the deterministic backend gate validates a `send_intent.json`, checks dedupe and policy constraints, reserves the send transactionally, writes audit records, and only then calls the configured email adapter.
 
-The first implementation phase should stay dry-run safe.
+Sending is disabled by default. Agents never receive Gmail credentials and never call an email adapter.
 
 ## Key Documents
 
@@ -64,12 +64,14 @@ The first implementation phase should stay dry-run safe.
 - [Codex workflow](docs/CODEX_WORKFLOW.md)
 - [Data model](docs/DATA_MODEL.md)
 - [Application-owned workflow graph ADR](adr/0003-application-owned-workflow-graph.md)
+- [Workflow graph shadow readiness](docs/WORKFLOW_GRAPH_SHADOW_READINESS.md)
+- [Master CV builder contract](docs/MASTER_CV_BUILDER.md)
 
 ## Schemas
 
 Agent and backend JSON contracts live in `schemas/`. Any file imported from a Codex run must be validated against the matching schema before it can affect application state.
 
-## Phase 1 Backend Setup
+## Local Backend Setup
 
 Install the backend with test dependencies using Python 3.11 or newer:
 
@@ -87,7 +89,7 @@ Run optional Postgres-backed migration/constraint tests by pointing `POSTGRES_TE
 
 ```powershell
 $env:POSTGRES_TEST_DATABASE_URL="postgresql+psycopg://user:password@localhost:5432/auto_initiativ_test"
-uv run --python 3.12 --extra test pytest backend/tests/test_postgres_dedupe_constraints.py
+uv run --python 3.12 --extra test pytest backend/tests/test_postgres_dedupe_constraints.py backend/tests/test_postgres_workflow_claims.py
 ```
 
 Start the dry-run backend:
@@ -102,7 +104,7 @@ Apply database migrations to a fresh local database:
 uv run --python 3.12 alembic upgrade head
 ```
 
-For an existing Phase 1 database created before Alembic was added, inspect it first and stamp only after confirming it matches the current schema:
+For a legacy database created before Alembic was added, inspect it first and stamp only after confirming it matches the current schema:
 
 ```powershell
 uv run --python 3.12 alembic current
@@ -152,3 +154,5 @@ GMAIL_USER_ID=me
 ```
 
 This preserves the original single-machine workflow without requiring the newer Google web-login configuration. Authenticated or multi-user deployments never share these files; they require a per-user Gmail connection. Keep the local server bound to `127.0.0.1` when authentication is disabled.
+
+The Gmail adapter is backend-only and inactive unless sending is explicitly enabled. Every provider attempt still requires an authorized frozen approval, deterministic evaluation, transactional reservation, and before/after audit records. Agents cannot access credentials or invoke the adapter.

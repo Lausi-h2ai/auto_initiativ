@@ -1,6 +1,6 @@
 # Master CV Builder
 
-Status: governing feature contract. Implementation is incremental; a requirement in this document is not evidence that the corresponding code is complete.
+Status: governing feature contract. The backend lifecycle, deterministic rendering, portrait handling, agent runtime, approval, export, campaign pinning, and core workspace UI are implemented. Remaining completion work includes UI version comparison/restore, explicit first-visit routes, template filters, duplicate/archive controls, and dedicated desktop/mobile browser journeys. A requirement in this document is not evidence that the corresponding UI is complete.
 
 ## 1. Product decision
 

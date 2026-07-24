@@ -1,67 +1,57 @@
 # Agent Brief
 
-Last updated: 2026-05-15
+Last updated: 2026-07-24
 
 ## Operating Context
 
-This repository is a local-first, safety-first agentic job outreach system. The backend owns database state, deterministic safety gates, dedupe, policy enforcement, send limits, audit logs, and any future irreversible actions.
+Auto Initiativ is a local-first, safety-first system for initiative outreach and listed-job application preparation. The backend owns database state, workspace isolation, dedupe, policy, limits, gates, reservations, audit logs, provider calls, and every irreversible decision.
 
-Agents may produce research, fit analysis, CV tailoring drafts, email drafts, and structured intent files. Agents must not send email directly.
+Agents may produce sourced research, fit analysis, CV and cover-letter drafts, email drafts, and schema-valid structured files. Agents never send email, submit application forms, access provider credentials, approve work, allocate shared budgets, or choose workflow transitions.
 
 ## Current Phase
 
-Current phase: safe agent run templates after Phase 7 fake adapter/reservation preconditions.
+The original Phases 1–7 are complete. The current phase is coordinated-research workflow-graph hardening while authoritative execution remains in the existing workflow engine.
 
-Completed foundations:
+Completed foundations include:
 
-- Phase 1 backend skeleton, schema-backed import, validation, and audit persistence.
-- Phase 2 normalized domain persistence and deterministic dedupe constraints.
-- Phase 3 deterministic `evaluate_only` safety gate.
-- Phase 4 read-only dashboard APIs and backend-served dashboard MVP.
-- Tmux-backed interactive onboarding chat with dashboard UI and user-profile-only candidate import.
-- Non-interactive Codex exec adapter with execution logs and audit metadata.
-- Deterministic run-folder generator for scoped Codex exec tasks.
-- Generated-run integration path from run folder to Codex exec to schema-backed import and dashboard-readable state.
-- Private fake dry-run email adapter interface guarded by reserved gate and reservation preconditions.
-- Private `reserve_for_send` reservation precondition service that creates `SendReservation` records without adapter handoff.
+- Schema-backed import, normalized persistence, deterministic dedupe, and audit history.
+- Deterministic evaluate-only and reservation gates.
+- Guided onboarding with restricted Pi RPC, durable transcript, candidate review, and explicit snapshot promotion.
+- Coordinated initiative and listed-job research with confirmed plans, target coverage, shared budgets, scope filtering, and deterministic ranking.
+- Claim-grounded application packages and a dedicated Master CV builder with deterministic rendering, portrait handling, immutable approval, export, and campaign pinning.
+- English and `de-DE` workspace localization.
+- Backend-only Gmail delivery guarded by explicit configuration, authorized approval, deterministic checks, transactional reservation, and audit checkpoints.
+- Trusted workflow definitions, topology checks, task correlation, atomic claims, lease recovery, uncertain-launch blocking, and aggregate shadow-readiness reporting.
 
 ## Current Recommended Tick
 
-`AM-FUTURE-003: Onboarding Agent Prompt And Run Template`
+Collect the missing shadow scenarios and database proofs listed in `docs/WORKFLOW_GRAPH_SHADOW_READINESS.md`.
 
-Goal: create the onboarding agent instructions, run template, example input/output fixtures, and sample onboarding transcript flow.
+Required outcomes:
 
-Required constraints:
+- Observe both initiative-outreach and listed-job campaign kinds through the complete graph path.
+- Cover shared-budget allocation/exhaustion and multi-target fan-in.
+- Run the competing-worker, execution-key, and lease tests against disposable PostgreSQL.
+- Complete the remaining crash-recovery and workspace-cancellation proofs.
+- Regenerate the aggregate readiness report.
 
-- Keep agent outputs file-based and schema validated.
-- Do not add Gmail, SMTP, external sending service integration, or network send behavior.
-- Do not add a public send endpoint.
-- Do not automatically promote onboarding snapshots.
-- Use approved schemas and review workflow for `user_profile.json`, `master_cv_profile.json`, `policy.json`, and `onboarding_review.json`.
-- Continue to preserve the non-negotiable boundary: Codex agents never send emails directly.
+Do not cut over coordinated research unless the report becomes `ready` and a separate explicit cutover tick is approved.
 
-## Relevant Context
+## Runtime and Architecture
 
-- Runtime decision: `adr/0002-codex-runtime-bridge.md`.
-- Tmux bridge notes and smoke-test details: `docs/CODEX_TMUX_BRIDGE.md`.
-- Existing exec adapter: `backend/app/agents/codex_exec.py`.
-- Existing run folder generator: `backend/app/agents/run_folder.py`.
-- Existing generated-run integration: `backend/app/agents/codex_run.py`.
-- Existing process-control helper for tmux chat: `backend/app/agents/codex_tmux.py`.
-- Existing run import path: `backend/app/imports/import_service.py`.
-- Company research runs are intended to find profile-aligned companies and public career contact emails during the same crawl; they do not need open job listings.
-- The company research agent may write `company_candidate`, `contact_candidate`, and `fit_evaluation` JSON artifacts, but must not write drafts, send intents, Gmail output, or outreach instructions.
-- Deterministic gate: `backend/app/gates/evaluate_only.py`.
-- Reservation precondition service: `backend/app/gates/reserve_for_send.py`.
-- Fake dry-run email adapter and preconditioned handoff service: `backend/app/email_delivery/`.
-- Existing audit models and route patterns: `backend/app/db/models.py`, `backend/app/api/routes.py`.
-- Dashboard onboarding chat was completed by `archive/tick-006-002.md`.
-- Codex exec adapter was completed by `archive/tick-006-001.md`.
-- Run folder generator was completed by `archive/tick-006-003.md`.
-- Run import integration was completed by `archive/tick-006-004.md`.
+- Pi RPC is the restricted runtime for onboarding, research, verification, Master CV, and application-drafting agents.
+- Postgres/application domain rows remain authoritative; run folders and agent sessions are not workflow state.
+- Agent JSON is untrusted until schema validation and backend import succeed.
+- Graph definitions are trusted, code-owned, versioned, and validated through `backend/app/workflow/graph.py`.
+- Only registered deterministic predicates may choose edges.
+- `application_preparation` v1 and `privileged_sending` v1 are static validated boundaries, not authorization for dispatcher cutover.
+- Tmux and direct Codex-exec adapters remain developer diagnostics and legacy-test surfaces only.
 
 ## Safety Notes
 
-- Future CV tailoring may only use approved claim IDs from an immutable `master_cv_profile.json` snapshot.
-- If onboarding evidence is missing, contradictory, low-confidence, inferred, or policy-relevant, the output must mark it for review rather than silently promote it.
-- Snapshot promotion must be deterministic backend behavior, not an LLM decision.
+- CV and user-descriptive outreach content may use only approved claim IDs from immutable profile snapshots.
+- Missing, contradictory, inferred, or low-confidence evidence must be omitted or marked `needs_review`.
+- Snapshot and document approval is deterministic backend behavior initiated by an authorized user.
+- Listed-job application packages are always submitted manually.
+- Provider `outcome_uncertain` blocks and remains reservation-protected; it is never retried automatically.
+- No generic graph executor or agent node may call an email adapter.
