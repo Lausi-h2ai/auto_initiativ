@@ -292,6 +292,104 @@ def test_balanced_job_research_finalization_audits_conflicts_and_links_retained_
         assert json.loads(audit.reason_codes_json) == ["remote_region_conflict"]
 
 
+def test_geographic_target_counts_only_confirmed_matches_and_keeps_review_candidates_visible(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'geographic-target.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        campaign = Campaign(
+            campaign_id="campaign-geographic-target",
+            name="Konstanz jobs",
+            campaign_type="listed_job_search",
+            status="researching",
+            brief_json=json.dumps(
+                {"role_focus": "Applied AI", "locations": ["Konstanz"], "max_jobs": 10}
+            ),
+        )
+        session.add(campaign)
+        session.flush()
+        payload = compile_research_plan(campaign, schema_path=SCHEMA)
+        plan = replace_pending_plan(session, campaign, payload)
+        confirm_plan(plan)
+        target = session.exec(
+            select(ResearchTarget).where(ResearchTarget.research_plan_id == plan.id)
+        ).one()
+        target.status = "exhausted"
+        target.completed_attempts = target.required_attempts
+        matching = JobPosting(
+            job_id="job-konstanz",
+            external_company_id="company-konstanz",
+            title="AI Engineer",
+            source_url="https://example.com/jobs/konstanz",
+            canonical_url="https://example.com/jobs/konstanz",
+            application_url="https://example.com/jobs/konstanz/apply",
+            source_domain="example.com",
+            source_kind="employer_career_page",
+            fingerprint="konstanz",
+            locations_json=json.dumps(["Konstanz, Germany"]),
+            vacancy_status="verified_open",
+            confidence=0.9,
+        )
+        review = JobPosting(
+            job_id="job-reutlingen",
+            external_company_id="company-reutlingen",
+            title="ML Engineer",
+            source_url="https://example.org/jobs/reutlingen",
+            canonical_url="https://example.org/jobs/reutlingen",
+            application_url="https://example.org/jobs/reutlingen/apply",
+            source_domain="example.org",
+            source_kind="employer_career_page",
+            fingerprint="reutlingen",
+            locations_json=json.dumps(["Reutlingen, Germany"]),
+            vacancy_status="verified_open",
+            confidence=0.9,
+        )
+        session.add_all([plan, target, matching, review])
+        session.flush()
+        session.add_all(
+            [
+                ResearchDiscovery(
+                    campaign_id=campaign.id,
+                    target_id=target.id,
+                    candidate_kind="job",
+                    candidate_external_id=job.job_id,
+                    run_id="run-geographic-target",
+                )
+                for job in (matching, review)
+            ]
+        )
+        session.commit()
+
+        workflow = WorkflowEngine(session)
+        target.candidate_count = workflow._assess_target_discoveries(
+            target,
+            candidate_kind="job",
+        )
+        session.add(target)
+        session.commit()
+
+        discoveries = session.exec(
+            select(ResearchDiscovery).where(ResearchDiscovery.target_id == target.id)
+        ).all()
+        assert target.candidate_count == 1
+        assert {
+            item.candidate_external_id: item.scope_status for item in discoveries
+        } == {
+            matching.job_id: "match",
+            review.job_id: "needs_review",
+        }
+        assert workflow._target_coverage_complete(target, target.completed_attempts) is False
+
+        workflow._maybe_finalize_balanced_campaign(campaign)
+        session.commit()
+        session.refresh(target)
+
+        links = session.exec(
+            select(CampaignJob).where(CampaignJob.campaign_id == campaign.id)
+        ).all()
+        assert {link.job_posting_id for link in links} == {matching.id, review.id}
+        assert target.retained_count == 1
+
+
 @pytest.mark.parametrize(
     ("campaign_type", "task_type"),
     [

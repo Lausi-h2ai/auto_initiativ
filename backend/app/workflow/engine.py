@@ -592,15 +592,67 @@ class WorkflowEngine:
                     )
                 )
         self.session.flush()
-        target.candidate_count = len(
-            self.session.exec(
-                select(ResearchDiscovery).where(
-                    ResearchDiscovery.target_id == target.id,
-                    ResearchDiscovery.candidate_kind == kind,
-                )
-            ).all()
+        target.candidate_count = self._assess_target_discoveries(
+            target,
+            candidate_kind=kind,
         )
         return target.candidate_count
+
+    def _assess_target_discoveries(self, target: ResearchTarget, *, candidate_kind: str) -> int:
+        discoveries = self.session.exec(
+            select(ResearchDiscovery).where(
+                ResearchDiscovery.target_id == target.id,
+                ResearchDiscovery.candidate_kind == candidate_kind,
+            )
+        ).all()
+        if not discoveries:
+            return 0
+        plan = self.session.get(ResearchPlan, target.research_plan_id)
+        raw_plan = json_object(plan.raw_json) if plan is not None else {}
+        external_ids = {item.candidate_external_id for item in discoveries}
+        if candidate_kind == "job":
+            candidates = {
+                item.job_id: item
+                for item in self.session.exec(
+                    select(JobPosting).where(JobPosting.job_id.in_(external_ids))
+                ).all()
+            }
+        else:
+            candidates = {
+                item.company_id: item
+                for item in self.session.exec(
+                    select(Company).where(Company.company_id.in_(external_ids))
+                ).all()
+            }
+        match_count = 0
+        for discovery in discoveries:
+            candidate = candidates.get(discovery.candidate_external_id)
+            if candidate is None:
+                discovery.scope_status = "needs_review"
+                reasons = ["candidate_record_missing"]
+            elif candidate_kind == "job":
+                discovery.scope_status, reasons = self._job_target_scope_status(
+                    target,
+                    candidate,
+                    raw_plan,
+                )
+            else:
+                discovery.scope_status, reasons = self._company_target_scope_status(
+                    target,
+                    candidate,
+                )
+            discovery.reason_codes_json = json.dumps(reasons, sort_keys=True)
+            if discovery.scope_status == "match":
+                match_count += 1
+            self.session.add(discovery)
+        return match_count
+
+    @staticmethod
+    def _target_coverage_complete(target: ResearchTarget, attempts: int) -> bool:
+        return (
+            attempts >= target.required_attempts
+            and target.candidate_count >= target.guaranteed_candidate_goal
+        )
 
     def _reconcile_target_research(self, task: AgentTask, status: dict[str, Any]) -> None:
         payload = json_object(task.input_json)
@@ -617,7 +669,11 @@ class WorkflowEngine:
             jobs=task.task_type == "job_research_target",
         )
         task.progress = min(90, max(task.progress, 20 + attempts * 15))
-        task.narrative = self._text(task.workspace_id, f"{target.label}: {attempts}/{target.required_attempts} search attempts, {count} candidates.", f"{target.label}: {attempts}/{target.required_attempts} Suchversuche, {count} Kandidaten.")
+        task.narrative = self._text(
+            task.workspace_id,
+            f"{target.label}: {attempts}/{target.required_attempts} search attempts, {count} confirmed matches.",
+            f"{target.label}: {attempts}/{target.required_attempts} Suchversuche, {count} bestÃ¤tigte Treffer.",
+        )
         task.updated_at = utc_now()
         target.updated_at = utc_now()
         self.session.add_all([task, target])
@@ -625,23 +681,38 @@ class WorkflowEngine:
             self.session.commit()
             return
         if state in FAILED_RUNTIME_STATUSES:
-            if payload.get("budget_phase") == "shared" and attempts >= target.required_attempts:
-                target.status = "covered"
-                target.last_error = f"Shared-budget follow-up ended with {state}; initial coverage is preserved."
+            if payload.get("budget_phase") == "shared":
+                target.status = (
+                    "covered"
+                    if self._target_coverage_complete(target, attempts)
+                    else "exhausted"
+                )
+                target.last_error = f"Shared-budget follow-up ended with {state}; confirmed coverage is preserved."
             else:
                 target.status = "failed"
                 target.last_error = f"Research runtime ended with {state}."
-        elif attempts >= target.required_attempts:
+        elif self._target_coverage_complete(target, attempts):
             target.status = "covered"
+            target.last_error = None
         else:
             target.status = "exhausted"
-            target.last_error = f"Only {attempts} of {target.required_attempts} required attempts were recorded."
+            if attempts < target.required_attempts:
+                target.last_error = f"Only {attempts} of {target.required_attempts} required attempts were recorded."
+            else:
+                target.last_error = (
+                    f"Only {target.candidate_count} of {target.guaranteed_candidate_goal} "
+                    "confirmed target matches were found."
+                )
         task.status = "completed"
         task.progress = 100
         task.completed_at = utc_now()
         task.locked_at = None
         task.locked_by = None
-        task.narrative = self._text(task.workspace_id, f"{target.label} finished with {count} candidates ({target.status}).", f"{target.label} wurde mit {count} Kandidaten abgeschlossen ({target.status}).")
+        task.narrative = self._text(
+            task.workspace_id,
+            f"{target.label} finished with {count} confirmed matches ({target.status}).",
+            f"{target.label} wurde mit {count} bestÃ¤tigten Treffern abgeschlossen ({target.status}).",
+        )
         runtime_state = status.get("state") if isinstance(status.get("state"), dict) else {}
         elapsed_seconds = runtime_state.get("elapsed_seconds")
         if isinstance(elapsed_seconds, int | float) and elapsed_seconds > 0:
@@ -687,8 +758,12 @@ class WorkflowEngine:
         effort = raw_plan.get("effort") if isinstance(raw_plan.get("effort"), dict) else {}
         candidate_goal = int(effort.get("candidate_goal") or 0)
         total_time_seconds = int(effort.get("time_budget_seconds") or 0)
+        target_ids = {target.id for target in targets}
         discoveries = self.session.exec(
-            select(ResearchDiscovery).where(ResearchDiscovery.campaign_id == campaign.id)
+            select(ResearchDiscovery).where(
+                ResearchDiscovery.target_id.in_(target_ids),
+                ResearchDiscovery.scope_status == "match",
+            )
         ).all()
         unique_candidates = len(
             {(item.candidate_kind, item.candidate_external_id) for item in discoveries}
@@ -696,7 +771,11 @@ class WorkflowEngine:
         needs_coverage = [
             target
             for target in targets
-            if target.status != "failed" and target.completed_attempts < target.required_attempts
+            if target.status != "failed"
+            and (
+                target.completed_attempts < target.required_attempts
+                or target.candidate_count < target.guaranteed_candidate_goal
+            )
         ]
         if unique_candidates >= candidate_goal and not needs_coverage:
             return False
@@ -795,6 +874,62 @@ class WorkflowEngine:
             return "match", []
         return "needs_review", ["remote_policy_unconfirmed"]
 
+    def _job_target_scope_status(
+        self,
+        target: ResearchTarget,
+        job: JobPosting,
+        raw_plan: dict[str, Any],
+    ) -> tuple[str, list[str]]:
+        if target.target_kind == "remote":
+            status, reasons = self._remote_scope_status(job)
+        else:
+            normalized_locations = " | ".join(json.loads(job.locations_json or "[]")).casefold()
+            target_value = target.normalized_value.casefold()
+            status, reasons = (
+                ("match", [])
+                if target_value and target_value in normalized_locations
+                else ("needs_review", ["geographic_match_unconfirmed"])
+            )
+        minimum_duration = next(
+            (
+                int(item["value"])
+                for item in raw_plan.get("hard_constraints", [])
+                if item.get("key") == "minimum_duration_weeks"
+                and isinstance(item.get("value"), int)
+            ),
+            None,
+        )
+        if minimum_duration is not None:
+            if job.duration_max_weeks is not None and job.duration_max_weeks < minimum_duration:
+                return "conflict", ["duration_below_campaign_minimum"]
+            if (
+                job.duration_min_weeks is None
+                and job.duration_max_weeks is None
+                and status == "match"
+            ):
+                return "needs_review", ["duration_unconfirmed"]
+        return status, reasons
+
+    @staticmethod
+    def _company_target_scope_status(
+        target: ResearchTarget,
+        company: Company,
+    ) -> tuple[str, list[str]]:
+        conflicts = json.loads(company.policy_conflicts_json or "[]")
+        if conflicts:
+            return "conflict", ["company_policy_conflict"]
+        if target.target_kind == "remote":
+            remote_policy = (company.remote_policy or "").casefold()
+            if any(token in remote_policy for token in ("onsite only", "on-site only", "no remote")):
+                return "conflict", ["remote_target_but_company_is_onsite_only"]
+            if not any(token in remote_policy for token in ("remote", "distributed", "work from home")):
+                return "needs_review", ["company_remote_policy_unconfirmed"]
+            return "match", []
+        locations = " | ".join(json.loads(company.locations_json or "[]")).casefold()
+        if target.normalized_value.casefold() not in locations:
+            return "needs_review", ["company_geographic_match_unconfirmed"]
+        return "match", []
+
     def _maybe_finalize_balanced_campaign(self, campaign: Campaign) -> None:
         plan = self.session.exec(
             select(ResearchPlan)
@@ -823,27 +958,11 @@ class WorkflowEngine:
                 target = target_by_id.get(discovery.target_id)
                 if job is None or target is None or discovery.candidate_kind != "job":
                     continue
-                status, reasons = ("match", [])
-                if target.target_kind == "remote":
-                    status, reasons = self._remote_scope_status(job)
-                else:
-                    normalized_locations = " | ".join(json.loads(job.locations_json or "[]")).casefold()
-                    target_value = target.normalized_value.casefold()
-                    if target_value and target_value not in normalized_locations:
-                        status, reasons = "needs_review", ["geographic_match_unconfirmed"]
-                minimum_duration = next(
-                    (
-                        int(item["value"])
-                        for item in raw_plan.get("hard_constraints", [])
-                        if item.get("key") == "minimum_duration_weeks" and isinstance(item.get("value"), int)
-                    ),
-                    None,
+                status, reasons = self._job_target_scope_status(
+                    target,
+                    job,
+                    raw_plan,
                 )
-                if minimum_duration is not None:
-                    if job.duration_max_weeks is not None and job.duration_max_weeks < minimum_duration:
-                        status, reasons = "conflict", ["duration_below_campaign_minimum"]
-                    elif job.duration_min_weeks is None and job.duration_max_weeks is None and status == "match":
-                        status, reasons = "needs_review", ["duration_unconfirmed"]
                 previous = assessed.get(job.job_id)
                 if previous is None or {"match": 2, "needs_review": 1, "conflict": 0}[status] > {"match": 2, "needs_review": 1, "conflict": 0}[previous[1]]:
                     assessed[job.job_id] = (job, status, reasons)
@@ -883,7 +1002,9 @@ class WorkflowEngine:
                     {
                         item.candidate_external_id
                         for item in discoveries
-                        if item.target_id == target.id and item.candidate_external_id in retained_ids
+                        if item.target_id == target.id
+                        and item.scope_status == "match"
+                        and item.candidate_external_id in retained_ids
                     }
                 )
                 self.session.add(target)
@@ -900,18 +1021,10 @@ class WorkflowEngine:
                 target = target_by_id.get(discovery.target_id)
                 if company is None or target is None or discovery.candidate_kind != "company":
                     continue
-                conflicts = json.loads(company.policy_conflicts_json or "[]")
-                status, reasons = ("conflict", ["company_policy_conflict"]) if conflicts else ("match", [])
-                if not conflicts and target.target_kind == "remote":
-                    remote_policy = (company.remote_policy or "").casefold()
-                    if any(token in remote_policy for token in ("onsite only", "on-site only", "no remote")):
-                        status, reasons = "conflict", ["remote_target_but_company_is_onsite_only"]
-                    elif not any(token in remote_policy for token in ("remote", "distributed", "work from home")):
-                        status, reasons = "needs_review", ["company_remote_policy_unconfirmed"]
-                elif not conflicts:
-                    locations = " | ".join(json.loads(company.locations_json or "[]")).casefold()
-                    if target.normalized_value.casefold() not in locations:
-                        status, reasons = "needs_review", ["company_geographic_match_unconfirmed"]
+                status, reasons = self._company_target_scope_status(
+                    target,
+                    company,
+                )
                 previous = assessed_companies.get(company.company_id)
                 if previous is None or {"match": 2, "needs_review": 1, "conflict": 0}[status] > {
                     "match": 2,
@@ -986,7 +1099,9 @@ class WorkflowEngine:
                     {
                         item.candidate_external_id
                         for item in discoveries
-                        if item.target_id == target.id and item.candidate_external_id in retained_ids
+                        if item.target_id == target.id
+                        and item.scope_status == "match"
+                        and item.candidate_external_id in retained_ids
                     }
                 )
                 self.session.add(target)
