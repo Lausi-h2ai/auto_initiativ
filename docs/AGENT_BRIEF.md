@@ -22,17 +22,16 @@ Completed foundations include:
 - English and `de-DE` workspace localization.
 - Backend-only Gmail delivery guarded by explicit configuration, authorized approval, deterministic checks, transactional reservation, and audit checkpoints.
 - Trusted workflow definitions, topology checks, task correlation, atomic claims, lease recovery, uncertain-launch blocking, and aggregate shadow-readiness reporting.
+- Versioned shadow instrumentation, a deterministic full-topology scenario matrix, and PostgreSQL concurrency, recovery, workspace-isolation, and pause proofs.
 
 ## Current Recommended Tick
 
-Collect the missing shadow scenarios and database proofs listed in `docs/WORKFLOW_GRAPH_SHADOW_READINESS.md`.
+Collect fresh post-boundary operational traces listed in `docs/WORKFLOW_GRAPH_SHADOW_READINESS.md`.
 
 Required outcomes:
 
-- Observe both initiative-outreach and listed-job campaign kinds through the complete graph path.
-- Cover shared-budget allocation/exhaustion and multi-target fan-in.
-- Run the competing-worker, execution-key, and lease tests against disposable PostgreSQL.
-- Complete the remaining crash-recovery and workspace-cancellation proofs.
+- Run one fresh initiative-outreach and one fresh listed-job campaign through the complete authoritative path.
+- Include at least two targets, shared-budget allocation/exhaustion, multi-target fan-in, and covered, exhausted, and failed outcomes across the evidence set.
 - Regenerate the aggregate readiness report.
 
 Do not cut over coordinated research unless the report becomes `ready` and a separate explicit cutover tick is approved.

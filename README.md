@@ -92,6 +92,11 @@ $env:POSTGRES_TEST_DATABASE_URL="postgresql+psycopg://user:password@localhost:54
 uv run --python 3.12 --extra test pytest backend/tests/test_postgres_dedupe_constraints.py backend/tests/test_postgres_workflow_claims.py
 ```
 
+The workflow file covers execution-key uniqueness, competing claims, expired
+lease recovery, uncertain-launch blocking, workspace isolation, and campaign
+pause behavior. Use a disposable database because the tests apply migrations
+and create test records.
+
 Start the dry-run backend:
 
 ```powershell

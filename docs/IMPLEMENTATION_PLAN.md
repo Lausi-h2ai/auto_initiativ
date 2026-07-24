@@ -172,7 +172,7 @@ Acceptance:
 
 ## Next Recommended Codex Task
 
-Collect the missing coordinated-research shadow scenarios and PostgreSQL evidence identified in `docs/WORKFLOW_GRAPH_SHADOW_READINESS.md`. Do not cut over authoritative execution while the verdict is `insufficient_evidence`. A future cutover requires a separate, explicit implementation tick after a `ready` report.
+Collect fresh post-boundary coordinated-research traces identified in `docs/WORKFLOW_GRAPH_SHADOW_READINESS.md`. The deterministic topology matrix and PostgreSQL concurrency, recovery, isolation, and pause proofs are complete. Do not cut over authoritative execution while the verdict is `insufficient_evidence`. A future cutover requires a separate, explicit implementation tick after a `ready` report.
 
 ## Listed Job Campaign Extension
 
