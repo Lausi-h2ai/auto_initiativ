@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlmodel import Session, col, select
 
 from backend.app.auth.context import current_identity, scoped_runs_root
@@ -79,6 +79,13 @@ class CampaignCreate(BaseModel):
     languages: list[str] = Field(default_factory=list, max_length=20)
     application_language: Literal["auto", "de-DE", "en"] = "auto"
     sending_mode: Literal["prepare_only", "gated_autosend"] = "prepare_only"
+
+    @field_validator("role_focus", mode="before")
+    @classmethod
+    def default_blank_role_focus(cls, value: Any) -> Any:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return "Profile-aligned roles"
+        return value
 
 
 class CampaignModeUpdate(BaseModel):

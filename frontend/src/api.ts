@@ -239,6 +239,36 @@ export type Delivery = {
 
 let csrf = "";
 
+function apiErrorMessage(detail: unknown, fallback: string): string {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (!item || typeof item !== "object") return String(item);
+        const issue = item as { loc?: unknown; msg?: unknown };
+        const location = Array.isArray(issue.loc)
+          ? issue.loc
+              .filter((part) => part !== "body")
+              .map(String)
+              .join(".")
+          : "";
+        const message =
+          typeof issue.msg === "string" ? issue.msg : JSON.stringify(item);
+        return location ? `${location}: ${message}` : message;
+      })
+      .filter(Boolean);
+    if (messages.length) return messages.join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 export async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -262,7 +292,7 @@ export async function request<T>(
     let message = `${response.status} ${response.statusText}`;
     try {
       const payload = await response.json();
-      message = payload.detail || message;
+      message = apiErrorMessage(payload.detail, message);
     } catch {
       // Keep the HTTP fallback.
     }

@@ -1625,6 +1625,8 @@ function CampaignWizard() {
     try {
       const campaign = await mutate<Campaign>("/campaigns", "POST", {
         ...form,
+        role_focus: form.role_focus.trim() || "Profile-aligned roles",
+        additional_guidance: form.additional_guidance.trim(),
         locations: form.locations
           .split(",")
           .map((item) => item.trim())

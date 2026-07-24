@@ -545,7 +545,7 @@ def test_listed_job_campaign_is_separate_and_manual_submit_only(authenticated_ap
         json={
             "campaign_type": "listed_job_search",
             "name": "Verified AI roles",
-            "role_focus": "Applied AI engineering",
+            "role_focus": "",
             "locations": ["Zurich"],
             "max_jobs": 20,
             "freshness_days": 30,
@@ -554,6 +554,7 @@ def test_listed_job_campaign_is_separate_and_manual_submit_only(authenticated_ap
     )
     assert response.status_code == 201
     assert response.json()["campaign_type"] == "listed_job_search"
+    assert response.json()["brief"]["role_focus"] == "Profile-aligned roles"
     assert response.json()["job_count"] == 0
     assert response.json()["status"] == "planning"
     assert response.json()["research_plan_status"] == "pending_confirmation"
