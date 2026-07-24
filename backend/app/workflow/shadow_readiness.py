@@ -20,7 +20,10 @@ from backend.app.db.models import (
 )
 from backend.app.db.session import build_engine
 from backend.app.workflow.graph import coordinated_research_v1
-from backend.app.workflow.research_graph import graph_run_id_for
+from backend.app.workflow.research_graph import (
+    SHADOW_INSTRUMENTATION_VERSION,
+    graph_run_id_for,
+)
 
 
 EvidenceStatus = Literal["passed", "failed", "unavailable"]
@@ -50,6 +53,7 @@ class VerificationEvidence(BaseModel):
 
 class ShadowEvidenceInputs(BaseModel):
     event_count: int = 0
+    historical_event_count: int = 0
     graph_run_count: int = 0
     campaign_count: int = 0
     target_count: int = 0
@@ -93,6 +97,7 @@ class ShadowReadinessReport(BaseModel):
     generated_at: datetime
     definition_id: Literal["coordinated_research"] = "coordinated_research"
     graph_version: Literal[1] = 1
+    shadow_instrumentation_version: Literal[1] = SHADOW_INSTRUMENTATION_VERSION
     verdict: ReadinessVerdict
     summary: dict[str, int]
     coverage: ShadowCoverage
@@ -137,12 +142,22 @@ def collect_shadow_evidence(
         edge.edge_id: edge.reason_code
         for edge in definition.edges
     }
-    events = session.exec(
+    all_events = session.exec(
         select(AuditLog)
         .where(AuditLog.entity_type == "workflow_graph_shadow_event")
         .order_by(AuditLog.created_at, AuditLog.id)
     ).all()
-    metadata_rows = [(event, _json_object(event.metadata_json)) for event in events]
+    all_metadata_rows = [
+        (event, _json_object(event.metadata_json))
+        for event in all_events
+    ]
+    metadata_rows = [
+        (event, metadata)
+        for event, metadata in all_metadata_rows
+        if metadata.get("shadow_instrumentation_version")
+        == SHADOW_INSTRUMENTATION_VERSION
+    ]
+    events = [event for event, _ in metadata_rows]
 
     event_ids = Counter(event.entity_id or "" for event in events)
     duplicate_event_ids = sorted(
@@ -207,12 +222,17 @@ def collect_shadow_evidence(
         if node_id == "research_complete" and graph_run_id:
             finalization_runs.add(graph_run_id)
 
-    tasks = session.exec(
-        select(AgentTask).where(
-            AgentTask.graph_definition_id == definition.definition_id,
-            AgentTask.graph_version == definition.version,
-        )
-    ).all()
+    tasks = (
+        session.exec(
+            select(AgentTask).where(
+                AgentTask.graph_definition_id == definition.definition_id,
+                AgentTask.graph_version == definition.version,
+                AgentTask.graph_run_id.in_(graph_run_ids),
+            )
+        ).all()
+        if graph_run_ids
+        else []
+    )
     missing_execution_key_task_ids = sorted(
         task.task_id for task in tasks if not task.execution_key
     )
@@ -280,6 +300,7 @@ def collect_shadow_evidence(
 
     return ShadowEvidenceInputs(
         event_count=len(events),
+        historical_event_count=len(all_events) - len(events),
         graph_run_count=len(graph_run_ids),
         campaign_count=len(campaign_public_ids),
         target_count=len(target_ids),
@@ -388,6 +409,7 @@ def evaluate_shadow_readiness(
         verdict=verdict,
         summary={
             "events": inputs.event_count,
+            "historical_events": inputs.historical_event_count,
             "graph_runs": inputs.graph_run_count,
             "campaigns": inputs.campaign_count,
             "targets": inputs.target_count,
@@ -424,6 +446,7 @@ def render_markdown(report: ShadowReadinessReport) -> str:
         "## Evidence Summary",
         "",
         f"- Events: {summary['events']}",
+        f"- Historical pre-contract events: {summary['historical_events']}",
         f"- Graph runs: {summary['graph_runs']}",
         f"- Campaigns: {summary['campaigns']}",
         f"- Targets: {summary['targets']}",

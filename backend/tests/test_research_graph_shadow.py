@@ -5,6 +5,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from backend.app.db.models import AgentTask, AuditLog, Campaign, ResearchPlan, ResearchTarget
 from backend.app.research.planning import plan_hash
 from backend.app.workflow.research_graph import (
+    SHADOW_INSTRUMENTATION_VERSION,
     graph_run_id_for,
     observe_campaign_finalized,
     observe_plan_confirmed,
@@ -114,6 +115,11 @@ def test_launch_annotation_and_reconcile_audits_are_replay_idempotent(tmp_path) 
         ).all()
         assert len(audits) == 8
         assert all(json.loads(row.metadata_json)["shadow_mode"] is True for row in audits)
+        assert all(
+            json.loads(row.metadata_json)["shadow_instrumentation_version"]
+            == SHADOW_INSTRUMENTATION_VERSION
+            for row in audits
+        )
 
 
 def test_legacy_or_unconfirmed_plan_is_not_annotated(tmp_path) -> None:
@@ -206,6 +212,11 @@ def test_campaign_path_observation_is_aggregate_and_replay_idempotent(tmp_path) 
         assert len(audits) == 13
         metadata = [json.loads(row.metadata_json) for row in audits]
         assert all(item["graph_run_id"] == first_run_id for item in metadata)
+        assert all(
+            item["shadow_instrumentation_version"]
+            == SHADOW_INSTRUMENTATION_VERSION
+            for item in metadata
+        )
         final = next(item for item in metadata if item["node_id"] == "research_complete")
         assert final["aggregate"] == {
             "campaign_status": "preparing",

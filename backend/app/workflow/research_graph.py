@@ -30,6 +30,7 @@ validate_workflow_definition(
 
 TARGET_TASK_TYPES = frozenset({"company_research_target", "job_research_target"})
 SUPPORTED_CAMPAIGN_TYPES = frozenset({"initiative_outreach", "listed_job_search"})
+SHADOW_INSTRUMENTATION_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,6 +437,7 @@ def _record_campaign_event(
         return
     metadata: dict[str, Any] = {
         "shadow_mode": True,
+        "shadow_instrumentation_version": SHADOW_INSTRUMENTATION_VERSION,
         "graph_definition_id": COORDINATED_RESEARCH_DEFINITION.definition_id,
         "graph_version": COORDINATED_RESEARCH_DEFINITION.version,
         "graph_run_id": graph_run_id,
@@ -500,6 +502,7 @@ def _record_event(
         return
     metadata: dict[str, Any] = {
         "shadow_mode": True,
+        "shadow_instrumentation_version": SHADOW_INSTRUMENTATION_VERSION,
         "graph_definition_id": COORDINATED_RESEARCH_DEFINITION.definition_id,
         "graph_version": COORDINATED_RESEARCH_DEFINITION.version,
         "graph_run_id": correlation.graph_run_id,

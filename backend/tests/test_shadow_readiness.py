@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
+from sqlmodel import Session, SQLModel, create_engine
+
+from backend.app.db.models import AuditLog
 from backend.app.workflow.graph import coordinated_research_v1
+from backend.app.workflow.research_graph import SHADOW_INSTRUMENTATION_VERSION
 from backend.app.workflow.shadow_readiness import (
     ShadowEvidenceInputs,
     VerificationEvidence,
+    collect_shadow_evidence,
     evaluate_shadow_readiness,
     render_markdown,
 )
@@ -18,6 +24,7 @@ def _complete_inputs(**updates) -> ShadowEvidenceInputs:
     definition = coordinated_research_v1()
     values = {
         "event_count": 200,
+        "historical_event_count": 12,
         "graph_run_count": 8,
         "campaign_count": 4,
         "target_count": 12,
@@ -54,6 +61,61 @@ def test_complete_evidence_is_ready_and_markdown_is_aggregate_only():
     assert "Verdict: **ready**" in markdown
     assert "explicitly approved cutover tick" in markdown
     assert "campaign names" in markdown
+    assert "Historical pre-contract events: 12" in markdown
+
+
+def test_collection_separates_pre_contract_events(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'shadow-boundary.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        for event_id, metadata in (
+            (
+                "legacy-event",
+                {
+                    "shadow_mode": True,
+                    "graph_run_id": "legacy-run",
+                    "campaign_type": "initiative_outreach",
+                    "node_id": "compile_plan",
+                },
+            ),
+            (
+                "current-event",
+                {
+                    "shadow_mode": True,
+                    "shadow_instrumentation_version": SHADOW_INSTRUMENTATION_VERSION,
+                    "graph_run_id": "current-run",
+                    "campaign_type": "listed_job_search",
+                    "node_id": "compile_plan",
+                    "reason_code": "research_plan_compiled",
+                },
+            ),
+        ):
+            session.add(
+                AuditLog(
+                    workspace_id=1,
+                    run_id=str(metadata["graph_run_id"]),
+                    actor_type="system",
+                    action="workflow_graph_shadow_node_observed",
+                    entity_type="workflow_graph_shadow_event",
+                    entity_id=event_id,
+                    result_status="observed",
+                    reason_codes_json=json.dumps(
+                        [metadata.get("reason_code")]
+                        if metadata.get("reason_code")
+                        else []
+                    ),
+                    metadata_json=json.dumps(metadata),
+                )
+            )
+        session.commit()
+
+        inputs = collect_shadow_evidence(session)
+
+    assert inputs.event_count == 1
+    assert inputs.historical_event_count == 1
+    assert inputs.graph_run_count == 1
+    assert inputs.campaign_kinds == ["listed_job_search"]
+    assert inputs.node_ids == ["compile_plan"]
 
 
 def test_missing_branch_and_external_proofs_are_insufficient():
