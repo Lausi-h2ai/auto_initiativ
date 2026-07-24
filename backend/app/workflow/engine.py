@@ -227,6 +227,14 @@ class WorkflowEngine:
         campaign = self.session.get(Campaign, task.campaign_id)
         if target is None or campaign is None or target.campaign_id != campaign.id:
             raise ValueError("Targeted research requires a valid campaign target.")
+        from backend.app.workflow.research_graph import observe_target_launch
+
+        observe_target_launch(
+            self.session,
+            task=task,
+            target=target,
+            campaign=campaign,
+        )
         if task.task_type == "job_research_target":
             from backend.app.agents.job_research_runtime import JobResearchRuntime, prepare_job_research_run
 
@@ -608,6 +616,14 @@ class WorkflowEngine:
         target.reserved_time_seconds = 0
         self.session.add_all([target, task])
         self.session.flush()
+        from backend.app.workflow.research_graph import observe_target_reconciled
+
+        observe_target_reconciled(
+            self.session,
+            task=task,
+            target=target,
+            campaign=campaign,
+        )
         if not self._maybe_schedule_shared_research(campaign):
             self._maybe_finalize_balanced_campaign(campaign)
         self.session.commit()
@@ -690,30 +706,39 @@ class WorkflowEngine:
             target.shared_lease_count += 1
             target.updated_at = utc_now()
             self.session.add(target)
-            self.session.add(
-                AgentTask(
-                    task_id=f"task-{uuid4()}",
-                    campaign_id=campaign.id,
-                    agent_role=agent_role,
-                    task_type=task_type,
-                    narrative=localized_text(
+            shared_task = AgentTask(
+                task_id=f"task-{uuid4()}",
+                campaign_id=campaign.id,
+                agent_role=agent_role,
+                task_type=task_type,
+                narrative=localized_text(
                         locale,
                         f"Queued a shared-budget follow-up pass for {target.label}.",
                         f"Ein Folgelauf aus dem gemeinsamen Budget für {target.label} wurde eingeplant.",
                     ),
-                    input_json=json.dumps(
+                input_json=json.dumps(
                         {
                             "research_target_id": target.id,
                             "target_id": target.target_id,
                             "budget_phase": "shared",
+                            "lease_generation": target.shared_lease_count,
                             "candidate_goal": lease_goal,
                             "time_budget_seconds": lease_seconds,
                         },
                         sort_keys=True,
                     ),
-                    workspace_id=campaign.workspace_id,
-                )
+                workspace_id=campaign.workspace_id,
             )
+            from backend.app.workflow.research_graph import correlate_target_task
+
+            correlate_target_task(
+                self.session,
+                task=shared_task,
+                target=target,
+                campaign=campaign,
+                logical_generation=target.shared_lease_count,
+            )
+            self.session.add(shared_task)
             available_seconds -= lease_seconds
             remaining_candidate_goal = max(remaining_candidate_goal - lease_goal, 1)
             scheduled += 1
