@@ -54,7 +54,6 @@ NEW_CORE_TABLES = (
 )
 
 NEW_OWNED_TABLES = (
-    "campaigns",
     "onboarding_sessions",
     "campaign_companies",
     "agent_tasks",
@@ -84,6 +83,64 @@ EXTERNAL_ID_INDEXES = {
 
 def _create_model_table(name: str) -> None:
     models.SQLModel.metadata.tables[name].create(op.get_bind(), checkfirst=True)
+
+
+def _create_campaigns_table() -> None:
+    """Create the 0004 campaign shape without depending on future models.
+
+    This migration predates the Master CV document table. Using the live
+    SQLModel metadata here would make a fresh migration attempt to create that
+    future foreign key before its referenced table exists.
+    """
+
+    op.create_table(
+        "campaigns",
+        sa.Column("workspace_id", sa.Integer(), nullable=False),
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("campaign_id", sa.String(), nullable=False),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("status", sa.String(), nullable=False),
+        sa.Column("sending_mode", sa.String(), nullable=False),
+        sa.Column("brief_json", sa.Text(), nullable=True),
+        sa.Column("user_profile_snapshot_id", sa.Integer(), nullable=True),
+        sa.Column("master_cv_profile_snapshot_id", sa.Integer(), nullable=True),
+        sa.Column("policy_snapshot_id", sa.Integer(), nullable=True),
+        sa.Column("started_at", sa.DateTime(), nullable=True),
+        sa.Column("paused_at", sa.DateTime(), nullable=True),
+        sa.Column("completed_at", sa.DateTime(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(["workspace_id"], ["workspaces.id"]),
+        sa.ForeignKeyConstraint(
+            ["user_profile_snapshot_id"],
+            ["user_profile_snapshots.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["master_cv_profile_snapshot_id"],
+            ["master_cv_profile_snapshots.id"],
+        ),
+        sa.ForeignKeyConstraint(["policy_snapshot_id"], ["policy_snapshots.id"]),
+        sa.UniqueConstraint(
+            "workspace_id",
+            "campaign_id",
+            name="uq_campaigns_workspace_external_id",
+        ),
+    )
+    for column_name in (
+        "workspace_id",
+        "campaign_id",
+        "status",
+        "sending_mode",
+        "user_profile_snapshot_id",
+        "master_cv_profile_snapshot_id",
+        "policy_snapshot_id",
+    ):
+        op.create_index(
+            f"ix_campaigns_{column_name}",
+            "campaigns",
+            [column_name],
+            unique=False,
+        )
 
 
 def upgrade() -> None:
@@ -173,6 +230,7 @@ def upgrade() -> None:
         ),
     )
 
+    _create_campaigns_table()
     for table_name in NEW_OWNED_TABLES:
         _create_model_table(table_name)
 

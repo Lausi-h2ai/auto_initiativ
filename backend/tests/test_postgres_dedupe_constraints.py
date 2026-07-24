@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, create_engine
 
 from backend.app.core.config import get_settings
-from backend.app.db.models import SendReservation
+from backend.app.db.models import SendReservation, User, Workspace
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -34,8 +34,24 @@ def test_postgres_partial_unique_dedupe_constraints(postgres_engine):
     company_key = f"domain:example-{suffix}.com"
 
     with Session(postgres_engine) as session:
+        user = User(
+            google_subject=f"dedupe-{suffix}",
+            email=f"dedupe-{suffix}@example.com",
+            display_name="Dedupe Test",
+        )
+        session.add(user)
+        session.flush()
+        workspace = Workspace(
+            workspace_id=f"dedupe-{suffix}",
+            owner_user_id=user.id,
+            name="Dedupe Test",
+        )
+        session.add(workspace)
+        session.flush()
+        workspace_id = workspace.id
         session.add(
             SendReservation(
+                workspace_id=workspace_id,
                 reservation_id=f"reservation-{suffix}-1",
                 normalized_recipient_email=email,
                 company_policy_key=company_key,
@@ -48,6 +64,7 @@ def test_postgres_partial_unique_dedupe_constraints(postgres_engine):
         with Session(postgres_engine) as session:
             session.add(
                 SendReservation(
+                    workspace_id=workspace_id,
                     reservation_id=f"reservation-{suffix}-2",
                     normalized_recipient_email=email,
                     company_policy_key=f"domain:other-{suffix}.com",
