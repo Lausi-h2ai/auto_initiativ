@@ -31,6 +31,7 @@ def test_job_research_runtime_uses_target_time_budget_seconds(tmp_path: Path):
 
 def test_job_research_continues_until_requested_breadth(tmp_path: Path, monkeypatch):
     prompts: list[str] = []
+    streaming_behaviors: list[str | None] = []
     import_counts: list[int] = []
 
     class PromptResult:
@@ -42,8 +43,9 @@ def test_job_research_continues_until_requested_breadth(tmp_path: Path, monkeypa
             self.output_root = output_root
             self.closed = False
 
-        def prompt(self, message: str, *, timeout_seconds: float):
+        def prompt(self, message: str, *, timeout_seconds: float, streaming_behavior: str | None = None):
             prompts.append(message)
+            streaming_behaviors.append(streaming_behavior)
             index = len(prompts)
             (self.output_root / "jobs" / f"job-{index}.json").write_text("{}", encoding="utf-8")
             (self.output_root / "job_fit_evaluations" / f"fit-{index}.json").write_text("{}", encoding="utf-8")
@@ -109,6 +111,7 @@ def test_job_research_continues_until_requested_breadth(tmp_path: Path, monkeypa
 
     assert len(prompts) == 2
     assert "previous reply stopped before the requested breadth was met" in prompts[1]
+    assert streaming_behaviors == [None, "followUp"]
     assert import_counts == [2]
     assert client.closed is True
     state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))

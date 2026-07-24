@@ -65,7 +65,15 @@ class JobResearchRuntime(CompanyResearchRuntime):
             prompt = self._prompt(run_id)
             last_reply = ""
             while True:
-                result = client.prompt(prompt, timeout_seconds=self._remaining_prompt_timeout(started, prompt_timeout))
+                remaining_timeout = self._remaining_prompt_timeout(started, prompt_timeout)
+                if continuation_count:
+                    result = client.prompt(
+                        prompt,
+                        timeout_seconds=remaining_timeout,
+                        streaming_behavior="followUp",
+                    )
+                else:
+                    result = client.prompt(prompt, timeout_seconds=remaining_timeout)
                 last_reply = result.text
                 for event in result.events:
                     self._append_event(run_id, event)

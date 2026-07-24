@@ -255,10 +255,12 @@ def test_company_research_runtime_continues_until_target_company_count(tmp_path:
         def __init__(self, output_root: Path) -> None:
             self.output_root = output_root
             self.prompts: list[str] = []
+            self.streaming_behaviors: list[str | None] = []
             self.closed = False
 
-        def prompt(self, message: str, *, timeout_seconds: float):
+        def prompt(self, message: str, *, timeout_seconds: float, streaming_behavior: str | None = None):
             self.prompts.append(message)
+            self.streaming_behaviors.append(streaming_behavior)
             company_index = len(self.prompts)
             company_path = self.output_root / "companies" / f"company-{company_index}.json"
             company_path.write_text("{}", encoding="utf-8")
@@ -319,6 +321,7 @@ def test_company_research_runtime_continues_until_target_company_count(tmp_path:
 
     assert len(client.prompts) == 2
     assert "Continue the prepared company research task" in client.prompts[1]
+    assert client.streaming_behaviors == [None, "followUp"]
     assert import_counts == [2]
     assert client.closed is True
     state = json.loads((run_root / "logs" / "company_research_state.json").read_text(encoding="utf-8"))

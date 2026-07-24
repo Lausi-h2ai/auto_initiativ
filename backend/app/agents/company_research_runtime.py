@@ -305,7 +305,14 @@ class CompanyResearchRuntime:
                         started_monotonic,
                         prompt_timeout,
                     )
-                    result = client.prompt(prompt, timeout_seconds=remaining_timeout)
+                    if continuation_count:
+                        result = client.prompt(
+                            prompt,
+                            timeout_seconds=remaining_timeout,
+                            streaming_behavior="followUp",
+                        )
+                    else:
+                        result = client.prompt(prompt, timeout_seconds=remaining_timeout)
                     final_reply = result.text
                     for event in result.events:
                         self._append_event(run_id, event)

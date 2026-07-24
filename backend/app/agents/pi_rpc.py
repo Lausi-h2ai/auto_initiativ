@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from backend.app.auth.context import scoped_runs_root
 from backend.app.agents.onboarding_chat import (
@@ -40,7 +40,13 @@ class PiRpcError(RuntimeError):
 
 
 class PiRpcClientProtocol(Protocol):
-    def prompt(self, message: str, *, timeout_seconds: float) -> PiRpcPromptResult: ...
+    def prompt(
+        self,
+        message: str,
+        *,
+        timeout_seconds: float,
+        streaming_behavior: Literal["steer", "followUp"] | None = None,
+    ) -> PiRpcPromptResult: ...
 
     def command(self, payload: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]: ...
 
@@ -111,9 +117,18 @@ class PiRpcClient:
         except FileNotFoundError as exc:
             raise PiRpcError(f"Pi executable not found: {command[0]}") from exc
 
-    def prompt(self, message: str, *, timeout_seconds: float) -> PiRpcPromptResult:
+    def prompt(
+        self,
+        message: str,
+        *,
+        timeout_seconds: float,
+        streaming_behavior: Literal["steer", "followUp"] | None = None,
+    ) -> PiRpcPromptResult:
         request_id = f"prompt-{uuid.uuid4()}"
-        self._send({"id": request_id, "type": "prompt", "message": message})
+        payload = {"id": request_id, "type": "prompt", "message": message}
+        if streaming_behavior is not None:
+            payload["streamingBehavior"] = streaming_behavior
+        self._send(payload)
         deadline = time.monotonic() + timeout_seconds
         response_seen = False
         text_chunks: list[str] = []

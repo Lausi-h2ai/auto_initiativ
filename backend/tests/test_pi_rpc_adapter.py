@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from backend.app.agents.pi_rpc import PiRpcOnboardingChatAdapter, PiRpcPromptResult
+from backend.app.agents.pi_rpc import PiRpcClient, PiRpcOnboardingChatAdapter, PiRpcPromptResult
 from backend.app.core.config import Settings
 
 
@@ -42,6 +42,36 @@ def _settings(tmp_path: Path) -> Settings:
         PI_RPC_EXTENSION_PATH=Path("backend/pi_extensions/onboarding_artifacts.ts"),
         PI_RPC_ONBOARDING_TIMEOUT_SECONDS=12,
     )
+
+
+def test_pi_rpc_client_sends_follow_up_streaming_behavior_for_queued_prompt():
+    client = object.__new__(PiRpcClient)
+    sent: list[dict[str, object]] = []
+    event_index = 0
+
+    def send(payload: dict[str, object]) -> None:
+        sent.append(payload)
+
+    def next_event(deadline: float) -> dict[str, object]:
+        nonlocal event_index
+        event_index += 1
+        if event_index == 1:
+            return {"type": "response", "id": sent[0]["id"], "success": True}
+        return {"type": "agent_end", "messages": []}
+
+    client._send = send
+    client._next_event = next_event
+
+    client.prompt("Continue research", timeout_seconds=1, streaming_behavior="followUp")
+
+    assert sent == [
+        {
+            "id": sent[0]["id"],
+            "type": "prompt",
+            "message": "Continue research",
+            "streamingBehavior": "followUp",
+        }
+    ]
 
 
 def test_pi_rpc_adapter_prepares_workspace_and_builds_restricted_command(tmp_path: Path):
