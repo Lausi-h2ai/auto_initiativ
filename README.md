@@ -6,20 +6,45 @@ The core rule is simple: Codex agents may research, evaluate, draft, and write s
 
 ## Current Scope
 
-This initial foundation contains:
+The current implementation contains:
 
 - Product, architecture, onboarding, data model, safety gate, and workflow documentation.
 - JSON schemas for agent-produced and backend-produced files.
-- Agent boundary instructions for future Codex runs.
+- Restricted Pi RPC agent workloads for onboarding, research, verification, and application drafting.
+- Durable campaigns, graph-correlated workflow tasks, deterministic imports and gates, transactional send reservations, and audit records.
 - Repository-level `AGENTS.md` instructions.
 
-No email sending code is implemented. No OpenAI API dependency is introduced.
+Email sending is disabled by default and remains reachable only through the privileged backend gate and reservation path. No direct OpenAI API dependency is introduced.
 
 ## Target Architecture
 
 - Frontend: dashboard for runs, companies, applications, send queue, sent and blocked emails, audit logs, and settings.
 - Backend: FastAPI, Postgres, SQLModel or SQLAlchemy, Pydantic validation, deterministic send gate, email adapter interfaces.
 - Codex runtime: file-based worker runs with `input/`, `output/`, `logs/`, `task.md`, and `instructions.md`.
+
+## Workflow Graph Architecture
+
+Auto Initiativ uses graph engineering as an application architecture, not as a second agent runtime. Workflows are modeled as versioned graphs of deterministic backend operations, narrowly scoped agent runs, fan-out/fan-in barriers, bounded remediation cycles, human interrupts, and privileged side-effect boundaries.
+
+The framework path is deliberately application-owned:
+
+- Trusted graph definitions and topology validation live in `backend/app/workflow/graph.py`.
+- Postgres remains the sole durable source of truth. Framework checkpoints or agent memory must not become competing state stores.
+- `AgentTask` records graph definition, version, run, node, parent, and stable execution-key correlation.
+- Pi RPC remains the restricted runtime for file-producing agent nodes.
+- Registered backend predicates select edges. Agents may provide schema-valid evidence, but they may not select transitions, allocate budgets, approve work, or create graph topology.
+- Every cycle must have an application-enforced attempt, time, or budget bound.
+- External work must be idempotent and reconciled. An uncertain external or provider outcome must block rather than relaunch automatically.
+
+The current definitions are:
+
+- `coordinated_research` v1: confirmed-plan interrupt, target research fan-out, bounded shared-budget cycles, deterministic fan-in, scope assessment, ranking, and retention.
+- `application_preparation` v1: contact decision and bounded remediation, candidate drafting, deterministic claim/source/artifact validation, and review/ready/blocked outcomes.
+- `privileged_sending` v1: validated intent, authorized frozen approval, deterministic evaluate-only gate, transactional reservation, provider attempt, and audited terminal outcomes.
+
+Coordinated research currently runs in shadow/correlation mode: the existing workflow engine remains authoritative while graph identities and observed transitions are audited. Application preparation and privileged sending are static validated boundaries and have not been cut over to a generic graph dispatcher. Promotion from shadow mode requires reviewed mismatch evidence, graph-level regression tests, atomic claiming and idempotency guarantees, and an explicit implementation tick. The project does not currently adopt LangGraph, the OpenAI Agents SDK, or another workflow checkpoint runtime.
+
+The detailed decision, invariants, migration stages, and rejected alternatives are recorded in [ADR-0003](adr/0003-application-owned-workflow-graph.md).
 
 ## Safety Model
 
@@ -38,6 +63,7 @@ The first implementation phase should stay dry-run safe.
 - [Send intent spec](docs/SEND_INTENT_SPEC.md)
 - [Codex workflow](docs/CODEX_WORKFLOW.md)
 - [Data model](docs/DATA_MODEL.md)
+- [Application-owned workflow graph ADR](adr/0003-application-owned-workflow-graph.md)
 
 ## Schemas
 
