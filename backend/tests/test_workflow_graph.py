@@ -3,7 +3,10 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from backend.app.workflow.graph import (
+    APPLICATION_PREPARATION_REGISTRY,
     COORDINATED_RESEARCH_REGISTRY,
+    PRIVILEGED_SENDING_CHECKPOINTS,
+    PRIVILEGED_SENDING_REGISTRY,
     CycleBound,
     EdgeDefinition,
     GraphRegistry,
@@ -14,7 +17,10 @@ from backend.app.workflow.graph import (
     WorkflowDefinition,
     WorkflowKind,
     assert_mandatory_checkpoints_before,
+    assert_ordered_checkpoints_before,
+    application_preparation_v1,
     coordinated_research_v1,
+    privileged_sending_v1,
     validate_workflow_definition,
 )
 
@@ -323,3 +329,125 @@ def test_mandatory_checkpoint_invariant_reports_bypass_witness() -> None:
     error = str(exc_info.value)
     assert "bypasses mandatory checkpoint 'approved'" in error
     assert "validated -> provider_attempt" in error
+
+
+def test_application_preparation_v1_is_valid_and_agents_only_produce_candidates() -> None:
+    definition = application_preparation_v1()
+
+    validate_workflow_definition(definition, APPLICATION_PREPARATION_REGISTRY)
+
+    assert definition.definition_id == "application_preparation"
+    assert definition.version == 1
+    assert definition.terminal_node_ids == frozenset(
+        {"application_ready", "application_blocked"}
+    )
+    nodes = {node.node_id: node for node in definition.nodes}
+    assert {
+        node.node_id for node in definition.nodes if node.kind is NodeKind.AGENT
+    } == {"contact_research", "draft_candidate_artifacts"}
+    assert nodes["contact_research"].retry_policy.max_attempts == 2
+    assert nodes["contact_research"].output_contract_ids == (
+        "contact_candidate.schema.json",
+    )
+    assert nodes["draft_candidate_artifacts"].output_contract_ids == (
+        "email_draft.schema.json",
+    )
+    assert {
+        edge.destination
+        for edge in definition.edges
+        if nodes[edge.source].kind is NodeKind.AGENT
+    } == {"validate_contact_candidate", "validate_candidate_artifacts"}
+    retry = next(
+        edge for edge in definition.edges if edge.edge_id == "retry_contact_remediation"
+    )
+    assert retry.cycle_bound == CycleBound(
+        max_traversals=1,
+        counter_key="contact_remediation_retry_count",
+    )
+
+
+def test_privileged_sending_v1_is_valid_ordered_and_contains_no_agents() -> None:
+    definition = privileged_sending_v1()
+
+    validate_workflow_definition(definition, PRIVILEGED_SENDING_REGISTRY)
+    assert_mandatory_checkpoints_before(
+        definition,
+        privileged_target_id="provider_attempt",
+        checkpoint_node_ids=PRIVILEGED_SENDING_CHECKPOINTS,
+    )
+    assert_ordered_checkpoints_before(
+        definition,
+        privileged_target_id="provider_attempt",
+        ordered_checkpoint_node_ids=PRIVILEGED_SENDING_CHECKPOINTS,
+    )
+
+    assert definition.definition_id == "privileged_sending"
+    assert definition.version == 1
+    assert not any(node.kind is NodeKind.AGENT for node in definition.nodes)
+    assert definition.terminal_node_ids == frozenset(
+        {
+            "audited_sent",
+            "audited_known_unsent",
+            "audited_outcome_uncertain",
+        }
+    )
+
+
+def test_ordered_checkpoint_invariant_rejects_reordered_path() -> None:
+    definition = _sending_definition(include_bypass=False)
+    reordered_edges = tuple(
+        edge
+        for edge in definition.edges
+        if edge.edge_id not in {"validated_to_approved", "approved_to_gate"}
+    ) + (
+        _edge("validated_to_gate", "validated", "gate"),
+        _edge("gate_to_approved", "gate", "approved"),
+        _edge("approved_to_reserved", "approved", "reserved"),
+    )
+    reordered = _definition(
+        definition.nodes,
+        reordered_edges,
+        start="validated",
+    )
+    validate_workflow_definition(reordered, _registry())
+
+    with pytest.raises(GraphValidationError, match="required order") as exc_info:
+        assert_ordered_checkpoints_before(
+            reordered,
+            privileged_target_id="provider_attempt",
+            ordered_checkpoint_node_ids=("validated", "approved", "gate", "reserved"),
+        )
+
+    assert "validated -> gate" in str(exc_info.value)
+
+
+def test_privileged_definition_rejects_direct_agent_provider_privilege() -> None:
+    safe = privileged_sending_v1()
+    nodes = tuple(
+        NodeDefinition(
+            node_id=node.node_id,
+            executor_key=node.executor_key,
+            kind=NodeKind.AGENT if node.node_id == "transactional_reservation" else node.kind,
+            input_contract_ids=node.input_contract_ids,
+            output_contract_ids=node.output_contract_ids,
+            retry_policy=node.retry_policy,
+            timeout_seconds=node.timeout_seconds,
+            concurrency_class=node.concurrency_class,
+            side_effect=node.side_effect,
+            idempotency_strategy=node.idempotency_strategy,
+            cycle_bound=node.cycle_bound,
+        )
+        for node in safe.nodes
+    )
+    unsafe = WorkflowDefinition(
+        definition_id=safe.definition_id,
+        version=safe.version,
+        workflow_kinds=safe.workflow_kinds,
+        nodes=nodes,
+        edges=safe.edges,
+        start_node_id=safe.start_node_id,
+        terminal_node_ids=safe.terminal_node_ids,
+    )
+
+    with pytest.raises(GraphValidationError, match="must not connect directly"):
+        validate_workflow_definition(unsafe, PRIVILEGED_SENDING_REGISTRY)

@@ -16,6 +16,7 @@ from enum import StrEnum
 class WorkflowKind(StrEnum):
     INITIATIVE_OUTREACH = "initiative_outreach"
     LISTED_JOB_SEARCH = "listed_job_search"
+    APPLICATION_PREPARATION = "application_preparation"
     PRIVILEGED_SENDING = "privileged_sending"
 
 
@@ -338,6 +339,63 @@ def assert_mandatory_checkpoints_before(
         raise GraphValidationError(errors)
 
 
+def assert_ordered_checkpoints_before(
+    definition: WorkflowDefinition,
+    *,
+    privileged_target_id: str,
+    ordered_checkpoint_node_ids: Collection[str],
+) -> None:
+    """Prove every start-to-target path crosses checkpoints in declared order.
+
+    Unlike the mandatory-checkpoint assertion, this detects a path that contains
+    all checkpoints but reaches a later checkpoint before an earlier one.
+    """
+
+    nodes = {node.node_id: node for node in definition.nodes}
+    target = nodes.get(privileged_target_id)
+    checkpoints = tuple(ordered_checkpoint_node_ids)
+    errors: list[str] = []
+    if target is None:
+        errors.append(f"Privileged target '{privileged_target_id}' does not exist.")
+    elif target.kind is not NodeKind.PRIVILEGED_SIDE_EFFECT:
+        errors.append(
+            f"Target '{privileged_target_id}' is not a privileged_side_effect node."
+        )
+    if len(checkpoints) != len(set(checkpoints)):
+        errors.append("Ordered mandatory checkpoints must be unique.")
+    for checkpoint in sorted(set(checkpoints) - set(nodes)):
+        errors.append(f"Mandatory checkpoint '{checkpoint}' does not exist.")
+    if privileged_target_id in checkpoints:
+        errors.append(
+            f"Privileged target '{privileged_target_id}' must not also be an "
+            "ordered checkpoint."
+        )
+    if errors:
+        raise GraphValidationError(errors)
+
+    adjacency: dict[str, list[str]] = {node_id: [] for node_id in nodes}
+    for edge in definition.edges:
+        if edge.source in nodes and edge.destination in nodes:
+            adjacency[edge.source].append(edge.destination)
+    for destinations in adjacency.values():
+        destinations.sort()
+
+    witness = _path_violating_checkpoint_order(
+        definition.start_node_id,
+        privileged_target_id,
+        adjacency,
+        checkpoints,
+    )
+    if witness is not None:
+        raise GraphValidationError(
+            (
+                f"Path to privileged target '{privileged_target_id}' does not "
+                f"cross checkpoints in required order "
+                f"{' -> '.join(checkpoints)}: {' -> '.join(witness)}.",
+            )
+        )
+
+
 def _reachable_from(
     start_node_id: str,
     outgoing: dict[str, list[EdgeDefinition]],
@@ -420,6 +478,49 @@ def _path_avoiding(
             if next_node != forbidden and next_node not in seen:
                 seen.add(next_node)
                 pending.append((next_node, [*path, next_node]))
+    return None
+
+
+def _path_violating_checkpoint_order(
+    start: str,
+    destination: str,
+    adjacency: dict[str, list[str]],
+    checkpoints: tuple[str, ...],
+) -> list[str] | None:
+    checkpoint_positions = {
+        checkpoint: position for position, checkpoint in enumerate(checkpoints)
+    }
+
+    def advance(node_id: str, next_position: int) -> tuple[int, bool]:
+        position = checkpoint_positions.get(node_id)
+        if position is None or position < next_position:
+            return next_position, False
+        if position == next_position:
+            return next_position + 1, False
+        return next_position, True
+
+    next_position, invalid = advance(start, 0)
+    if invalid:
+        return [start]
+    pending: deque[tuple[str, int, list[str]]] = deque(
+        [(start, next_position, [start])]
+    )
+    seen = {(start, next_position)}
+    while pending:
+        node_id, next_position, path = pending.popleft()
+        if node_id == destination:
+            if next_position != len(checkpoints):
+                return path
+            continue
+        for next_node in adjacency.get(node_id, ()):
+            advanced, invalid = advance(next_node, next_position)
+            next_path = [*path, next_node]
+            if invalid:
+                return next_path
+            state = (next_node, advanced)
+            if state not in seen:
+                seen.add(state)
+                pending.append((next_node, advanced, next_path))
     return None
 
 
@@ -645,3 +746,438 @@ def coordinated_research_v1() -> WorkflowDefinition:
         ),
     )
 
+
+APPLICATION_PREPARATION_EXECUTOR_KEYS = frozenset(
+    {
+        "application.decide_contact",
+        "application.run_contact_research_agent",
+        "application.validate_contact_candidate",
+        "application.run_drafting_agent",
+        "application.validate_candidate_artifacts",
+        "application.await_authorized_review",
+        "application.mark_ready",
+        "application.mark_blocked",
+    }
+)
+
+APPLICATION_PREPARATION_PREDICATE_KEYS = frozenset(
+    {
+        "application.contact_is_usable",
+        "application.contact_requires_remediation",
+        "application.contact_is_blocked",
+        "application.agent_artifacts_reconciled",
+        "application.contact_candidate_is_valid",
+        "application.contact_remediation_retry_available",
+        "application.contact_remediation_exhausted",
+        "application.candidate_artifacts_valid",
+        "application.candidate_artifacts_need_review",
+        "application.candidate_artifacts_blocked",
+        "application.authorized_review_approved",
+        "application.authorized_review_rejected",
+    }
+)
+
+APPLICATION_PREPARATION_REGISTRY = GraphRegistry(
+    executor_keys=APPLICATION_PREPARATION_EXECUTOR_KEYS,
+    predicate_keys=APPLICATION_PREPARATION_PREDICATE_KEYS,
+)
+
+
+def application_preparation_v1() -> WorkflowDefinition:
+    """Static candidate-artifact topology; existing runtime remains authoritative."""
+
+    deterministic = NodeKind.DETERMINISTIC
+    return WorkflowDefinition(
+        definition_id="application_preparation",
+        version=1,
+        workflow_kinds=(WorkflowKind.APPLICATION_PREPARATION,),
+        start_node_id="contact_decision",
+        terminal_node_ids=frozenset({"application_ready", "application_blocked"}),
+        nodes=(
+            NodeDefinition(
+                "contact_decision",
+                "application.decide_contact",
+                deterministic,
+                input_contract_ids=("contact_candidate.schema.json",),
+            ),
+            NodeDefinition(
+                "contact_research",
+                "application.run_contact_research_agent",
+                NodeKind.AGENT,
+                output_contract_ids=("contact_candidate.schema.json",),
+                retry_policy=RetryPolicy(
+                    max_attempts=2,
+                    max_elapsed_seconds=1800,
+                    budget_key="contact_remediation_budget",
+                ),
+                timeout_seconds=900,
+                concurrency_class="contact_research",
+                side_effect=SideEffectClass.EXTERNAL,
+                idempotency_strategy="company_contact_remediation_generation",
+            ),
+            NodeDefinition(
+                "validate_contact_candidate",
+                "application.validate_contact_candidate",
+                deterministic,
+                input_contract_ids=("contact_candidate.schema.json",),
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="contact_candidate_artifact_hash",
+            ),
+            NodeDefinition(
+                "draft_candidate_artifacts",
+                "application.run_drafting_agent",
+                NodeKind.AGENT,
+                input_contract_ids=(
+                    "master_cv_profile.schema.json",
+                    "contact_candidate.schema.json",
+                ),
+                output_contract_ids=("email_draft.schema.json",),
+                retry_policy=RetryPolicy(
+                    max_attempts=2,
+                    max_elapsed_seconds=3600,
+                    budget_key="application_drafting_budget",
+                ),
+                timeout_seconds=1800,
+                concurrency_class="application_draft",
+                side_effect=SideEffectClass.EXTERNAL,
+                idempotency_strategy="application_draft_generation",
+            ),
+            NodeDefinition(
+                "validate_candidate_artifacts",
+                "application.validate_candidate_artifacts",
+                deterministic,
+                input_contract_ids=(
+                    "email_draft.schema.json",
+                    "master_cv_profile.schema.json",
+                ),
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="application_artifact_set_hash",
+            ),
+            NodeDefinition(
+                "await_application_review",
+                "application.await_authorized_review",
+                NodeKind.HUMAN_INTERRUPT,
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="application_review_decision_id",
+            ),
+            NodeDefinition(
+                "application_ready",
+                "application.mark_ready",
+                deterministic,
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="application_artifact_set_hash",
+            ),
+            NodeDefinition(
+                "application_blocked",
+                "application.mark_blocked",
+                deterministic,
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="application_block_reason_generation",
+            ),
+        ),
+        edges=(
+            EdgeDefinition(
+                "use_existing_contact",
+                "contact_decision",
+                "draft_candidate_artifacts",
+                "application.contact_is_usable",
+                "schema_valid_sourced_professional_contact_available",
+            ),
+            EdgeDefinition(
+                "remediate_contact",
+                "contact_decision",
+                "contact_research",
+                "application.contact_requires_remediation",
+                "contact_requires_bounded_agent_remediation",
+            ),
+            EdgeDefinition(
+                "block_unsafe_contact",
+                "contact_decision",
+                "application_blocked",
+                "application.contact_is_blocked",
+                "contact_policy_blocked",
+            ),
+            EdgeDefinition(
+                "reconcile_contact_candidate",
+                "contact_research",
+                "validate_contact_candidate",
+                "application.agent_artifacts_reconciled",
+                "contact_candidate_artifact_reconciled",
+                required_artifact_ids=("contact_candidate.schema.json",),
+            ),
+            EdgeDefinition(
+                "accept_contact_candidate",
+                "validate_contact_candidate",
+                "draft_candidate_artifacts",
+                "application.contact_candidate_is_valid",
+                "contact_candidate_deterministically_validated",
+            ),
+            EdgeDefinition(
+                "retry_contact_remediation",
+                "validate_contact_candidate",
+                "contact_research",
+                "application.contact_remediation_retry_available",
+                "bounded_contact_remediation_retry_allocated",
+                cycle_bound=CycleBound(
+                    max_traversals=1,
+                    counter_key="contact_remediation_retry_count",
+                ),
+            ),
+            EdgeDefinition(
+                "block_exhausted_contact_remediation",
+                "validate_contact_candidate",
+                "application_blocked",
+                "application.contact_remediation_exhausted",
+                "contact_remediation_exhausted_or_unsafe",
+            ),
+            EdgeDefinition(
+                "reconcile_draft_candidate",
+                "draft_candidate_artifacts",
+                "validate_candidate_artifacts",
+                "application.agent_artifacts_reconciled",
+                "draft_candidate_artifacts_reconciled",
+                required_artifact_ids=("email_draft.schema.json",),
+            ),
+            EdgeDefinition(
+                "candidate_artifacts_ready",
+                "validate_candidate_artifacts",
+                "application_ready",
+                "application.candidate_artifacts_valid",
+                "schema_claims_sources_and_attachments_valid",
+            ),
+            EdgeDefinition(
+                "candidate_artifacts_need_review",
+                "validate_candidate_artifacts",
+                "await_application_review",
+                "application.candidate_artifacts_need_review",
+                "candidate_artifacts_require_authorized_review",
+                requires_review=True,
+            ),
+            EdgeDefinition(
+                "candidate_artifacts_blocked",
+                "validate_candidate_artifacts",
+                "application_blocked",
+                "application.candidate_artifacts_blocked",
+                "schema_claim_source_or_attachment_validation_blocked",
+            ),
+            EdgeDefinition(
+                "authorized_review_approved",
+                "await_application_review",
+                "application_ready",
+                "application.authorized_review_approved",
+                "authorized_review_approved_reviewable_artifacts",
+                requires_review=True,
+            ),
+            EdgeDefinition(
+                "authorized_review_rejected",
+                "await_application_review",
+                "application_blocked",
+                "application.authorized_review_rejected",
+                "authorized_review_rejected_or_unresolved",
+                requires_review=True,
+            ),
+        ),
+    )
+
+
+PRIVILEGED_SENDING_EXECUTOR_KEYS = frozenset(
+    {
+        "sending.validate_send_intent",
+        "sending.freeze_authorized_approval_snapshot",
+        "sending.evaluate_only_gate",
+        "sending.reserve_transactionally",
+        "sending.attempt_provider_via_privileged_facade",
+        "sending.audit_sent",
+        "sending.audit_known_unsent",
+        "sending.audit_outcome_uncertain",
+    }
+)
+
+PRIVILEGED_SENDING_PREDICATE_KEYS = frozenset(
+    {
+        "sending.intent_valid",
+        "sending.intent_invalid_known_unsent",
+        "sending.approval_authorized_and_payload_frozen",
+        "sending.approval_missing_or_changed_known_unsent",
+        "sending.evaluate_only_passed",
+        "sending.evaluate_only_blocked_known_unsent",
+        "sending.reservation_created",
+        "sending.reservation_failed_known_unsent",
+        "sending.provider_accepted",
+        "sending.provider_rejected_known_unsent",
+        "sending.provider_outcome_uncertain",
+    }
+)
+
+PRIVILEGED_SENDING_REGISTRY = GraphRegistry(
+    executor_keys=PRIVILEGED_SENDING_EXECUTOR_KEYS,
+    predicate_keys=PRIVILEGED_SENDING_PREDICATE_KEYS,
+)
+
+PRIVILEGED_SENDING_CHECKPOINTS = (
+    "validated_send_intent",
+    "authorized_approval_snapshot",
+    "deterministic_evaluate_only_gate",
+    "transactional_reservation",
+)
+
+
+def privileged_sending_v1() -> WorkflowDefinition:
+    """Static privileged facade topology; no generic graph runtime may send."""
+
+    deterministic = NodeKind.DETERMINISTIC
+    known_unsent = "audited_known_unsent"
+    return WorkflowDefinition(
+        definition_id="privileged_sending",
+        version=1,
+        workflow_kinds=(WorkflowKind.PRIVILEGED_SENDING,),
+        start_node_id="validated_send_intent",
+        terminal_node_ids=frozenset(
+            {
+                "audited_sent",
+                known_unsent,
+                "audited_outcome_uncertain",
+            }
+        ),
+        nodes=(
+            NodeDefinition(
+                "validated_send_intent",
+                "sending.validate_send_intent",
+                deterministic,
+                input_contract_ids=("send_intent.schema.json",),
+            ),
+            NodeDefinition(
+                "authorized_approval_snapshot",
+                "sending.freeze_authorized_approval_snapshot",
+                NodeKind.HUMAN_INTERRUPT,
+                input_contract_ids=("send_intent.schema.json",),
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="reviewer_batch_intent_payload_hash",
+            ),
+            NodeDefinition(
+                "deterministic_evaluate_only_gate",
+                "sending.evaluate_only_gate",
+                deterministic,
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="intent_snapshot_gate_generation",
+            ),
+            NodeDefinition(
+                "transactional_reservation",
+                "sending.reserve_transactionally",
+                deterministic,
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="send_intent_reservation_unique_constraints",
+            ),
+            NodeDefinition(
+                "provider_attempt",
+                "sending.attempt_provider_via_privileged_facade",
+                NodeKind.PRIVILEGED_SIDE_EFFECT,
+                timeout_seconds=120,
+                concurrency_class="privileged_email_provider",
+                side_effect=SideEffectClass.PRIVILEGED_EXTERNAL,
+                idempotency_strategy="send_reservation_id",
+            ),
+            NodeDefinition(
+                "audited_sent",
+                "sending.audit_sent",
+                deterministic,
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="reservation_provider_result",
+            ),
+            NodeDefinition(
+                known_unsent,
+                "sending.audit_known_unsent",
+                deterministic,
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="reservation_or_precondition_result",
+            ),
+            NodeDefinition(
+                "audited_outcome_uncertain",
+                "sending.audit_outcome_uncertain",
+                deterministic,
+                side_effect=SideEffectClass.DATABASE,
+                idempotency_strategy="reservation_uncertain_outcome",
+            ),
+        ),
+        edges=(
+            EdgeDefinition(
+                "send_intent_valid",
+                "validated_send_intent",
+                "authorized_approval_snapshot",
+                "sending.intent_valid",
+                "send_intent_schema_and_references_valid",
+            ),
+            EdgeDefinition(
+                "send_intent_invalid",
+                "validated_send_intent",
+                known_unsent,
+                "sending.intent_invalid_known_unsent",
+                "send_intent_invalid_no_provider_attempt",
+            ),
+            EdgeDefinition(
+                "approval_authorized",
+                "authorized_approval_snapshot",
+                "deterministic_evaluate_only_gate",
+                "sending.approval_authorized_and_payload_frozen",
+                "authorized_approval_payload_frozen",
+                requires_review=True,
+            ),
+            EdgeDefinition(
+                "approval_not_authorized",
+                "authorized_approval_snapshot",
+                known_unsent,
+                "sending.approval_missing_or_changed_known_unsent",
+                "approval_missing_changed_or_unauthorized_no_provider_attempt",
+                requires_review=True,
+            ),
+            EdgeDefinition(
+                "evaluate_only_passed",
+                "deterministic_evaluate_only_gate",
+                "transactional_reservation",
+                "sending.evaluate_only_passed",
+                "deterministic_evaluate_only_gate_passed",
+            ),
+            EdgeDefinition(
+                "evaluate_only_blocked",
+                "deterministic_evaluate_only_gate",
+                known_unsent,
+                "sending.evaluate_only_blocked_known_unsent",
+                "deterministic_gate_blocked_no_provider_attempt",
+            ),
+            EdgeDefinition(
+                "reservation_created",
+                "transactional_reservation",
+                "provider_attempt",
+                "sending.reservation_created",
+                "transactional_send_reservation_created",
+            ),
+            EdgeDefinition(
+                "reservation_failed",
+                "transactional_reservation",
+                known_unsent,
+                "sending.reservation_failed_known_unsent",
+                "transactional_reservation_failed_no_provider_attempt",
+            ),
+            EdgeDefinition(
+                "provider_accepted",
+                "provider_attempt",
+                "audited_sent",
+                "sending.provider_accepted",
+                "provider_accepted_and_result_audited",
+            ),
+            EdgeDefinition(
+                "provider_rejected_known_unsent",
+                "provider_attempt",
+                known_unsent,
+                "sending.provider_rejected_known_unsent",
+                "provider_rejected_before_accept_and_result_audited",
+            ),
+            EdgeDefinition(
+                "provider_outcome_uncertain",
+                "provider_attempt",
+                "audited_outcome_uncertain",
+                "sending.provider_outcome_uncertain",
+                "provider_outcome_uncertain_and_terminally_blocked",
+            ),
+        ),
+    )
