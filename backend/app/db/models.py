@@ -360,13 +360,27 @@ class JobSourceTrust(WorkspaceOwned, table=True):
 
 class AgentTask(WorkspaceOwned, table=True):
     __tablename__ = "agent_tasks"
-    __table_args__ = (UniqueConstraint("workspace_id", "task_id", name="uq_agent_tasks_workspace_external_id"),)
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "task_id", name="uq_agent_tasks_workspace_external_id"),
+        UniqueConstraint("workspace_id", "execution_key", name="uq_agent_tasks_workspace_execution_key"),
+        Index("ix_agent_tasks_workspace_graph_run", "workspace_id", "graph_run_id"),
+        Index("ix_agent_tasks_workspace_graph_node", "workspace_id", "graph_run_id", "node_id"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     task_id: str = Field(index=True)
     campaign_id: Optional[int] = Field(default=None, foreign_key="campaigns.id", index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     run_id: Optional[str] = Field(default=None, index=True)
+    graph_definition_id: Optional[str] = None
+    graph_version: Optional[int] = None
+    graph_run_id: Optional[str] = None
+    node_id: Optional[str] = None
+    execution_key: Optional[str] = None
+    parent_execution_ids_json: str = Field(
+        default="[]",
+        sa_column=Column(Text, nullable=False, server_default="[]"),
+    )
     agent_role: str = Field(index=True)
     task_type: str = Field(index=True)
     status: str = Field(default="queued", index=True)
