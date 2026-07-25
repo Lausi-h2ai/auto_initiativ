@@ -41,6 +41,15 @@ After a completed tick or meaningful repository change, commit only its relevant
 - `coordinated_research` v1 remains shadow-observed until mismatch evidence is reviewed and an explicit cutover tick is approved. `application_preparation` v1 and `privileged_sending` v1 are static validated boundaries, not authorization to replace their existing services.
 - For graph changes, add topology, transition-table, bounded-cycle, workspace-isolation, replay/idempotency, crash-recovery, and privileged-path tests as applicable. SQLite tests do not prove PostgreSQL locking or concurrency behavior.
 
+## Deterministic Capability Migration
+
+- The initial analysis and approved migration plans for moving bounded work from AI agents into deterministic application code live under `docs/deterministic_migration/`.
+- Read `docs/deterministic_migration/ROADMAP.md` and the directly relevant workstream plan before changing onboarding, job research, contact extraction, fit scoring, application drafting, document rendering, review reasons, or send-intent assembly.
+- Preserve onboarding completion, relevant-job discovery, and grounded draft generation. Do not replace an agent responsibility merely for cost, latency, or reproducibility.
+- New deterministic alternatives start `agent_authoritative`, run in shadow, and require strict non-inferiority evidence plus a separate explicit cutover tick before becoming authoritative.
+- Deterministic-first capabilities must automatically fall back to the existing agent for unsupported, ambiguous, or recoverably failed non-privileged inputs. Safety, policy, workflow authority, approvals, and side effects never fall back to AI.
+- Keep the private evaluation corpus under `artifacts/deterministic-eval/` out of Git. It may contain local historical data and must not be copied into general logs or transmitted.
+
 ## Runtime
 
 - Follow any closer `AGENTS.md` instructions when working within a subtree.
