@@ -20,22 +20,22 @@ AGENT_MODEL_POLICIES: Final = (
     AgentModelPolicy(
         workload="onboarding",
         setting_name="pi_rpc_onboarding_model",
-        default_model="gpt-5.6-sol",
+        default_model="gpt-5.6-luna",
     ),
     AgentModelPolicy(
         workload="company_research",
         setting_name="pi_rpc_research_model",
-        default_model="gpt-5.6-terra",
+        default_model="gpt-5.6-luna",
     ),
     AgentModelPolicy(
         workload="job_verification",
         setting_name="pi_rpc_job_verification_model",
-        default_model="gpt-5.6-terra",
+        default_model="gpt-5.6-luna",
     ),
     AgentModelPolicy(
         workload="application_draft",
         setting_name="pi_rpc_application_draft_model",
-        default_model="gpt-5.6-terra",
+        default_model="gpt-5.6-luna",
     ),
 )
 

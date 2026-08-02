@@ -105,8 +105,8 @@ def test_pi_rpc_adapter_prepares_workspace_and_builds_restricted_command(tmp_pat
     assert "--no-extensions" in captured["command"]
     assert "--approve" in captured["command"]
     assert captured["command"][captured["command"].index("--provider") + 1] == "openai-codex"
-    assert captured["command"][captured["command"].index("--model") + 1] == "gpt-5.6-sol"
-    assert captured["command"][captured["command"].index("--thinking") + 1] == "medium"
+    assert captured["command"][captured["command"].index("--model") + 1] == "gpt-5.6-luna"
+    assert captured["command"][captured["command"].index("--thinking") + 1] == "max"
     assert "--extension" in captured["command"]
     assert "--session-dir" in captured["command"]
 

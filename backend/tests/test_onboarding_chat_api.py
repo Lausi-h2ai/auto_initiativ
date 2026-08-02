@@ -238,7 +238,7 @@ class FakeOnboardingAdapter:
         self.attach_fresh_values.append(fresh)
         payload = {
             "runtime": "pi_rpc",
-            "command": ["pi", "--mode", "rpc", "--model", "gpt-5.6-sol"],
+            "command": ["pi", "--mode", "rpc", "--model", "gpt-5.6-luna"],
             "session_dir": str(self.runs_root / run_id / "logs" / "pi-session"),
             "workdir": str(self.runs_root / run_id / "workspace"),
             "status": "attached",
@@ -343,7 +343,7 @@ class FakeOnboardingAdapter:
         )
 
     def open_terminal(self, run_id: str) -> str:
-        return "pi --mode rpc --provider openai-codex --model gpt-5.6-sol"
+        return "pi --mode rpc --provider openai-codex --model gpt-5.6-luna"
 
     def close_session(self, run_id: str, force: bool = False, timeout: float | None = 10) -> None:
         self._state(run_id, "closed")
@@ -433,7 +433,7 @@ def test_onboarding_chat_api_persists_transcript_state_and_imports_candidate_pro
         terminal = client.post("/onboarding/chat/onboarding-api/open-terminal")
         assert terminal.status_code == 200
         assert terminal.json()["status"] == "available"
-        assert terminal.json()["command"] == "pi --mode rpc --provider openai-codex --model gpt-5.6-sol"
+        assert terminal.json()["command"] == "pi --mode rpc --provider openai-codex --model gpt-5.6-luna"
 
         message = client.post(
             "/onboarding/chat/onboarding-api/messages",

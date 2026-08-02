@@ -42,7 +42,7 @@ class Settings(BaseSettings):
         default=agent_model_for("onboarding"),
         validation_alias="PI_RPC_ONBOARDING_MODEL",
     )
-    pi_rpc_onboarding_thinking: str = Field(default="medium", validation_alias="PI_RPC_ONBOARDING_THINKING")
+    pi_rpc_onboarding_thinking: str = Field(default="max", validation_alias="PI_RPC_ONBOARDING_THINKING")
     pi_rpc_onboarding_timeout_seconds: float = Field(
         default=180,
         validation_alias="PI_RPC_ONBOARDING_TIMEOUT_SECONDS",
@@ -56,7 +56,7 @@ class Settings(BaseSettings):
         default=agent_model_for("company_research"),
         validation_alias="PI_RPC_RESEARCH_MODEL",
     )
-    pi_rpc_research_thinking: str = Field(default="medium", validation_alias="PI_RPC_RESEARCH_THINKING")
+    pi_rpc_research_thinking: str = Field(default="max", validation_alias="PI_RPC_RESEARCH_THINKING")
     pi_rpc_research_timeout_seconds: float = Field(default=3600, validation_alias="PI_RPC_RESEARCH_TIMEOUT_SECONDS")
     pi_rpc_job_verification_model: str = Field(
         default=agent_model_for("job_verification"),
@@ -88,7 +88,7 @@ class Settings(BaseSettings):
         validation_alias="PI_RPC_APPLICATION_DRAFT_MODEL",
     )
     pi_rpc_application_draft_thinking: str = Field(
-        default="medium",
+        default="max",
         validation_alias="PI_RPC_APPLICATION_DRAFT_THINKING",
     )
     pi_rpc_application_draft_timeout_seconds: float = Field(

@@ -59,9 +59,8 @@ The WSL tmux bridge and direct `codex exec` adapter remain available only for de
 
 Default models for agent workloads are centralized in `backend/app/core/agent_models.py`:
 
-- Onboarding uses `gpt-5.6-sol` for the flagship recruiting conversation.
-- Company research uses `gpt-5.6-terra` for read-heavy discovery.
-- Application drafting uses `gpt-5.6-luna` for efficient document generation.
+- Onboarding, company research, job verification, application drafting, and the Master CV coach use `gpt-5.6-luna`.
+- Every agent runtime uses `max` thinking. Job verification shares the research setting, while the Master CV coach shares the application-draft setting.
 
 Every application agent model default must be declared in that policy, use the GPT-5.6 family, and run through Pi RPC with the `openai-codex` provider. Tests enforce these requirements so a future runtime cannot silently introduce an older model or a second agent harness. Environment variables remain explicit operational overrides.
 

@@ -18,14 +18,30 @@ def test_agent_model_policy_centralizes_gpt_5_6_defaults_by_workload(monkeypatch
     monkeypatch.delenv("PI_RPC_APPLICATION_DRAFT_MODEL", raising=False)
     settings = Settings(_env_file=None)
 
-    assert agent_model_for("onboarding") == "gpt-5.6-sol"
-    assert agent_model_for("company_research") == "gpt-5.6-terra"
-    assert agent_model_for("job_verification") == "gpt-5.6-terra"
-    assert agent_model_for("application_draft") == "gpt-5.6-terra"
+    assert agent_model_for("onboarding") == "gpt-5.6-luna"
+    assert agent_model_for("company_research") == "gpt-5.6-luna"
+    assert agent_model_for("job_verification") == "gpt-5.6-luna"
+    assert agent_model_for("application_draft") == "gpt-5.6-luna"
     assert {
         policy.setting_name: getattr(settings, policy.setting_name)
         for policy in AGENT_MODEL_POLICIES
     } == {policy.setting_name: policy.default_model for policy in AGENT_MODEL_POLICIES}
+
+
+def test_every_default_agent_thinking_setting_uses_max(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("PI_RPC_ONBOARDING_THINKING", raising=False)
+    monkeypatch.delenv("PI_RPC_RESEARCH_THINKING", raising=False)
+    monkeypatch.delenv("PI_RPC_APPLICATION_DRAFT_THINKING", raising=False)
+    settings = Settings(_env_file=None)
+
+    thinking_defaults = {
+        name: getattr(settings, name)
+        for name in Settings.model_fields
+        if name.startswith("pi_rpc_") and name.endswith("_thinking")
+    }
+
+    assert thinking_defaults
+    assert set(thinking_defaults.values()) == {"max"}
 
 
 def test_every_default_agent_model_setting_is_declared_in_the_central_policy():

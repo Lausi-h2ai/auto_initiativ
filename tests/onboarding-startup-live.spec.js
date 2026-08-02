@@ -39,7 +39,7 @@ test("new onboarding starts with an actual recruiter greeting", async ({ page })
 
     const payload = JSON.parse(responseText);
     expect(payload.session_state.runtime.runtime).toBe("pi_rpc");
-    expect(payload.session_state.runtime.command).toContain("gpt-5.6-sol");
+    expect(payload.session_state.runtime.command).toContain("gpt-5.6-luna");
     const greeting = payload.entries.find(
       (entry) => entry.role === "assistant" && entry.content.trim().length > 0,
     );
