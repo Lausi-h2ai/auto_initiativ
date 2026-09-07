@@ -886,9 +886,9 @@ function homeSubline(data) {
 
 function greeting() {
   const hour = new Date().getHours();
-  if (hour < 12) return "Good morning, Laurent";
-  if (hour < 18) return "Good afternoon, Laurent";
-  return "Good evening, Laurent";
+  if (hour < 12) return "Good morning, Alex";
+  if (hour < 18) return "Good afternoon, Alex";
+  return "Good evening, Alex";
 }
 
 function attentionItemMarkup(item) {

@@ -263,7 +263,7 @@ function Registration() {
                     maxLength={100}
                     value={displayName}
                     onChange={(event) => setDisplayName(event.target.value)}
-                    placeholder="Laurent Hug"
+                    placeholder="Alex Morgan"
                   />
                 </label>
                 <label>

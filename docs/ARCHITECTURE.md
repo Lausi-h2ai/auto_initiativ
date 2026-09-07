@@ -137,7 +137,7 @@ Sandbox Gmail delivery for live provider testing:
 ```text
 EMAIL_SENDING_ENABLED=true
 EMAIL_PROVIDER=gmail_sandbox
-GMAIL_SANDBOX_RECIPIENT=laurent.hug@gmx.de
+GMAIL_SANDBOX_RECIPIENT=sandbox@example.com
 GMAIL_OAUTH_CLIENT_SECRETS_PATH=...
 GMAIL_OAUTH_TOKEN_PATH=...
 GMAIL_USER_ID=me

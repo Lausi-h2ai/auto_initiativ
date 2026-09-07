@@ -16,7 +16,6 @@ from backend.app.db.models import (
     AuditLog,
     Company,
     Contact,
-    EmailDraft,
     GmailConnection,
     ImportedFile,
     OutreachRecord,

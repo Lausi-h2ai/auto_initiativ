@@ -1,163 +1,101 @@
-# Local-First Agentic Job Outreach
+# Auto Initiativ
 
-This repository contains a local-first, safety-first application for initiative outreach and listed-job application preparation.
+**Turn a verified career profile into researched, reviewable job applications.**
 
-The core rule is simple: Codex agents may research, evaluate, draft, and write structured files, but they must never send email. The application backend is the source of truth for data, policies, dedupe, audit logging, and all email-sending decisions.
+Auto Initiativ is a local-first job-search workspace. It helps a candidate build a master CV, discover relevant companies and vacancies, and prepare tailored CVs and outreach drafts in one place.
 
-## Current Scope
+The engineering idea: let AI do research and drafting, while application code owns facts, workflow state, approvals, and sending. Personal claims must trace back to the candidate's approved profile.
 
-The current implementation contains:
+## How it works
 
-- Product, architecture, onboarding, data model, safety gate, and workflow documentation.
-- JSON schemas for agent-produced and backend-produced files.
-- Restricted Pi RPC agent workloads for onboarding, research, verification, and application drafting.
-- Durable campaigns, graph-correlated workflow tasks, deterministic imports and gates, transactional send reservations, and audit records.
-- Repository-level `AGENTS.md` instructions.
-
-Email sending is disabled by default and remains reachable only through the privileged backend gate and reservation path. No direct OpenAI API dependency is introduced.
-
-## Target Architecture
-
-- Frontend: dashboard for runs, companies, applications, send queue, sent and blocked emails, audit logs, and settings.
-- Backend: FastAPI, Postgres, SQLModel or SQLAlchemy, Pydantic validation, deterministic send gate, email adapter interfaces.
-- Codex runtime: file-based worker runs with `input/`, `output/`, `logs/`, `task.md`, and `instructions.md`.
-
-## Workflow Graph Architecture
-
-Auto Initiativ uses graph engineering as an application architecture, not as a second agent runtime. Workflows are modeled as versioned graphs of deterministic backend operations, narrowly scoped agent runs, fan-out/fan-in barriers, bounded remediation cycles, human interrupts, and privileged side-effect boundaries.
-
-The framework path is deliberately application-owned:
-
-- Trusted graph definitions and topology validation live in `backend/app/workflow/graph.py`.
-- Postgres remains the sole durable source of truth. Framework checkpoints or agent memory must not become competing state stores.
-- `AgentTask` records graph definition, version, run, node, parent, and stable execution-key correlation.
-- Pi RPC remains the restricted runtime for file-producing agent nodes.
-- Registered backend predicates select edges. Agents may provide schema-valid evidence, but they may not select transitions, allocate budgets, approve work, or create graph topology.
-- Every cycle must have an application-enforced attempt, time, or budget bound.
-- External work must be idempotent and reconciled. An uncertain external or provider outcome must block rather than relaunch automatically.
-
-The current definitions are:
-
-- `coordinated_research` v1: confirmed-plan interrupt, target research fan-out, bounded shared-budget cycles, deterministic fan-in, scope assessment, ranking, and retention.
-- `application_preparation` v1: contact decision and bounded remediation, candidate drafting, deterministic claim/source/artifact validation, and review/ready/blocked outcomes.
-- `privileged_sending` v1: validated intent, authorized frozen approval, deterministic evaluate-only gate, transactional reservation, provider attempt, and audited terminal outcomes.
-
-Coordinated research currently runs in shadow/correlation mode: the existing workflow engine remains authoritative while graph identities and observed transitions are audited. Application preparation and privileged sending are static validated boundaries and have not been cut over to a generic graph dispatcher. The current aggregate [shadow-readiness report](docs/WORKFLOW_GRAPH_SHADOW_READINESS.md) found no mismatches but remains `insufficient_evidence`; it does not authorize cutover. The project does not currently adopt LangGraph, the OpenAI Agents SDK, or another workflow checkpoint runtime.
-
-The detailed decision, invariants, migration stages, and rejected alternatives are recorded in [ADR-0003](adr/0003-application-owned-workflow-graph.md).
-
-## Safety Model
-
-Sending is impossible unless the deterministic backend gate validates a `send_intent.json`, checks dedupe and policy constraints, reserves the send transactionally, writes audit records, and only then calls the configured email adapter.
-
-Sending is disabled by default. Agents never receive Gmail credentials and never call an email adapter.
-
-## Key Documents
-
-- [Product spec](docs/PRODUCT_SPEC.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
-- [Agent boundaries](docs/AGENT_BOUNDARIES.md)
-- [Safety gates](docs/SAFETY_GATES.md)
-- [Onboarding spec](docs/ONBOARDING_SPEC.md)
-- [Send intent spec](docs/SEND_INTENT_SPEC.md)
-- [Codex workflow](docs/CODEX_WORKFLOW.md)
-- [Data model](docs/DATA_MODEL.md)
-- [Application-owned workflow graph ADR](adr/0003-application-owned-workflow-graph.md)
-- [Workflow graph shadow readiness](docs/WORKFLOW_GRAPH_SHADOW_READINESS.md)
-- [Master CV builder contract](docs/MASTER_CV_BUILDER.md)
-
-## Schemas
-
-Agent and backend JSON contracts live in `schemas/`. Any file imported from a Codex run must be validated against the matching schema before it can affect application state.
-
-## Local Backend Setup
-
-Install the backend with test dependencies using Python 3.11 or newer:
-
-```powershell
-uv sync --python 3.12 --extra test
+```mermaid
+flowchart LR
+    A[Build and review your profile] --> B[Research companies and jobs]
+    B --> C[Prepare CV and email drafts]
+    C --> D[Review the application package]
+    D --> E[Backend safety checks]
+    E --> F[Optional gated delivery]
 ```
 
-Run tests:
+- **Profile once, reuse deliberately.** Conversational onboarding and a master CV provide approved claims for later applications.
+- **Research with evidence.** Campaigns collect company and vacancy information, sources, fit assessments, and review flags.
+- **Prepare applications.** Tailored CV documents and email drafts are assembled into reviewable packages.
+- **Stay in control.** The dashboard exposes workflow progress, review exceptions, approvals, and audit history. Sending is disabled by default.
 
-```powershell
-uv run --python 3.12 --extra test pytest
+## Engineering highlights
+
+| Concern | Implementation |
+| --- | --- |
+| AI trust boundary | Restricted Pi RPC workers produce files; JSON Schema validation precedes backend import. |
+| Factual grounding | Personal claims reference approved master CV claim IDs. Missing evidence requires review. |
+| Durable work | Database-backed tasks, leases, stable execution keys, bounded retries, and recovery for uncertain launches. |
+| Workspace isolation | User-scoped data and authorization, with separate PostgreSQL concurrency tests. |
+| Controlled side effects | Frozen approval snapshots, deterministic policy and dedupe checks, transactional reservations, and audit records. |
+| Reviewable architecture | Versioned workflow definitions and architecture decision records explain boundaries and tradeoffs. |
+
+**Stack:** Python / FastAPI / SQLModel / Alembic; React / TypeScript / Vite; PostgreSQL for durable deployments, SQLite for local exploration; pytest and Playwright.
+
+## Run locally
+
+Requirements: Python 3.12, `uv`, and Node.js 22 with npm. Run from the repository root:
+
+```sh
+uv sync --locked --python 3.12 --extra test
+npm ci
+npm run build
 ```
 
-Run optional Postgres-backed migration/constraint tests by pointing `POSTGRES_TEST_DATABASE_URL` at a disposable Postgres test database:
+On a fresh checkout, copy `.env.example` to `.env` (`cp .env.example .env` on macOS/Linux, `Copy-Item .env.example .env` in PowerShell). Keep an existing `.env` if you already have local configuration.
 
-```powershell
-$env:POSTGRES_TEST_DATABASE_URL="postgresql+psycopg://user:password@localhost:5432/auto_initiativ_test"
-uv run --python 3.12 --extra test pytest backend/tests/test_postgres_dedupe_constraints.py backend/tests/test_postgres_workflow_claims.py
+```sh
+uv run alembic upgrade head
+uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-The workflow file covers execution-key uniqueness, competing claims, expired
-lease recovery, uncertain-launch blocking, workspace isolation, and campaign
-pause behavior. Use a disposable database because the tests apply migrations
-and create test records.
+Open **[the dashboard](http://127.0.0.1:8000/dashboard)**. The example configuration creates a local demo identity, disables the background worker, and keeps email sending off. You can inspect the interface and local account flow without Google credentials or an AI provider. On Windows, use `npm.cmd` if PowerShell blocks `npm.ps1`.
 
-Start the dry-run backend:
+### Enable research and drafting
 
-```powershell
-uv run --python 3.12 uvicorn backend.app.main:app --reload
+AI features require an installed, authenticated `pi` executable with access to the configured provider and models. Configuration lives in [config.py](backend/app/core/config.py), and workload defaults in [agent_models.py](backend/app/core/agent_models.py). Set `WORKFLOW_WORKER_ENABLED=true` in your local `.env` and restart after configuring the runtime. Provider access is separate from installing this repository; the demo does not simulate AI results.
+
+Local-first describes where application state lives. AI features and research can send approved inputs to external providers. Use fictional data for public demonstrations.
+
+### Development
+
+```sh
+uv run pytest --basetemp artifacts/pytest-temp
+npm run typecheck
+npm run build
 ```
 
-Apply database migrations to a fresh local database:
+The backend serves the built frontend. Rebuild after frontend edits and restart the backend to verify the served version. Live Playwright scenarios in `tests/` require a running app and a disposable local workspace.
 
-```powershell
-uv run --python 3.12 alembic upgrade head
-```
+PostgreSQL tests need a **disposable** database set through `POSTGRES_TEST_DATABASE_URL`; they skip when it is absent. See [CONTRIBUTING.md](CONTRIBUTING.md) for commands and test boundaries.
 
-For a legacy database created before Alembic was added, inspect it first and stamp only after confirming it matches the current schema:
+## Status and limitations
 
-```powershell
-uv run --python 3.12 alembic current
-uv run --python 3.12 alembic stamp head
-```
+This is an actively developed portfolio project, not a hosted service. Onboarding, research, drafting, review, and a gated Gmail adapter are implemented. Real delivery needs explicit backend configuration and approval; agents never send mail.
 
-Useful endpoints:
+The research graph is currently shadow-observed: the existing workflow engine remains authoritative. Application preparation and privileged sending graph definitions describe validated boundaries, not a generic dispatcher. See [ADR-0003](adr/0003-application-owned-workflow-graph.md) and [shadow-readiness evidence](docs/WORKFLOW_GRAPH_SHADOW_READINESS.md).
 
-- `GET /health`
-- `POST /runs/{run_id}/import`
-- `GET /runs`
-- `GET /runs/{run_id}`
-- `GET /runs/{run_id}/files`
-- `GET /runs/{run_id}/validation-results`
-- `GET /audit-logs`
+The local demo disables authentication and must stay bound to `127.0.0.1`. Shared deployments require authentication and per-user credentials. This repository does not claim a production security audit.
 
-Configuration uses environment variables. `DRY_RUN` defaults to `true`; `DATABASE_URL` defaults to a local SQLite database at `backend/dev.db`; `RUNS_ROOT` defaults to `runs/`; and `SCHEMAS_ROOT` defaults to `schemas/`.
+## Explore the code
 
-## Local Development Accounts
+| Path | Start here for |
+| --- | --- |
+| [backend/app/workflow/](backend/app/workflow/) | Task execution, graph definitions, recovery, and shadow comparison |
+| [backend/app/agents/](backend/app/agents/) | Restricted research and drafting runtimes |
+| [backend/app/gates/](backend/app/gates/) | Deterministic evaluation and send reservation |
+| [backend/app/imports/](backend/app/imports/) | Validation and normalization of agent output |
+| [frontend/src/](frontend/src/) | Dashboard and master CV interface |
+| [schemas/](schemas/) | JSON contracts |
+| [backend/tests/](backend/tests/) | Safety, isolation, workflow, and integration tests |
 
-With `AUTH_REQUIRED=false`, open **Settings → Create or switch local account** or visit `http://127.0.0.1:8000/register`. The registration screen creates an isolated workspace and switches the browser to it immediately; no Google setup or server restart is required.
+For a technical walkthrough, read the [architecture](docs/ARCHITECTURE.md), [agent boundaries](docs/AGENT_BOUNDARIES.md), and [safety gates](docs/SAFETY_GATES.md). The [implementation plan](docs/IMPLEMENTATION_PLAN.md) records project progress.
 
-`DEV_AUTH_BYPASS_EMAIL` remains the fallback account when the browser has no selected local session. The app creates its workspace automatically the first time it sees a new fallback email:
+## Privacy and third-party code
 
-```text
-AUTH_REQUIRED=false
-DEV_AUTH_BYPASS_EMAIL=fresh-test-01@local.invalid
-```
+Credentials, databases, CVs, run outputs, and real-account screenshots belong outside Git. Read [SECURITY.md](SECURITY.md) before sharing a checkout or reporting an issue.
 
-Changing the email creates or switches to another workspace without deleting the previous one. For a completely blank database and run directory as well, point `DATABASE_URL` and `RUNS_ROOT` at new paths before restarting:
-
-```text
-DATABASE_URL=sqlite:///F:/auto_initiativ/backend/dev-fresh-01.db
-RUNS_ROOT=F:/auto_initiativ/runs-fresh-01
-```
-
-When `AUTH_REQUIRED=true`, accounts remain invite-only. An administrator adds an email under **Administration**, then that user signs in with Google and receives a fresh private workspace.
-
-## Local Gmail Credentials
-
-In local development mode (`AUTH_REQUIRED=false`), the backend reuses the existing machine-local Gmail files when both paths exist:
-
-```text
-GMAIL_OAUTH_CLIENT_SECRETS_PATH=...
-GMAIL_OAUTH_TOKEN_PATH=...
-GMAIL_USER_ID=me
-```
-
-This preserves the original single-machine workflow without requiring the newer Google web-login configuration. Authenticated or multi-user deployments never share these files; they require a per-user Gmail connection. Keep the local server bound to `127.0.0.1` when authentication is disabled.
-
-The Gmail adapter is backend-only and inactive unless sending is explicitly enabled. Every provider attempt still requires an authorized frozen approval, deterministic evaluation, transactional reservation, and before/after audit records. Agents cannot access credentials or invoke the adapter.
+CV templates include MIT-licensed upstream material; its [license](third_party/yanliudesign-resume-builder-skill/LICENSE) and [attribution](backend/assets/master_cv/THIRD_PARTY_NOTICES.md) are preserved. No project-wide license has been granted for the original application code.

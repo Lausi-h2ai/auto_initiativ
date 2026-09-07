@@ -26,7 +26,6 @@ from backend.app.agents.company_research_runtime import CompanyResearchRuntime
 from backend.app.agents.application_draft import (
     APPLICATION_DRAFT_INSTRUCTIONS,
     ApplicationDraftBrief,
-    application_draft_template_html,
     build_application_draft_inputs,
     build_application_draft_task,
     slugify,

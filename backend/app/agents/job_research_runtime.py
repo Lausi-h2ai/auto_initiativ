@@ -13,7 +13,7 @@ from backend.app.agents.job_research import JOB_RESEARCH_INSTRUCTIONS, JobResear
 from backend.app.agents.run_folder import RunFolderGenerator, RunFolderSpec, RunInputFile
 from backend.app.core.config import Settings
 from backend.app.db import session as db_session_module
-from backend.app.db.models import Campaign, Company, JobPosting, JobSourceTrust, MasterCvProfileSnapshot, PolicySnapshot, ResearchPlan, ResearchTarget, Run, UserProfileSnapshot
+from backend.app.db.models import Campaign, Company, JobPosting, JobSourceTrust, MasterCvProfileSnapshot, PolicySnapshot, ResearchTarget, Run, UserProfileSnapshot
 from backend.app.imports.import_service import JOB_RESEARCH_RUN_TYPE, RunImportService
 from backend.app.jobs.sources import BUILTIN_JOB_SOURCES
 from backend.app.localization import output_language_contract, workspace_locale

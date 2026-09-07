@@ -2,9 +2,11 @@ import { test, expect } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 const baseURL = process.env.LIVE_APP_URL;
+const fictionalCandidateName = "Alex Morgan";
+const fictionalCompanyName = "Northstar Labs";
 
 test("restored documents are searchable, filterable, and previewable", async ({ page }) => {
-  test.skip(!baseURL, "Set LIVE_APP_URL to validate a running app with real data.");
+  test.skip(!baseURL, "Set LIVE_APP_URL to validate a running app with seeded fictional data.");
   mkdirSync("artifacts/screenshots", { recursive: true });
   const browserErrors = [];
   const serverErrors = [];
@@ -48,20 +50,20 @@ test("restored documents are searchable, filterable, and previewable", async ({ 
   await expect(page.getByRole("button", { name: "Connect Gmail" })).toBeDisabled();
 
   await page.getByRole("link", { name: /Companies/ }).click();
-  const companyCard = page.locator(".company-card").filter({ hasText: "TX Group" });
+  const companyCard = page.locator(".company-card").filter({ hasText: fictionalCompanyName });
   await expect(companyCard).toBeVisible();
   await companyCard.click();
   await page.getByRole("link", { name: "View documents" }).click();
-  await expect(page).toHaveURL(/#\/documents\?company=[^&]+&companyName=TX(?:\+|%20)Group/);
-  await expect(page.getByRole("heading", { name: "Documents prepared for TX Group" })).toBeVisible();
+  await expect(page).toHaveURL(/#\/documents\?company=[^&]+&companyName=Northstar(?:\+|%20)Labs/);
+  await expect(page.getByRole("heading", { name: `Documents prepared for ${fictionalCompanyName}` })).toBeVisible();
   await expect(page.locator(".document-card")).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Tailored CVs 1" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Emails 1" })).toBeVisible();
   await page.screenshot({ path: "artifacts/screenshots/company-scoped-documents.png", fullPage: true });
-  await page.getByRole("button", { name: /TX Group — Tailored CV/ }).click();
+  await page.getByRole("button", { name: `${fictionalCompanyName} — Tailored CV` }).click();
   await expect(page.locator(".document-modal iframe")).toBeVisible();
   await expect(page.getByRole("link", { name: /Open PDF/ })).toBeVisible();
-  await expect(page.frameLocator(".document-modal iframe").locator("body")).toContainText(/Laurent Hug/i);
+  await expect(page.frameLocator(".document-modal iframe").locator("body")).toContainText(fictionalCandidateName);
   await page.screenshot({ path: "artifacts/screenshots/company-scoped-cv-preview.png", fullPage: true });
 
   expect(serverErrors).toEqual([]);

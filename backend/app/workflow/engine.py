@@ -4,7 +4,6 @@ import hashlib
 import json
 import threading
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -24,7 +23,6 @@ from backend.app.db.models import (
     Contact,
     Document,
     EmailDraft,
-    FitEvaluation,
     JobPosting,
     JobFitEvaluation,
     JobApplicationPackage,

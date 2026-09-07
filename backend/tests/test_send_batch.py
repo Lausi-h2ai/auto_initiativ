@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from backend.app.api.routes import email_delivery_settings
 from backend.app.auth.context import RequestIdentity, workspace_context
-from backend.app.db.models import AuditLog, OutreachRecord, SendApprovalSnapshot, SendIntent, SendReservation, SentMessage, utc_now
+from backend.app.db.models import OutreachRecord, SendApprovalSnapshot, SendIntent, SendReservation, SentMessage, utc_now
 from backend.app.core.config import Settings
 from backend.app.email_delivery.adapters import (
     EmailDeliveryResult,
@@ -345,7 +345,7 @@ def test_gmail_sandbox_mode_rewrites_recipient_before_provider_send(db_session, 
     settings = Settings(
         email_sending_enabled=True,
         email_provider="gmail_sandbox",
-        gmail_sandbox_recipient="laurent.hug@gmx.de",
+        gmail_sandbox_recipient="sandbox@example.com",
     )
 
     result = SendBatchService(db_session, settings=settings).approve_and_send(["intent-1"], "local-user")
@@ -354,7 +354,7 @@ def test_gmail_sandbox_mode_rewrites_recipient_before_provider_send(db_session, 
     assert result.items[0].status == "sent"
     assert len(adapter.messages) == 1
     message = adapter.messages[0]
-    assert message.recipient_email == "laurent.hug@gmx.de"
+    assert message.recipient_email == "sandbox@example.com"
     assert message.subject.startswith("[SANDBOX to alex.hiring@example.com]")
     assert "Original recipient: alex.hiring@example.com" in message.body_text
     assert message.headers["X-Auto-Initiativ-Original-Recipient"] == "alex.hiring@example.com"

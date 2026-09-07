@@ -3,7 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 
 from pypdf import PdfWriter
-from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject, TextStringObject
+from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
 
 from backend.app.master_cv.contracts import MasterCvDocument
 

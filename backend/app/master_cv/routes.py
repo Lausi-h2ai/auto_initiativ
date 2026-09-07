@@ -105,7 +105,6 @@ def summary(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     service = _service(session, settings)
-    locale = workspace_locale(session, current_workspace_id())
     approved_profile = service.approved_profile()
     active = service.active_session()
     approved = service.latest_document()
@@ -154,6 +153,7 @@ def start_session(
     adapter: PiRpcMasterCvBuilderAdapter = Depends(get_builder_adapter),
 ) -> dict:
     service = _service(session, settings)
+    locale = workspace_locale(session, current_workspace_id())
     try:
         record = service.start_session()
         profile = service.approved_profile()

@@ -4,7 +4,7 @@ import json
 import re
 from html import escape
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -40,7 +40,6 @@ from backend.app.db.models import (
     PolicySnapshot,
     ResearchPlan,
     ResearchTarget,
-    ResearchSearchAttempt,
     ReviewException,
     SentMessage,
     UserProfileSnapshot,

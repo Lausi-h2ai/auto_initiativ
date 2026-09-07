@@ -884,7 +884,7 @@ def test_outbox_drafts_uses_only_narrow_blocker_labels(client, runs_root):
     response = client.post("/runs/outbox-blockers/import")
     assert response.status_code == 200
     with Session(db_session_module.engine) as session:
-        draft = session.exec(select(EmailDraft)).one()
+        session.exec(select(EmailDraft)).one()
         contact = session.exec(select(Contact)).one()
         contact.raw_email = ""
         session.add(contact)

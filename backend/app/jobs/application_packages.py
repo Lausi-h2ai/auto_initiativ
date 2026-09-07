@@ -4,7 +4,6 @@ import hashlib
 import json
 import re
 from datetime import timedelta, timezone
-from pathlib import Path
 from uuid import uuid4
 
 from sqlmodel import Session
@@ -16,7 +15,6 @@ from backend.app.imports.schema_registry import SchemaRegistry
 from backend.app.agents.application_draft import (
     APPLICATION_DRAFT_INSTRUCTIONS,
     ApplicationDraftBrief,
-    application_draft_template_html,
     build_application_draft_inputs,
     build_application_draft_task,
     slugify,

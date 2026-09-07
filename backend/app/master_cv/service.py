@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from sqlmodel import Session, select
 
-from backend.app.auth.context import current_workspace_id, scoped_runs_root
+from backend.app.auth.context import scoped_runs_root
 from backend.app.core.config import Settings
 from backend.app.db.models import (
     AuditLog,
@@ -278,7 +278,6 @@ class MasterCvService:
             raise MasterCvValidationError(
                 f"Candidate content overflows the {document.design.page_count}-page goal."
             )
-        raw_json = document.model_dump_json()
         now = utc_now()
         snapshot = self._candidate_snapshot(document.document_snapshot_id)
         if snapshot is None or snapshot.status != "candidate":

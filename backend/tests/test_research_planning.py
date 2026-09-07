@@ -15,7 +15,6 @@ from backend.app.db.models import (
     Company,
     JobPosting,
     ResearchDiscovery,
-    ResearchPlan,
     ResearchTarget,
 )
 from backend.app.research.planning import compile_research_plan, confirm_plan, plan_hash, replace_pending_plan
