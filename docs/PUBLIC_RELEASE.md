@@ -2,7 +2,7 @@
 
 Status: **source cleanup and publication history verification complete; publication not yet performed**.
 
-Do not publish the original repository history. A separate publication repository is prepared under `artifacts/public-release/publication/`. No remote changes or push are authorized by this cleanup.
+Do not publish the original repository history. A separate publication repository is prepared under `artifacts/public-release/publication/`. No remote was changed and no push was authorized by this cleanup.
 
 ## Completed
 
@@ -30,7 +30,7 @@ Do not publish the original repository history. A separate publication repositor
 - Ruff, TypeScript, frontend build, live-test parsing, and diff whitespace checks pass.
 - Independent code review found no critical or important defects.
 - The six skipped PostgreSQL tests were subsequently executed against a disposable local PostgreSQL 16.10 cluster and all passed (see Publication clone verification).
-- GitHub Actions has not run in this session; no remote is configured or changed by this cleanup, so the CI jobs will first execute on the first push.
+- GitHub Actions has not run in this session; no remote was changed by this cleanup, so the CI jobs will first execute on the first push to a new publication repository.
 
 ## Preparation steps (all complete)
 

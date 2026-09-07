@@ -19,7 +19,7 @@
 ## Tasks
 
 - [x] Audit tracked files, reachable historical blobs, commit metadata, and binary artifacts. Report locations and categories without credential values.
-- [x] Replace the README with a product overview, workflow diagram, setup, engineering highlights, and clear limitations. Add contribution and security guidance, a safe environment example, and broader private-artifact ignores. Fresh-checkout verification remains outstanding.
+- [x] Replace the README with a product overview, workflow diagram, setup, engineering highlights, and clear limitations. Add contribution and security guidance, a safe environment example, and broader private-artifact ignores. Fresh-checkout verification is recorded in [PUBLIC_RELEASE.md](../../PUBLIC_RELEASE.md).
 - [x] Replace personal test/documentation values with fictional examples, normalize package manifest formatting, and run backend tests and TypeScript checks.
 - [x] Add automated checks for the public source tree and CI for the existing test suite, including disposable PostgreSQL tests.
 - [x] Verify publication inputs and prepare historical cleanup without deleting private local data. Commit reviewed paths if permitted; report any remaining publication blocker explicitly.
